@@ -1,15 +1,27 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
 import type { DatasetCatalogItem } from '../../shared/contracts'
 
-defineProps<{
+const props = defineProps<{
   datasets: DatasetCatalogItem[]
   modelValue: string[]
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>()
+const availableIds = computed(() =>
+  props.datasets.filter((dataset) => dataset.sourceAvailable).map((dataset) => dataset.id),
+)
+const allSelected = computed(() =>
+  availableIds.value.length > 0 && availableIds.value.every((id) => props.modelValue.includes(id)),
+)
 
 function toggle(id: string, checked: boolean, current: string[]): void {
   emit('update:modelValue', checked ? [...current, id] : current.filter((item) => item !== id))
+}
+
+function toggleAll(): void {
+  emit('update:modelValue', allSelected.value ? [] : availableIds.value)
 }
 </script>
 
@@ -21,7 +33,10 @@ function toggle(id: string, checked: boolean, current: string[]): void {
         <h2 id="dataset-title">挑选数据集</h2>
         <p>可以一次安排多组数据，任务会依次运行</p>
       </div>
-      <span class="selection-count">{{ modelValue.length }} 已选</span>
+      <div class="heading-actions">
+        <button type="button" @click="toggleAll">{{ allSelected ? '清空' : '全选' }}</button>
+        <span class="selection-count">{{ modelValue.length }} 已选</span>
+      </div>
     </div>
 
     <div v-if="datasets.length" class="dataset-list">
@@ -98,7 +113,6 @@ function toggle(id: string, checked: boolean, current: string[]): void {
 }
 
 .selection-count {
-  margin-left: auto;
   padding: 6px 10px;
   border-radius: 999px;
   color: #5d7480;
@@ -106,6 +120,8 @@ function toggle(id: string, checked: boolean, current: string[]): void {
   font-size: 12px;
   font-weight: 700;
 }
+.heading-actions { display: flex; align-items: center; gap: 7px; margin-left: auto; }
+.heading-actions button { padding: 6px 9px; border: 0; border-radius: 9px; color: #5d7480; background: #e5edee; cursor: pointer; font-size: 11px; font-weight: 800; }
 
 .dataset-list {
   display: grid;

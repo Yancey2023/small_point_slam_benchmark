@@ -401,7 +401,7 @@ index 0000000..b62f5f4
 +}
 diff --git a/standalone/point_lio_adapter.cpp b/standalone/point_lio_adapter.cpp
 new file mode 100644
-index 0000000..3019e9e
+index 0000000..5cde7b6
 --- /dev/null
 +++ b/standalone/point_lio_adapter.cpp
 @@ -0,0 +1,314 @@
@@ -669,9 +669,9 @@ index 0000000..3019e9e
 +        idx += time_seq[k];
 +    }
 +    const double propagation_total = elapsed_ms(propagation_started) - filter_duration;
-+    sink_->report_timing({nanoseconds(measures.lidar_last_time), "point_propagation",
++    sink_->report_timing({nanoseconds(measures.lidar_last_time), "state_propagation",
 +                          std::max(0.0, propagation_total)});
-+    sink_->report_timing({nanoseconds(measures.lidar_last_time), "knn_search",
++    sink_->report_timing({nanoseconds(measures.lidar_last_time), "map_search",
 +                          point_lio_knn_time_ms});
 +    sink_->report_timing({nanoseconds(measures.lidar_last_time), "filter_update",
 +                          std::max(0.0, filter_duration - point_lio_knn_time_ms)});

@@ -17,6 +17,6 @@ sensors: [lidar, imu]
 timing_stages:
   - lidar_preprocess
   - undistortion
-  - correspondence_search
+  - map_search
   - filter_update
-  - compact_map_update
+  - map_update

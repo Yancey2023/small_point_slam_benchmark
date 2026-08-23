@@ -9,14 +9,13 @@ const props = defineProps<{
 }>()
 
 const availableResults = computed(() => props.results.filter((result) => result.hasPerformance))
-const selectedDatasetIds = ref<string[]>([])
+const selectedDatasetId = ref<string | null>(null)
 const selectedAlgorithmIds = ref<string[]>([])
 const selectedMetricIds = ref<string[]>([])
 const performances = ref<Record<string, PerformanceResponse>>({})
 const performanceVersions = ref<Record<string, string>>({})
 const loadingJobIds = ref(new Set<string>())
 const errors = ref<Record<string, string>>({})
-let knownDatasetIds = new Set<string>()
 let knownAlgorithmIds = new Set<string>()
 let metricSelectionInitialized = false
 
@@ -28,6 +27,7 @@ const colorByAlgorithm: Record<string, string> = {
 }
 const groupLabels: Record<PerformanceMetric['group'], string> = {
   overview: '总览',
+  message: '按消息类型处理耗时',
   stage_mean: '阶段平均耗时',
   stage_median: '阶段中位耗时',
   stage_p95: '阶段 P95 耗时',
@@ -39,10 +39,14 @@ const groupOrder = Object.keys(groupLabels) as PerformanceMetric['group'][]
 
 const datasetOptions = computed(() => uniqueOptions('datasetId', 'datasetName'))
 const algorithmOptions = computed(() => uniqueOptions('algorithmId', 'algorithmName'))
+const allAlgorithmsSelected = computed(() =>
+  algorithmOptions.value.length > 0 &&
+  algorithmOptions.value.every((algorithm) => selectedAlgorithmIds.value.includes(algorithm.id)),
+)
 const selectedJobs = computed(() =>
   availableResults.value.filter(
     (job) =>
-      selectedDatasetIds.value.includes(job.datasetId) &&
+      selectedDatasetId.value === job.datasetId &&
       selectedAlgorithmIds.value.includes(job.algorithmId),
   ),
 )
@@ -95,17 +99,14 @@ watch(
   (jobs) => {
     const datasetIds = new Set(jobs.map((job) => job.datasetId))
     const algorithmIds = new Set(jobs.map((job) => job.algorithmId))
-    selectedDatasetIds.value = updateSelection(
-      selectedDatasetIds.value,
-      datasetIds,
-      knownDatasetIds,
-    )
+    if (!selectedDatasetId.value || !datasetIds.has(selectedDatasetId.value)) {
+      selectedDatasetId.value = datasetIds.values().next().value ?? null
+    }
     selectedAlgorithmIds.value = updateSelection(
       selectedAlgorithmIds.value,
       algorithmIds,
       knownAlgorithmIds,
     )
-    knownDatasetIds = datasetIds
     knownAlgorithmIds = algorithmIds
   },
   { immediate: true },
@@ -171,6 +172,12 @@ function toggleMetricGroup(metrics: PerformanceMetric[]): void {
     : [...new Set([...selectedMetricIds.value, ...ids])]
 }
 
+function toggleAllAlgorithms(): void {
+  selectedAlgorithmIds.value = allAlgorithmsSelected.value
+    ? []
+    : algorithmOptions.value.map((algorithm) => algorithm.id)
+}
+
 function formatValue(value: number, unit: PerformanceMetric['unit']): string {
   if (unit === '%') return `${value.toFixed(1)}%`
   if (unit === 'count') return Math.round(value).toLocaleString()
@@ -183,30 +190,35 @@ function formatValue(value: number, unit: PerformanceMetric['unit']): string {
   <section class="performance-card" aria-labelledby="performance-title">
     <div class="performance-heading">
       <h2 id="performance-title">性能对比</h2>
-      <p>分别筛选数据集、算法和指标；条形长度按当前指标内的最大值计算</p>
+      <p>数据集单选，算法与指标多选；条形长度按当前指标内的最大值计算</p>
     </div>
 
     <div v-if="availableResults.length" class="performance-content">
       <div class="filter-grid">
         <fieldset>
-          <legend>数据集</legend>
+          <legend>数据集（单选）</legend>
           <div class="chips">
             <button
               v-for="dataset in datasetOptions"
               :key="dataset.id"
               type="button"
-              :aria-pressed="selectedDatasetIds.includes(dataset.id)"
-              :class="{ active: selectedDatasetIds.includes(dataset.id) }"
-              @click="selectedDatasetIds = toggle(selectedDatasetIds, dataset.id)"
+              :aria-pressed="selectedDatasetId === dataset.id"
+              :class="{ active: selectedDatasetId === dataset.id, radio: true }"
+              @click="selectedDatasetId = dataset.id"
             >
-              <span>{{ selectedDatasetIds.includes(dataset.id) ? '✓' : '' }}</span>
+              <span>{{ selectedDatasetId === dataset.id ? '●' : '' }}</span>
               {{ dataset.label }}
             </button>
           </div>
         </fieldset>
 
         <fieldset>
-          <legend>算法</legend>
+          <legend class="with-action">
+            <span>算法</span>
+            <button type="button" @click="toggleAllAlgorithms">
+              {{ allAlgorithmsSelected ? '清空' : '全选' }}
+            </button>
+          </legend>
           <div class="chips">
             <button
               v-for="algorithm in algorithmOptions"
@@ -295,9 +307,11 @@ function formatValue(value: number, unit: PerformanceMetric['unit']): string {
 .performance-heading h2 { margin: 0 0 3px; font-size: 23px; }
 .performance-heading p { margin: 0; color: var(--ink-muted); font-size: 13px; }
 .performance-content { display: grid; gap: 20px; }
-.filter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 fieldset { min-width: 0; margin: 0; padding: 14px; border: 1px solid #e1e7e5; border-radius: 18px; background: #f8faf8; }
 legend { padding: 0 5px; color: #68797f; font-size: 11px; font-weight: 900; letter-spacing: .08em; }
+.with-action { display: flex; width: calc(100% - 10px); align-items: center; justify-content: space-between; gap: 8px; }
+.with-action button { padding: 3px 7px; border: 0; border-radius: 7px; color: #60777f; background: #e8efec; cursor: pointer; font-size: 9px; font-weight: 800; letter-spacing: 0; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips button {
   display: inline-flex;
@@ -316,6 +330,7 @@ legend { padding: 0 5px; color: #68797f; font-size: 11px; font-weight: 900; lett
 .chips button.active { border-color: #aebfbc; color: #40575f; background: #edf3f0; }
 .chips button > span { display: grid; width: 15px; height: 15px; place-items: center; border: 1px solid #bcc8c7; border-radius: 5px; color: transparent; font-size: 9px; }
 .chips button.active > span { border-color: #607c89; color: #fff; background: #607c89; }
+.chips button.radio > span { border-radius: 50%; font-size: 7px; }
 .chips i { width: 7px; height: 7px; border-radius: 50%; }
 .metric-filter { grid-column: 1 / -1; }
 .metric-groups { display: grid; gap: 13px; }

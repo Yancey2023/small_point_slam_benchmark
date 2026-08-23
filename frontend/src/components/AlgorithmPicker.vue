@@ -1,18 +1,30 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+
 import type { AlgorithmCatalogItem } from '../../shared/contracts'
 
-defineProps<{
+const props = defineProps<{
   algorithms: AlgorithmCatalogItem[]
   modelValue: string[]
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>()
+const availableIds = computed(() =>
+  props.algorithms.filter((algorithm) => algorithm.available).map((algorithm) => algorithm.id),
+)
+const allSelected = computed(() =>
+  availableIds.value.length > 0 && availableIds.value.every((id) => props.modelValue.includes(id)),
+)
 
 const palette: Record<string, { icon: string; className: string }> = {
   fast_lio: { icon: 'F', className: 'ocean' },
   point_lio: { icon: 'P', className: 'mint' },
   voxel_map: { icon: 'V', className: 'lemon' },
   super_lio: { icon: 'S', className: 'slate' },
+}
+
+function toggleAll(): void {
+  emit('update:modelValue', allSelected.value ? [] : availableIds.value)
 }
 
 function toggle(id: string, checked: boolean, current: string[]): void {
@@ -28,7 +40,10 @@ function toggle(id: string, checked: boolean, current: string[]): void {
         <h2 id="algorithm-title">挑选算法</h2>
         <p>可以一次安排多个算法，任务会依次运行</p>
       </div>
-      <span class="selection-count">{{ modelValue.length }} 已选</span>
+      <div class="heading-actions">
+        <button type="button" @click="toggleAll">{{ allSelected ? '清空' : '全选' }}</button>
+        <span class="selection-count">{{ modelValue.length }} 已选</span>
+      </div>
     </div>
 
     <div class="algorithm-grid">
@@ -88,7 +103,6 @@ function toggle(id: string, checked: boolean, current: string[]): void {
 }
 
 .selection-count {
-  margin-left: auto;
   padding: 6px 10px;
   border-radius: 999px;
   color: #60737e;
@@ -96,6 +110,8 @@ function toggle(id: string, checked: boolean, current: string[]): void {
   font-size: 12px;
   font-weight: 700;
 }
+.heading-actions { display: flex; align-items: center; gap: 7px; margin-left: auto; }
+.heading-actions button { padding: 6px 9px; border: 0; border-radius: 9px; color: #60737e; background: #e7edef; cursor: pointer; font-size: 11px; font-weight: 800; }
 
 .algorithm-grid {
   display: grid;

@@ -17,7 +17,6 @@ sensors: [lidar]
 timing_stages:
   - lidar_preprocess
   - downsampling
-  - voxel_search
-  - plane_estimation
-  - state_optimization
+  - map_search
+  - filter_update
   - map_update

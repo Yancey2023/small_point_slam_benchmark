@@ -16,7 +16,7 @@ paper:
 sensors: [lidar, imu]
 timing_stages:
   - lidar_preprocess
-  - point_propagation
-  - knn_search
+  - state_propagation
+  - map_search
   - filter_update
   - map_update

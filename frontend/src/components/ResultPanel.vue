@@ -10,13 +10,12 @@ const props = defineProps<{
 }>()
 
 const availableResults = computed(() => props.results.filter((result) => result.hasTrajectory))
-const selectedDatasetIds = ref<string[]>([])
+const selectedDatasetId = ref<string | null>(null)
 const selectedAlgorithmIds = ref<string[]>([])
 const trajectories = ref<Record<string, TrajectoryResponse>>({})
 const trajectoryVersions = ref<Record<string, string>>({})
 const loadingJobIds = ref(new Set<string>())
 const errors = ref<Record<string, string>>({})
-let knownDatasetIds = new Set<string>()
 let knownAlgorithmIds = new Set<string>()
 
 const colorByAlgorithm: Record<string, string> = {
@@ -29,10 +28,14 @@ const dashByDataset = ['', '9 5', '2 5', '12 4 2 4']
 
 const datasetOptions = computed(() => uniqueOptions('datasetId', 'datasetName'))
 const algorithmOptions = computed(() => uniqueOptions('algorithmId', 'algorithmName'))
+const allAlgorithmsSelected = computed(() =>
+  algorithmOptions.value.length > 0 &&
+  algorithmOptions.value.every((algorithm) => selectedAlgorithmIds.value.includes(algorithm.id)),
+)
 const selectedJobs = computed(() =>
   availableResults.value.filter(
     (job) =>
-      selectedDatasetIds.value.includes(job.datasetId) &&
+      selectedDatasetId.value === job.datasetId &&
       selectedAlgorithmIds.value.includes(job.algorithmId),
   ),
 )
@@ -62,17 +65,14 @@ watch(
   (jobs) => {
     const datasetIds = new Set(jobs.map((job) => job.datasetId))
     const algorithmIds = new Set(jobs.map((job) => job.algorithmId))
-    selectedDatasetIds.value = updateSelection(
-      selectedDatasetIds.value,
-      datasetIds,
-      knownDatasetIds,
-    )
+    if (!selectedDatasetId.value || !datasetIds.has(selectedDatasetId.value)) {
+      selectedDatasetId.value = datasetIds.values().next().value ?? null
+    }
     selectedAlgorithmIds.value = updateSelection(
       selectedAlgorithmIds.value,
       algorithmIds,
       knownAlgorithmIds,
     )
-    knownDatasetIds = datasetIds
     knownAlgorithmIds = algorithmIds
   },
   { immediate: true },
@@ -121,6 +121,12 @@ function toggle(selection: string[], id: string): string[] {
   return selection.includes(id) ? selection.filter((item) => item !== id) : [...selection, id]
 }
 
+function toggleAllAlgorithms(): void {
+  selectedAlgorithmIds.value = allAlgorithmsSelected.value
+    ? []
+    : algorithmOptions.value.map((algorithm) => algorithm.id)
+}
+
 function meters(value: number): string {
   return `${value.toFixed(value >= 100 ? 0 : 1)} m`
 }
@@ -131,7 +137,7 @@ function meters(value: number): string {
     <div class="results-heading">
       <div>
         <h2 id="result-title">轨迹对比</h2>
-        <p>数据集与算法均可多选，并可切换 XY、XZ、YZ 投影</p>
+        <p>数据集单选、算法多选，并可切换 XY、XZ、YZ 投影</p>
       </div>
       <div class="endpoint-legend">
         <span class="hollow" /> 起点
@@ -142,22 +148,27 @@ function meters(value: number): string {
     <div v-if="availableResults.length" class="result-layout">
       <aside class="result-filters">
         <fieldset>
-          <legend>数据集</legend>
+          <legend>数据集（单选）</legend>
           <button
             v-for="dataset in datasetOptions"
             :key="dataset.id"
             type="button"
-            :aria-pressed="selectedDatasetIds.includes(dataset.id)"
-            :class="{ active: selectedDatasetIds.includes(dataset.id) }"
-            @click="selectedDatasetIds = toggle(selectedDatasetIds, dataset.id)"
+            :aria-pressed="selectedDatasetId === dataset.id"
+            :class="{ active: selectedDatasetId === dataset.id }"
+            @click="selectedDatasetId = dataset.id"
           >
-            <span class="checkmark">{{ selectedDatasetIds.includes(dataset.id) ? '✓' : '' }}</span>
+            <span class="checkmark">{{ selectedDatasetId === dataset.id ? '●' : '' }}</span>
             <span>{{ dataset.label }}</span>
           </button>
         </fieldset>
 
         <fieldset>
-          <legend>算法</legend>
+          <legend>
+            <span>算法</span>
+            <button type="button" @click="toggleAllAlgorithms">
+              {{ allAlgorithmsSelected ? '清空' : '全选' }}
+            </button>
+          </legend>
           <button
             v-for="algorithm in algorithmOptions"
             :key="algorithm.id"
@@ -217,7 +228,8 @@ h2 { margin: 0 0 3px; font-size: 23px; }
 .result-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; }
 .result-filters { display: grid; align-content: start; gap: 15px; }
 fieldset { display: grid; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
-legend { margin-bottom: 6px; color: #68797f; font-size: 11px; font-weight: 900; letter-spacing: .08em; }
+legend { display: flex; width: calc(100% - 10px); align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; color: #68797f; font-size: 11px; font-weight: 900; letter-spacing: .08em; }
+legend button { padding: 4px 7px; border: 0; border-radius: 7px; color: #60777f; background: #e8efec; cursor: pointer; font-size: 9px; font-weight: 800; letter-spacing: 0; }
 .result-filters button {
   display: grid;
   grid-template-columns: 21px minmax(0, 1fr);
@@ -240,6 +252,7 @@ legend { margin-bottom: 6px; color: #68797f; font-size: 11px; font-weight: 900; 
 .result-filters button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .checkmark { display: grid; width: 20px; height: 20px; place-items: center; border: 1.5px solid #b8c4c5; border-radius: 7px; color: #fff; font-size: 11px; }
 .active .checkmark { border-color: #607c89; background: #607c89; }
+.result-filters fieldset:first-child .checkmark { border-radius: 50%; font-size: 8px; }
 .tab-dot { width: 9px; height: 9px; border-radius: 50%; }
 
 .visualization { min-width: 0; }

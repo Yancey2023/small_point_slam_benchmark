@@ -18,6 +18,6 @@ timing_stages:
   - lidar_preprocess
   - undistortion
   - downsampling
-  - knn_search
+  - map_search
   - filter_update
   - map_update

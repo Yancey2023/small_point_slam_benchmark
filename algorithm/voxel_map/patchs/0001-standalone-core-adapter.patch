@@ -408,7 +408,7 @@ index 0000000..b59ce55
 +};
 diff --git a/standalone/voxel_map_engine.cpp b/standalone/voxel_map_engine.cpp
 new file mode 100644
-index 0000000..6f58b04
+index 0000000..de2f9d7
 --- /dev/null
 +++ b/standalone/voxel_map_engine.cpp
 @@ -0,0 +1,255 @@
@@ -482,7 +482,7 @@ index 0000000..6f58b04
 +            cross << SKEW_SYM_MATRX(body);
 +            cross_matrices.push_back(cross);
 +        }
-+        report(timestamp, "plane_estimation", elapsed_ms(started));
++        report(timestamp, "lidar_preprocess", elapsed_ms(started));
 +
 +        if (map_.empty()) {
 +            const auto points = map_points(body_covariances, cross_matrices);
@@ -579,8 +579,8 @@ index 0000000..6f58b04
 +                state_.cov = correction * state_.cov;
 +            }
 +        }
-+        report(timestamp, "voxel_search", search_duration);
-+        report(timestamp, "state_optimization", optimization_duration);
++        report(timestamp, "map_search", search_duration);
++        report(timestamp, "filter_update", optimization_duration);
 +
 +        started = std::chrono::steady_clock::now();
 +        auto points = map_points(body_covariances, cross_matrices);

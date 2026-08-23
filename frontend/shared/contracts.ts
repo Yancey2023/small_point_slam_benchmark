@@ -101,6 +101,7 @@ export interface PerformanceMetric {
   unit: 'ms' | '%' | 'count'
   group:
     | 'overview'
+    | 'message'
     | 'stage_mean'
     | 'stage_median'
     | 'stage_p95'

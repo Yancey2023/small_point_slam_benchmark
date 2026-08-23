@@ -27,9 +27,10 @@ int main(int argc, char** argv) {
 
 ## 阶段耗时
 
-manifest 中的 `timing_stages` 是该算法应优先提供的阶段，而不是所有算法共享的固定枚举。
-例如 FAST-LIO 包含去畸变、KNN、滤波器和 ikd-Tree 地图更新；VoxelMap 则包含 voxel 搜索、
-平面估计和状态优化。耗时用稳态时钟测量，单位毫秒，并关联当前传感器消息的纳秒时间戳。
+manifest 中的 `timing_stages` 优先使用跨算法通用名称：`lidar_preprocess`、
+`downsampling`、`undistortion`、`state_propagation`、`map_search`、`filter_update` 和
+`map_update`。算法内部的 KNN、体素、平面或匹配实现都归入 `map_search`，状态优化归入
+`filter_update`。耗时用稳态时钟测量，单位毫秒，并关联当前传感器消息的纳秒时间戳。
 
 ## patch 生命周期
 
@@ -46,4 +47,3 @@ python scripts/patch_algorithms.py check <name>
 
 上游 `ref` 发生变化时，先更新 manifest，再下载新版本并执行 `check`。如果失败，应重新
 移植并生成 patch，不应在脚本中加入模糊匹配或静默跳过。
-

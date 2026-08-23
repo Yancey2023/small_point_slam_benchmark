@@ -34,7 +34,7 @@ describe('readPerformance', () => {
       ),
       writeFile(
         path.join(directory, 'timings.csv'),
-        'timestamp_ns,stage,duration_ms\n100,total,10\n200,total,99\n300,total,30\n',
+        'timestamp_ns,stage,duration_ms\n100,total,10\n100,filter_update,2\n100,knn_search,5\n200,total,99\n300,total,30\n300,filter_update,4\n300,knn_search,7\n',
       ),
     ])
 
@@ -43,15 +43,17 @@ describe('readPerformance', () => {
 
     expect(values.wall_time_ms).toBe(2500)
     expect(values.algorithm_process_time_ms).toBe(1800)
-    expect(values.mean_lidar_frame_ms).toBe(20)
-    expect(values.p95_lidar_frame_ms).toBe(29)
     expect(values.mean_cpu_percent).toBe(12.5)
     expect(values.peak_cpu_percent).toBe(20)
-    expect(values['stage:total:mean_ms']).toBeCloseTo(46.333333)
-    expect(values['stage:total:median_ms']).toBe(30)
-    expect(values['stage:total:p95_ms']).toBeCloseTo(92.1)
-    expect(values['stage:total:count']).toBe(3)
-    expect(result.metrics.find((metric) => metric.id === 'stage:total:p95_ms')?.group)
+    expect(values['message:lidar:mean_ms']).toBe(20)
+    expect(values['message:lidar:p95_ms']).toBe(29)
+    expect(values['message:imu:mean_ms']).toBe(99)
+    expect(values['stage:filter_update:mean_ms']).toBe(3)
+    expect(values['stage:filter_update:p95_ms']).toBeCloseTo(3.9)
+    expect(values['stage:filter_update:count']).toBe(2)
+    expect(values['stage:map_search:mean_ms']).toBe(6)
+    expect(result.metrics.some((metric) => metric.label.startsWith('KNN'))).toBe(false)
+    expect(result.metrics.find((metric) => metric.id === 'stage:filter_update:p95_ms')?.group)
       .toBe('stage_p95')
   })
 })

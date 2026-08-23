@@ -648,7 +648,7 @@ index 0000000..e49bbd8
 +};
 diff --git a/standalone/fast_lio_engine.cpp b/standalone/fast_lio_engine.cpp
 new file mode 100644
-index 0000000..69a02bf
+index 0000000..7d458c3
 --- /dev/null
 +++ b/standalone/fast_lio_engine.cpp
 @@ -0,0 +1,367 @@
@@ -936,7 +936,7 @@ index 0000000..69a02bf
 +            selected_points_->push_back(down_body_->points[index]);
 +            selected_normals_->push_back(normals_->points[index]);
 +        }
-+        report(current_time_, "knn_search", elapsed_ms(started));
++        report(current_time_, "map_search", elapsed_ms(started));
 +        if (selected_points_->empty()) {
 +            data.valid = false;
 +            return;
