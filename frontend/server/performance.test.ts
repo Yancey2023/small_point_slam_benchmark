@@ -22,11 +22,11 @@ describe('readPerformance', () => {
     await Promise.all([
       writeFile(
         path.join(directory, 'summary.csv'),
-        'message_count,wall_time_ms,algorithm_process_time_ms,mean_cpu_normalized_percent,run_mode\n3,2500,1800,12.5,full_speed\n',
+        'message_count,wall_time_ms,algorithm_process_time_ms,mean_cpu_normalized_percent,mean_memory_mb,peak_memory_mb,run_mode\n3,2500,1800,12.5,256,320,full_speed\n',
       ),
       writeFile(
         path.join(directory, 'cpu.csv'),
-        'elapsed_ms,core_percent,normalized_percent\n100,100,10\n200,200,20\n',
+        'elapsed_ms,core_percent,normalized_percent,resident_memory_mb\n100,100,10,240\n200,200,20,320\n',
       ),
       writeFile(
         path.join(directory, 'sensor_messages.csv'),
@@ -45,6 +45,8 @@ describe('readPerformance', () => {
     expect(values.algorithm_process_time_ms).toBe(1800)
     expect(values.mean_cpu_percent).toBe(12.5)
     expect(values.peak_cpu_percent).toBe(20)
+    expect(values.mean_memory_mb).toBe(256)
+    expect(values.peak_memory_mb).toBe(320)
     expect(values['message:lidar:mean_ms']).toBe(20)
     expect(values['message:lidar:p95_ms']).toBe(29)
     expect(values['message:imu:mean_ms']).toBe(99)
@@ -53,13 +55,20 @@ describe('readPerformance', () => {
     expect(values['stage:filter_update:count']).toBe(2)
     expect(values['stage:map_search:mean_ms']).toBe(6)
     expect(values['stage:new_stage:mean_ms']).toBe(1)
+    expect(values['stage:filter_update:median_ms']).toBeUndefined()
     expect(result.metrics.some((metric) => metric.label.startsWith('KNN'))).toBe(false)
     expect(result.metrics.find((metric) => metric.id === 'stage:filter_update:p95_ms')?.group)
-      .toBe('stage_p95')
+      .toBe('stage')
     expect(result.metrics.find((metric) => metric.id === 'stage:filter_update:p95_ms')?.groupLabel)
-      .toBe('阶段 P95 耗时')
+      .toBe('算法阶段耗时')
+    expect(result.metrics.find((metric) => metric.id === 'stage:filter_update:p95_ms')?.selectionId)
+      .toBe('stage:filter_update')
+    expect(result.metrics.find((metric) => metric.id === 'stage:filter_update:p95_ms')?.timingStatistic)
+      .toBe('p95')
     expect(result.metrics.find((metric) => metric.id === 'mean_cpu_percent')?.lowerIsBetter)
       .toBe(false)
+    expect(result.metrics.filter((metric) => metric.defaultSelected).map((metric) => metric.id))
+      .toEqual(['algorithm_process_time_ms', 'mean_memory_mb', 'peak_memory_mb'])
     expect(result.runMode).toBe('full_speed')
     expect(result.cpuDescription).toContain('不是越低越好')
   })
@@ -83,5 +92,8 @@ describe('readPerformance', () => {
     expect(result.metrics.find((metric) => metric.id === 'mean_cpu_percent')?.lowerIsBetter)
       .toBe(true)
     expect(result.cpuDescription).toContain('越低越好')
+    expect(result.metrics.some((metric) => metric.unit === 'MB')).toBe(false)
+    expect(result.metrics.filter((metric) => metric.defaultSelected).map((metric) => metric.id))
+      .toEqual(['algorithm_process_time_ms'])
   })
 })

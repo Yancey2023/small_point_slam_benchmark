@@ -73,7 +73,7 @@ function contentType(filePath: string): string {
 }
 
 const projectRoot = await findProjectRoot()
-const configuredBuild = process.env.BENCHMARK_BUILD_DIR ?? 'build/default'
+const configuredBuild = process.env.BENCHMARK_BUILD_DIR ?? 'build/algorithms'
 const buildDirectory = path.isAbsolute(configuredBuild)
   ? configuredBuild
   : path.resolve(projectRoot, configuredBuild)

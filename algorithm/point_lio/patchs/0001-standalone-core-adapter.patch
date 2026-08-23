@@ -401,10 +401,10 @@ index 0000000..b62f5f4
 +}
 diff --git a/standalone/point_lio_adapter.cpp b/standalone/point_lio_adapter.cpp
 new file mode 100644
-index 0000000..5cde7b6
+index 0000000..d6277bd
 --- /dev/null
 +++ b/standalone/point_lio_adapter.cpp
-@@ -0,0 +1,314 @@
+@@ -0,0 +1,315 @@
 +#include "point_lio_adapter.hpp"
 +
 +#include <spdlog/spdlog.h>
@@ -494,6 +494,7 @@ index 0000000..5cde7b6
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
 +    filter_size_surf_min = parameter(root, "filter_size_scan_m", 0.5);
 +    filter_size_map_min = parameter(root, "filter_size_map_m", 0.5);
++    const double map_voxel_size = parameter(root, "map_voxel_size_m", 0.5);
 +    extrinsic_est_en = parameter(root, "estimate_extrinsics", false);
 +    laser_point_cov = parameter(root, "lidar_measurement_noise", 0.01);
 +    acc_cov_input = parameter(root, "accelerometer_noise", 0.1);
@@ -501,7 +502,7 @@ index 0000000..5cde7b6
 +    b_acc_cov = parameter(root, "accelerometer_bias_noise", 0.0001);
 +    b_gyr_cov = parameter(root, "gyroscope_bias_noise", 0.0001);
 +    initial_map_size_ = parameter<std::size_t>(root, "initial_map_points", 100);
-+    ivox_options_.resolution_ = static_cast<float>(filter_size_map_min);
++    ivox_options_.resolution_ = static_cast<float>(map_voxel_size);
 +    ivox_options_.nearby_type_ = IVoxType::NearbyType::NEARBY18;
 +    ivox_.reset(new IVoxType(ivox_options_));
 +    scan_filter_.setLeafSize(filter_size_surf_min, filter_size_surf_min,

@@ -1,7 +1,7 @@
 algorithm: super_lio
-filter_size_scan_m: 0.5
-filter_size_map_m: 0.5
-map_voxel_size_m: 0.5
+filter_size_scan_m: 0.2
+filter_size_map_m: 0.4
+map_voxel_size_m: 0.4
 min_range_m: 0.5
 max_range_m: 100.0
 max_iterations: 4

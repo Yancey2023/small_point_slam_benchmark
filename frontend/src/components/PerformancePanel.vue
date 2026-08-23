@@ -13,12 +13,20 @@ const availableResults = computed(() => props.results.filter((result) => result.
 const selectedDatasetId = ref<string | null>(null)
 const selectedAlgorithmIds = ref<string[]>([])
 const selectedMetricIds = ref<string[]>([])
+const selectedTimingStatistic = ref<'mean' | 'p95' | 'max' | 'total'>('mean')
 const performances = ref<Record<string, PerformanceResponse>>({})
 const performanceVersions = ref<Record<string, string>>({})
 const loadingJobIds = ref(new Set<string>())
 const errors = ref<Record<string, string>>({})
 let knownAlgorithmIds = new Set<string>()
-let metricSelectionInitialized = false
+let knownDefaultMetricIds = new Set<string>()
+
+const timingStatistics = [
+  { id: 'mean', label: '平均耗时' },
+  { id: 'p95', label: 'P95 耗时' },
+  { id: 'max', label: '峰值耗时' },
+  { id: 'total', label: '累积耗时' },
+] as const
 
 const datasetOptions = computed(() => uniqueOptions('datasetId', 'datasetName'))
 const algorithmOptions = computed(() => uniqueOptions('algorithmId', 'algorithmName'))
@@ -36,7 +44,12 @@ const selectedJobs = computed(() =>
 const metricOptions = computed(() => {
   const options = new Map<string, PerformanceMetric>()
   for (const performance of Object.values(performances.value)) {
-    for (const metric of performance.metrics) options.set(metric.id, metric)
+    for (const metric of performance.metrics) {
+      if (metric.timingStatistic && metric.timingStatistic !== selectedTimingStatistic.value) {
+        continue
+      }
+      options.set(metricSelectionId(metric), metric)
+    }
   }
   return [...options.values()]
 })
@@ -61,10 +74,15 @@ const cpuDescriptions = computed(() => [...new Set(
 )])
 const charts = computed(() =>
   selectedMetricIds.value.flatMap((metricId) => {
-    const definition = metricOptions.value.find((metric) => metric.id === metricId)
+    const definition = metricOptions.value.find(
+      (metric) => metricSelectionId(metric) === metricId,
+    )
     if (!definition) return []
     const rawEntries = selectedJobs.value.flatMap((job) => {
-      const metric = performances.value[job.id]?.metrics.find((item) => item.id === metricId)
+      const metric = performances.value[job.id]?.metrics.find(
+        (item) => metricSelectionId(item) === metricId &&
+          (!item.timingStatistic || item.timingStatistic === selectedTimingStatistic.value),
+      )
       if (!metric) return []
       return [{
         id: job.id,
@@ -77,6 +95,9 @@ const charts = computed(() =>
     const maximum = Math.max(0, ...rawEntries.map((entry) => entry.value))
     return [{
       ...definition,
+      label: definition.timingStatistic
+        ? `${definition.label} · ${timingStatisticLabel(definition.timingStatistic)}`
+        : definition.label,
       lowerIsBetter:
         rawEntries.length > 0 && rawEntries.every((entry) => entry.lowerIsBetter),
       entries: rawEntries.map((entry) => ({
@@ -120,12 +141,12 @@ watch(
 )
 
 watch(metricOptions, (metrics) => {
-  if (!metricSelectionInitialized && metrics.length) {
-    selectedMetricIds.value = metrics
-      .filter((metric) => metric.defaultSelected)
-      .map((metric) => metric.id)
-    metricSelectionInitialized = true
-  }
+  const availableDefaults = new Set(
+    metrics.filter((metric) => metric.defaultSelected).map(metricSelectionId),
+  )
+  const addedDefaults = [...availableDefaults].filter((id) => !knownDefaultMetricIds.has(id))
+  selectedMetricIds.value = [...new Set([...selectedMetricIds.value, ...addedDefaults])]
+  knownDefaultMetricIds = new Set([...knownDefaultMetricIds, ...availableDefaults])
 })
 
 function updateSelection(current: string[], available: Set<string>, known: Set<string>): string[] {
@@ -163,8 +184,16 @@ function toggle(selection: string[], id: string): string[] {
   return selection.includes(id) ? selection.filter((item) => item !== id) : [...selection, id]
 }
 
+function metricSelectionId(metric: PerformanceMetric): string {
+  return metric.selectionId ?? metric.id
+}
+
+function timingStatisticLabel(statistic: NonNullable<PerformanceMetric['timingStatistic']>): string {
+  return timingStatistics.find((item) => item.id === statistic)?.label ?? statistic
+}
+
 function toggleMetricGroup(metrics: PerformanceMetric[]): void {
-  const ids = metrics.map((metric) => metric.id)
+  const ids = metrics.map(metricSelectionId)
   const allSelected = ids.every((id) => selectedMetricIds.value.includes(id))
   selectedMetricIds.value = allSelected
     ? selectedMetricIds.value.filter((id) => !ids.includes(id))
@@ -179,6 +208,7 @@ function toggleAllAlgorithms(): void {
 
 function formatValue(value: number, unit: PerformanceMetric['unit']): string {
   if (unit === '%') return `${value.toFixed(1)}%`
+  if (unit === 'MB') return `${value.toFixed(value >= 100 ? 1 : 2)} MB`
   if (unit === 'count') return Math.round(value).toLocaleString()
   if (value >= 1000) return `${(value / 1000).toFixed(2)} s`
   return `${value.toFixed(value >= 100 ? 1 : 2)} ms`
@@ -240,20 +270,44 @@ function formatValue(value: number, unit: PerformanceMetric['unit']): string {
             <section v-for="group in metricGroups" :key="group.id" class="metric-group">
               <header>
                 <strong>{{ group.label }}</strong>
-                <button type="button" @click="toggleMetricGroup(group.metrics)">
-                  {{ group.metrics.every((metric) => selectedMetricIds.includes(metric.id)) ? '清空' : '全选' }}
-                </button>
+                <div class="metric-group-actions">
+                  <div
+                    v-if="group.id === 'stage'"
+                    class="timing-switch"
+                    aria-label="耗时统计方式"
+                  >
+                    <div>
+                      <button
+                        v-for="statistic in timingStatistics"
+                        :key="statistic.id"
+                        type="button"
+                        :aria-pressed="selectedTimingStatistic === statistic.id"
+                        :class="{ active: selectedTimingStatistic === statistic.id }"
+                        @click="selectedTimingStatistic = statistic.id"
+                      >
+                        {{ statistic.label }}
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="group-toggle"
+                    @click="toggleMetricGroup(group.metrics)"
+                  >
+                    {{ group.metrics.every((metric) => selectedMetricIds.includes(metricSelectionId(metric))) ? '清空' : '全选' }}
+                  </button>
+                </div>
               </header>
               <div class="chips">
                 <button
                   v-for="metric in group.metrics"
-                  :key="metric.id"
+                  :key="metricSelectionId(metric)"
                   type="button"
-                  :aria-pressed="selectedMetricIds.includes(metric.id)"
-                  :class="{ active: selectedMetricIds.includes(metric.id) }"
-                  @click="selectedMetricIds = toggle(selectedMetricIds, metric.id)"
+                  :aria-pressed="selectedMetricIds.includes(metricSelectionId(metric))"
+                  :class="{ active: selectedMetricIds.includes(metricSelectionId(metric)) }"
+                  @click="selectedMetricIds = toggle(selectedMetricIds, metricSelectionId(metric))"
                 >
-                  <span>{{ selectedMetricIds.includes(metric.id) ? '✓' : '' }}</span>
+                  <span>{{ selectedMetricIds.includes(metricSelectionId(metric)) ? '✓' : '' }}</span>
                   {{ metric.label }}
                 </button>
               </div>
@@ -335,11 +389,17 @@ legend { padding: 0 5px; color: #68797f; font-size: 11px; font-weight: 900; lett
 .chips button.radio > span { border-radius: 50%; font-size: 7px; }
 .chips i { width: 7px; height: 7px; border-radius: 50%; }
 .metric-filter { grid-column: 1 / -1; }
+.timing-switch { display: flex; align-items: center; gap: 8px; }
+.timing-switch > span { color: #66767b; font-size: 10px; font-weight: 800; }
+.timing-switch > div { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; border: 1px solid #dce4e1; border-radius: 10px; background: #eef2f0; }
+.timing-switch button { padding: 5px 9px; border: 0; border-radius: 7px; color: #68777b; background: transparent; cursor: pointer; font-size: 9px; font-weight: 800; }
+.timing-switch button.active { color: #40575f; background: #fff; box-shadow: 0 1px 3px rgba(60, 80, 78, .12); }
 .metric-groups { display: grid; gap: 13px; }
 .metric-group { display: grid; gap: 7px; }
 .metric-group header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .metric-group header strong { color: #66767b; font-size: 10px; }
-.metric-group header button { padding: 3px 7px; border: 0; border-radius: 7px; color: #60777f; background: #e8efec; cursor: pointer; font-size: 9px; font-weight: 800; }
+.metric-group-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.metric-group .group-toggle { padding: 3px 7px; border: 0; border-radius: 7px; color: #60777f; background: #e8efec; cursor: pointer; font-size: 9px; font-weight: 800; }
 .loading-note { color: var(--ink-muted); font-size: 11px; text-align: center; }
 .chart-error { margin: 0; color: #a85e62; font-size: 11px; text-align: center; }
 .cpu-notes { display: grid; gap: 5px; padding: 11px 13px; border: 1px solid #dce5e2; border-radius: 13px; color: #63757a; background: #f1f5f3; }
@@ -368,6 +428,9 @@ legend { padding: 0 5px; color: #68797f; font-size: 11px; font-weight: 900; lett
 }
 @media (max-width: 560px) {
   .performance-card { padding: 20px; }
+  .metric-group header { align-items: flex-start; flex-direction: column; }
+  .metric-group-actions { justify-content: flex-start; }
+  .timing-switch { align-items: flex-start; flex-direction: column; }
   .bar-row { grid-template-columns: minmax(80px, .8fr) minmax(80px, 1fr) 62px; gap: 6px; }
 }
 </style>

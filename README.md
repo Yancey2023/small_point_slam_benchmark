@@ -7,7 +7,7 @@
 
 ```text
 3rdparty/                 # 本地第三方库，整体不进入 Git
-core/                     # 静态公共库：数据、运行、计时、CPU、CSV
+core/                     # 静态公共库：数据、运行、计时、CPU/内存、CSV
 datasets/<source>/        # 数据集清单；data/ 不进入 Git
 algorithm/<algorithm>/    # 上游信息、配置、Git patch
 algorithm_downloads/      # 原始上游仓库，不进入 Git
@@ -43,11 +43,22 @@ ctest --test-dir build/default --output-on-failure
 
 ## 算法工作流
 
+完整构建全部算法及 core 测试：
+
+```sh
+cmake --preset algorithms
+cmake --build --preset algorithms
+ctest --preset algorithms
+```
+
+`algorithms` preset 会在 `build/algorithms` 下生成九个分别链接 core 静态库的
+`<algorithm>_benchmark` 可执行程序。`default` preset 只构建 core 和测试，不构建算法。
+
+下载、应用及维护单个算法的 patch：
+
 ```sh
 python scripts/download_algorithms.py fast_lio
 python scripts/patch_algorithms.py apply fast_lio
-cmake -S . -B build/algorithms -DSLAM_BENCHMARK_BUILD_ALGORITHMS=ON
-cmake --build build/algorithms
 ```
 
 开发适配时修改忽略目录 `algorithm/fast_lio/source/FAST_LIO`，之后生成 Git patch：
@@ -64,14 +75,17 @@ python scripts/patch_algorithms.py check fast_lio
 每个算法可执行程序遵循统一参数：
 
 ```sh
-python scripts/run_benchmark.py fast_lio datasets/example/manifest.yaml sequence_01 --run-mode full_speed
-python scripts/run_benchmark.py fast_lio datasets/example/manifest.yaml sequence_01 --run-mode realtime
+python scripts/run_benchmark.py fast_lio datasets/example/manifest.yaml sequence_01 --build-dir build/algorithms --run-mode full_speed
+python scripts/run_benchmark.py fast_lio datasets/example/manifest.yaml sequence_01 --build-dir build/algorithms --run-mode realtime
 python scripts/analyze_results.py results
 ```
 
 原始输出包括 `sensor_messages.csv`、`realtime_pose.csv`、
 `final_trajectory.csv`、`timings.csv`、`cpu.csv` 和 `summary.csv`。`full_speed` 不等待
 bag 时间间隔，用于测吞吐；`realtime` 按消息时间戳节流，用于评估实时 CPU 需求。
+`cpu.csv` 同时记录进程 CPU 与常驻内存，`summary.csv` 汇总平均和峰值内存。
+算法可执行程序静态链接 core；修改资源采集逻辑后必须重新构建算法并重新运行数据集。
+旧结果如果没有 `resident_memory_mb` 列，仍可用于轨迹和其他性能比较，但无法补算历史内存占用。
 
 ## Web 工作台
 
@@ -82,9 +96,9 @@ pnpm install
 pnpm dev
 ```
 
-打开 `http://127.0.0.1:5173`，即可勾选数据集和算法、查看实时消息进度，并按单个数据集、多种算法查看 XY/XZ/YZ 轨迹投影，以及按指标筛选的性能横向条形图。服务会自动扫描 `results` 并复用之前运行的结果；性能面板除总耗时和 CPU 外，还可以比较各类传感器消息处理，以及通用 LIO 阶段的平均、中位、P95、最大、累计耗时与调用次数。服务默认从
-`build/default` 查找算法，找不到时会自动选择 `build` 下最新的同名可执行文件；也可以通过跨平台环境变量
-`BENCHMARK_BUILD_DIR` 指定构建目录。
+打开 `http://127.0.0.1:5173`，即可勾选数据集和算法、查看实时消息进度，并按单个数据集、多种算法查看 XY/XZ/YZ 轨迹投影，以及按指标筛选的性能横向条形图。服务会自动扫描 `results` 并复用之前运行的结果；性能面板除总耗时、CPU 和常驻内存外，还可以比较各类传感器消息处理与通用 LIO 阶段。平均、P95、峰值和累积耗时由一个统一开关切换，调用次数作为独立指标。服务默认从
+`build/algorithms` 查找算法，找不到时会自动选择 `build` 下最新的同名可执行文件；也可以通过环境变量
+`BENCHMARK_BUILD_DIR` 指定其他构建目录。
 
 生产构建及本地运行：
 

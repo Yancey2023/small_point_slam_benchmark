@@ -18,18 +18,30 @@
       "inherits": "default",
       "binaryDir": "${sourceDir}/build/dev",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "algorithms",
+      "displayName": "All algorithm release build",
+      "inherits": "default",
+      "binaryDir": "${sourceDir}/build/algorithms",
+      "cacheVariables": { "SLAM_BENCHMARK_BUILD_ALGORITHMS": "ON" }
     }
   ],
   "buildPresets": [
     { "name": "default", "configurePreset": "default" },
-    { "name": "dev", "configurePreset": "dev" }
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "algorithms", "configurePreset": "algorithms" }
   ],
   "testPresets": [
     {
       "name": "default",
       "configurePreset": "default",
       "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "algorithms",
+      "configurePreset": "algorithms",
+      "output": { "outputOnFailure": true }
     }
   ]
 }
-

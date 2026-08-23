@@ -20,6 +20,9 @@ target_include_directories(slam_benchmark_core PUBLIC
 target_link_libraries(slam_benchmark_core
     PUBLIC yaml-cpp::yaml-cpp spdlog::spdlog Threads::Threads
 )
+if(WIN32)
+    target_link_libraries(slam_benchmark_core PRIVATE Psapi)
+endif()
 if(SLAM_BENCHMARK_ENABLE_ROSBAG_IO)
     target_link_libraries(slam_benchmark_core PRIVATE rosbag_io)
     target_compile_definitions(slam_benchmark_core PUBLIC SLAM_BENCHMARK_HAS_ROSBAG_IO=1)

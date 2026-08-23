@@ -11,8 +11,13 @@
 | `estimate_extrinsics` | 是否在线估计 LiDAR/IMU 外参 |
 | `*_noise` | 算法内部使用的对应测量或随机游走噪声参数 |
 
-FAST-LIO、Point-LIO、Faster-LIO、Super-LIO、VoxelMap 和 Small Point LIO 的扫描
-降采样默认统一为 `0.5 m`。具有独立地图插入降采样的算法默认也统一为 `0.5 m`。
+多数 LIO 算法的扫描降采样默认值为 `0.5 m`。Point-LIO 与 Faster-LIO 使用相同的
+参数组合：扫描降采样和地图插入降采样均为 `0.2 m`，地图空间索引分辨率为 `0.5 m`。
+三项参数按实际作用分别配置，不能因为数值曾经相同就共用一个字段。
+
+Point-LIO 中，`filter_size_scan_m` 映射到当前帧的 PCL 体素滤波器，
+`filter_size_map_m` 映射到新地图点的中心距离筛选，`map_voxel_size_m` 映射到 iVox
+的 `resolution_`。因此调整地图插入密度不会再意外改变 iVox 搜索网格的分辨率。
 
 VoxelMap 原项目的 `mapping/voxel_size` 是自适应地图顶层体素尺寸，并不是扫描滤波尺寸；
 现在明确映射为 `map_voxel_size_m`。原项目的 `mapping/down_sample_size` 映射为

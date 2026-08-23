@@ -1,6 +1,6 @@
 algorithm: voxel_map_with_imu
-filter_size_scan_m: 0.5
-map_voxel_size_m: 0.25
+filter_size_scan_m: 0.2
+map_voxel_size_m: 0.4
 max_layer: 2
 layer_point_sizes: [5, 5]
 max_points_per_voxel: 100

@@ -4,8 +4,8 @@ point_filter_num: 1
 min_range_m: 0.5
 max_range_m: 100.0
 space_downsample: true
-space_downsample_center_based: true
-filter_size_scan_m: 0.5
+space_downsample_center_based: false
+filter_size_scan_m: 0.2
 
 check_satu: true
 satu_acc: 29.43
@@ -18,20 +18,20 @@ zupt_velocity_cov: 0.02
 zupt_attitude_cov: 0.1
 map_update_suspend_duration: 0.0
 
-map_voxel_size_m: 0.5
+map_voxel_size_m: 0.2
 init_map_size: 10
 plane_threshold: 0.005
 
 is_batch_update: true
 batch_dt: 0.005
-max_iterations: 4
+max_iterations: 1
 enable_twice_update: false
 twice_update_dt: 0.1
 twice_update_max_iterated_times: 5
 converge_epsilon: 0.0001
 enable_imu: true
-enable_wheel_speed: false
-enable_image_update: false
+enable_wheel_speed: true
+enable_image_update: true
 debug_eskf: false
 debug_point_window_start: -1.0
 debug_point_window_end: -1.0

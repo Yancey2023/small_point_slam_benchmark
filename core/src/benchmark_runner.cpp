@@ -4,6 +4,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <chrono>
 #include <iomanip>
 #include <optional>
@@ -57,9 +58,9 @@ public:
           timing_csv(options.output_directory / "timings.csv",
                      "timestamp_ns,stage,duration_ms"),
           cpu_csv(options.output_directory / "cpu.csv",
-                  "elapsed_ms,core_percent,normalized_percent"),
+                  "elapsed_ms,core_percent,normalized_percent,resident_memory_mb"),
           summary_csv(options.output_directory / "summary.csv",
-                      "message_count,wall_time_ms,algorithm_process_time_ms,mean_cpu_normalized_percent,run_mode") {}
+                      "message_count,wall_time_ms,algorithm_process_time_ms,mean_cpu_normalized_percent,mean_memory_mb,peak_memory_mb,run_mode") {}
 
     BenchmarkOptions options;
     CsvWriter message_csv;
@@ -82,6 +83,8 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
     ProcessMonitor monitor;
     BenchmarkSummary summary;
     double cpu_sum = 0.0;
+    double memory_sum = 0.0;
+    double peak_memory_mb = 0.0;
     std::uint64_t cpu_count = 0;
     auto last_cpu_sample = std::chrono::steady_clock::now();
     const auto wall_start = last_cpu_sample;
@@ -123,9 +126,11 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
                 std::chrono::duration<double, std::milli>(process_end - wall_start).count();
             std::ostringstream row;
             row << std::setprecision(10) << elapsed_ms << ',' << usage.core_percent << ','
-                << usage.normalized_percent;
+                << usage.normalized_percent << ',' << usage.resident_memory_mb;
             impl_->cpu_csv.row(row.str());
             cpu_sum += usage.normalized_percent;
+            memory_sum += usage.resident_memory_mb;
+            peak_memory_mb = std::max(peak_memory_mb, usage.resident_memory_mb);
             ++cpu_count;
             last_cpu_sample = process_end;
         }
@@ -138,11 +143,25 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
                                       wall_end - finalize_start).count()});
     summary.wall_time_ms =
         std::chrono::duration<double, std::milli>(wall_end - wall_start).count();
+    if (cpu_count == 0) {
+        const CpuUsage usage = monitor.sample();
+        std::ostringstream row;
+        row << std::setprecision(10) << summary.wall_time_ms << ',' << usage.core_percent << ','
+            << usage.normalized_percent << ',' << usage.resident_memory_mb;
+        impl_->cpu_csv.row(row.str());
+        cpu_sum = usage.normalized_percent;
+        memory_sum = usage.resident_memory_mb;
+        peak_memory_mb = usage.resident_memory_mb;
+        cpu_count = 1;
+    }
     summary.mean_cpu_normalized_percent = cpu_count == 0 ? 0.0 : cpu_sum / cpu_count;
+    summary.mean_memory_mb = memory_sum / static_cast<double>(cpu_count);
+    summary.peak_memory_mb = peak_memory_mb;
 
     std::ostringstream row;
     row << std::setprecision(10) << summary.message_count << ',' << summary.wall_time_ms << ','
         << summary.algorithm_process_time_ms << ',' << summary.mean_cpu_normalized_percent << ','
+        << summary.mean_memory_mb << ',' << summary.peak_memory_mb << ','
         << to_string(impl_->options.run_mode);
     impl_->summary_csv.row(row.str());
     spdlog::info("finished {} messages in {:.3f} ms", summary.message_count,

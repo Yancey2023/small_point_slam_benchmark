@@ -66,13 +66,15 @@ const sensorLabels: Record<string, string> = {
 const groupLabels: Record<string, string> = {
   overview: '总览',
   message: '按消息类型处理耗时',
-  stage_mean: '阶段平均耗时',
-  stage_median: '阶段中位耗时',
-  stage_p95: '阶段 P95 耗时',
-  stage_max: '阶段最大耗时',
-  stage_total: '阶段累计耗时',
-  stage_count: '阶段调用次数',
+  stage: '算法阶段耗时',
+  count: '调用次数',
 }
+
+const defaultMetricIds = new Set([
+  'algorithm_process_time_ms',
+  'mean_memory_mb',
+  'peak_memory_mb',
+])
 
 async function readCsv(filePath: string): Promise<CsvRow[]> {
   const lines = (await readFile(filePath, 'utf8')).trim().split(/\r?\n/)
@@ -110,6 +112,8 @@ function metric(
   unit: PerformanceMetric['unit'],
   group = 'overview',
   lowerIsBetter = true,
+  selectionId?: string,
+  timingStatistic?: PerformanceMetric['timingStatistic'],
 ): PerformanceMetric {
   return {
     id,
@@ -118,8 +122,10 @@ function metric(
     unit,
     group,
     groupLabel: groupLabels[group] ?? group,
-    defaultSelected: group === 'overview',
+    defaultSelected: defaultMetricIds.has(id),
     lowerIsBetter,
+    ...(selectionId ? { selectionId } : {}),
+    ...(timingStatistic ? { timingStatistic } : {}),
   }
 }
 
@@ -139,16 +145,15 @@ function timingStatistics(
   idPrefix: string,
   label: string,
   durations: number[],
-  groupForAll?: string,
+  group: 'message' | 'stage',
 ): PerformanceMetric[] {
   if (!durations.length) return []
   return [
-    metric(`${idPrefix}:mean_ms`, `${label} · 平均`, mean(durations), 'ms', groupForAll ?? 'stage_mean'),
-    metric(`${idPrefix}:median_ms`, `${label} · 中位数`, percentile(durations, 0.5), 'ms', groupForAll ?? 'stage_median'),
-    metric(`${idPrefix}:p95_ms`, `${label} · P95`, percentile(durations, 0.95), 'ms', groupForAll ?? 'stage_p95'),
-    metric(`${idPrefix}:max_ms`, `${label} · 最大`, Math.max(0, ...durations), 'ms', groupForAll ?? 'stage_max'),
-    metric(`${idPrefix}:total_ms`, `${label} · 累计`, durations.reduce((sum, value) => sum + value, 0), 'ms', groupForAll ?? 'stage_total'),
-    metric(`${idPrefix}:count`, `${label} · 数量`, durations.length, 'count', groupForAll ?? 'stage_count', false),
+    metric(`${idPrefix}:mean_ms`, label, mean(durations), 'ms', group, true, idPrefix, 'mean'),
+    metric(`${idPrefix}:p95_ms`, label, percentile(durations, 0.95), 'ms', group, true, idPrefix, 'p95'),
+    metric(`${idPrefix}:max_ms`, label, Math.max(0, ...durations), 'ms', group, true, idPrefix, 'max'),
+    metric(`${idPrefix}:total_ms`, label, durations.reduce((sum, value) => sum + value, 0), 'ms', group, true, idPrefix, 'total'),
+    metric(`${idPrefix}:count`, label, durations.length, 'count', 'count', false),
   ]
 }
 
@@ -167,6 +172,9 @@ export async function readPerformance(outputDirectory: string): Promise<Performa
     .filter(Number.isFinite)
   const coreCpuValues = cpuRows
     .map((row) => Number(row.core_percent))
+    .filter(Number.isFinite)
+  const memoryValues = cpuRows
+    .map((row) => Number(row.resident_memory_mb))
     .filter(Number.isFinite)
 
   const totalDurationByTimestamp = new Map(
@@ -204,8 +212,28 @@ export async function readPerformance(outputDirectory: string): Promise<Performa
       `stage:${stage.id}`,
       stage.label,
       aggregateByTimestamp(timingRows, stage.rawStages),
+      'stage',
     ),
   )
+
+  const memoryMetrics = memoryValues.length ? [
+    metric(
+      'mean_memory_mb',
+      '平均常驻内存',
+      summary && 'mean_memory_mb' in summary
+        ? number(summary, 'mean_memory_mb')
+        : mean(memoryValues),
+      'MB',
+    ),
+    metric(
+      'peak_memory_mb',
+      '峰值常驻内存',
+      summary && 'peak_memory_mb' in summary
+        ? number(summary, 'peak_memory_mb')
+        : Math.max(0, ...memoryValues),
+      'MB',
+    ),
+  ] : []
 
   return {
     runMode: mode.id,
@@ -247,6 +275,7 @@ export async function readPerformance(outputDirectory: string): Promise<Performa
         'overview', cpuLowerIsBetter),
       metric('peak_core_cpu_percent', '峰值 CPU 单核当量', Math.max(0, ...coreCpuValues), '%',
         'overview', cpuLowerIsBetter),
+      ...memoryMetrics,
       metric(
         'message_count',
         '处理消息总数',

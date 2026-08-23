@@ -112,11 +112,13 @@ export interface PerformanceMetric {
   id: string
   label: string
   value: number
-  unit: 'ms' | '%' | 'count'
+  unit: 'ms' | '%' | 'MB' | 'count'
   group: string
   groupLabel: string
   defaultSelected: boolean
   lowerIsBetter: boolean
+  selectionId?: string
+  timingStatistic?: 'mean' | 'p95' | 'max' | 'total'
 }
 
 export interface PerformanceResponse {

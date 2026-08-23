@@ -27,6 +27,8 @@ struct BenchmarkSummary {
     double wall_time_ms{};
     double algorithm_process_time_ms{};
     double mean_cpu_normalized_percent{};
+    double mean_memory_mb{};
+    double peak_memory_mb{};
 };
 
 class BenchmarkRunner final : public ResultSink {

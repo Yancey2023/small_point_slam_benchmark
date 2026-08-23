@@ -8,7 +8,7 @@ repository:
   url: ""
   local_path: /home/yancey/cpp/navigation
   local_path_env: SMALL_POINT_SLAM_SOURCE_DIR
-  ref: 403dc2d87194fa59a1d1cd2c836d6ba23e30bef2
+  ref: e24b04452966f24fa221b2558e0ffc6281abdf5d
 dependencies:
   - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
   - {name: oneTBB, url: https://github.com/uxlfoundation/oneTBB.git}

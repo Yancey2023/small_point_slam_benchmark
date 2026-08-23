@@ -1,6 +1,7 @@
 algorithm: point_lio
-filter_size_map_m: 0.5
-filter_size_scan_m: 0.5
+filter_size_scan_m: 0.2
+filter_size_map_m: 0.2
+map_voxel_size_m: 0.5
 estimate_extrinsics: false
 gravity_m_s2: [0.0, 0.0, -9.81]
 lidar_measurement_noise: 0.01

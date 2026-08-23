@@ -9,6 +9,7 @@
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
+#include <psapi.h>
 #else
 #include <sys/resource.h>
 #include <unistd.h>
@@ -35,6 +36,29 @@ double process_cpu_seconds() {
 #endif
 }
 
+double resident_memory_mb() {
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) return 0.0;
+    return static_cast<double>(counters.WorkingSetSize) / (1024.0 * 1024.0);
+#elif defined(__linux__)
+    std::ifstream stream("/proc/self/statm");
+    std::uint64_t total_pages = 0;
+    std::uint64_t resident_pages = 0;
+    if (!(stream >> total_pages >> resident_pages)) return 0.0;
+    (void)total_pages;
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) return 0.0;
+    return static_cast<double>(resident_pages) * static_cast<double>(page_size) /
+           (1024.0 * 1024.0);
+#else
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) return 0.0;
+    return static_cast<double>(usage.ru_maxrss) / 1024.0;
+#endif
+}
+
 }  // namespace
 
 ProcessMonitor::ProcessMonitor()
@@ -49,9 +73,10 @@ CpuUsage ProcessMonitor::sample() {
     const double cpu_seconds = std::max(0.0, cpu_now - previous_process_seconds_);
     previous_wall_ = now;
     previous_process_seconds_ = cpu_now;
-    if (wall_seconds <= 0.0) return {};
+    const double memory_mb = resident_memory_mb();
+    if (wall_seconds <= 0.0) return {0.0, 0.0, memory_mb};
     const double core_percent = 100.0 * cpu_seconds / wall_seconds;
-    return {core_percent, core_percent / static_cast<double>(logical_cpu_count_)};
+    return {core_percent, core_percent / static_cast<double>(logical_cpu_count_), memory_mb};
 }
 
 }  // namespace slam_benchmark

@@ -53,11 +53,21 @@ int main() {
     BagDefinition bag{"unit", {}, {{7, "imu", SensorType::Imu, "/imu"}}};
     OneSampleReader reader;
     EchoAlgorithm algorithm;
-    BenchmarkRunner runner({output, std::chrono::milliseconds{0}});
-    const auto summary = runner.run(algorithm, reader, bag, "unused.yaml");
+    BenchmarkSummary summary;
+    {
+        BenchmarkRunner runner({output, std::chrono::milliseconds{0}});
+        summary = runner.run(algorithm, reader, bag, "unused.yaml");
+    }
     expect(summary.message_count == 1);
+    expect(summary.mean_memory_mb > 0.0);
+    expect(summary.peak_memory_mb >= summary.mean_memory_mb);
     expect(std::filesystem::exists(output / "timings.csv"));
     expect(std::filesystem::exists(output / "final_trajectory.csv"));
+    std::ifstream resource_csv(output / "cpu.csv");
+    std::string resource_header;
+    std::getline(resource_csv, resource_header);
+    expect(resource_header ==
+           "elapsed_ms,core_percent,normalized_percent,resident_memory_mb");
 
     RealtimeReader realtime_reader;
     EchoAlgorithm realtime_algorithm;

@@ -38,7 +38,7 @@ def main() -> int:
     parser.add_argument("algorithm", choices=selected_algorithms([]))
     parser.add_argument("dataset_manifest", type=Path)
     parser.add_argument("bag")
-    parser.add_argument("--build-dir", type=Path, default=ROOT / "build" / "default")
+    parser.add_argument("--build-dir", type=Path, default=ROOT / "build" / "algorithms")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--run-mode", choices=("full_speed", "realtime"),

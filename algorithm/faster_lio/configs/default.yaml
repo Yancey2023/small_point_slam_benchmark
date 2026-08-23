@@ -1,6 +1,6 @@
 algorithm: faster_lio
-filter_size_scan_m: 0.5
-filter_size_map_m: 0.5
+filter_size_scan_m: 0.2
+filter_size_map_m: 0.2
 map_voxel_size_m: 0.5
 max_iterations: 4
 estimate_extrinsics: false

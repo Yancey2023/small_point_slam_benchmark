@@ -9,6 +9,8 @@ struct CpuUsage {
     double core_percent{};
     // Process CPU use normalized to [0, 100] across all logical CPUs.
     double normalized_percent{};
+    // Current resident working set in MiB.
+    double resident_memory_mb{};
 };
 
 class ProcessMonitor {
@@ -23,4 +25,3 @@ private:
 };
 
 }  // namespace slam_benchmark
-

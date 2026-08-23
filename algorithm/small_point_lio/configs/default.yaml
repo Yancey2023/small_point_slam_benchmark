@@ -1,9 +1,9 @@
 algorithm: small_point_lio
 point_filter_num: 1
-min_range_m: 0.2
+min_range_m: 0.5
 max_range_m: 100.0
 space_downsample: true
-filter_size_scan_m: 0.5
+filter_size_scan_m: 0.2
 gravity_m_s2: [0.0, 0.0, -9.81]
 fix_gravity_direction: true
 check_satu: true
