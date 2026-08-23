@@ -44,7 +44,11 @@ raw CSV + process CPU samples
 - `final_trajectory.csv`：算法 finalize 后产生的最终路径。
 - `timings.csv`：算法自报阶段及 core 测得的 `total`、`finalize`。
 - `cpu.csv`：单核口径和按逻辑核心数归一化的进程 CPU 百分比。
-- `summary.csv`：消息数、墙钟时间、算法 process 总时间、平均 CPU。
+- `summary.csv`：消息数、墙钟时间、算法 process 总时间、平均 CPU 和运行模式。
+
+运行模式分为 `full_speed` 与 `realtime`。前者连续读取消息以测量最大吞吐，CPU
+占用表示算法主动使用的并行算力，不能脱离总耗时解释；后者按消息时间戳恢复采集节奏，
+此时 CPU 占用表示满足实时运行所需的资源，越低越好。
 
 所有姿态四元数顺序为 `x,y,z,w`，平移单位为米。
 
@@ -54,4 +58,3 @@ raw CSV + process CPU samples
 - 子进程传参数数组，不使用 shell 拼接。
 - CPU 时间在 Windows 使用 `GetProcessTimes`，Linux 使用 `getrusage`。
 - CMake 同时处理 MSVC 与 GCC/Clang；第三方 zstd 的桌面构建没有 `/dev/null` 或 shell patch。
-

@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 27267a2..0833026 100644
+index 27267a2..a0a8643 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -1,92 +1,35 @@
@@ -59,8 +59,8 @@ index 27267a2..0833026 100644
 -  livox_ros_driver
 -  message_generation
 -  eigen_conversions
-+add_library(voxel_map_algorithm STATIC standalone/voxel_map_engine.cpp)
-+target_include_directories(voxel_map_algorithm PUBLIC
++add_library(voxel_map_lio_algorithm STATIC standalone/voxel_map_engine.cpp)
++target_include_directories(voxel_map_lio_algorithm PUBLIC
 +    include
 +    standalone
 +    ${PCL_INCLUDE_DIRS}
@@ -86,7 +86,7 @@ index 27267a2..0833026 100644
 -  FILES
 -  Pose6D.msg
 -  States.msg
-+target_link_libraries(voxel_map_algorithm PUBLIC
++target_link_libraries(voxel_map_lio_algorithm PUBLIC
 +    Eigen3::Eigen
 +    OpenMP::OpenMP_CXX
 +    ${PCL_LIBRARIES}
@@ -95,7 +95,7 @@ index 27267a2..0833026 100644
 -generate_messages(
 - DEPENDENCIES
 - geometry_msgs
-+add_executable(voxel_map_benchmark
++add_executable(voxel_map_lio_benchmark
 +    standalone/main.cpp
 +    standalone/voxel_map_adapter.cpp
  )
@@ -104,8 +104,8 @@ index 27267a2..0833026 100644
 -  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
 -  DEPENDS EIGEN3 PCL
 -  INCLUDE_DIRS
-+target_link_libraries(voxel_map_benchmark PRIVATE
-+    voxel_map_algorithm
++target_link_libraries(voxel_map_lio_benchmark PRIVATE
++    voxel_map_lio_algorithm
 +    slam_benchmark::core
 +    yaml-cpp::yaml-cpp
  )
@@ -116,11 +116,11 @@ index 27267a2..0833026 100644
 -
 -
 +if(MSVC)
-+    target_compile_options(voxel_map_algorithm PRIVATE /W3 /utf-8)
-+    target_compile_options(voxel_map_benchmark PRIVATE /W4 /utf-8)
++    target_compile_options(voxel_map_lio_algorithm PRIVATE /W3 /utf-8)
++    target_compile_options(voxel_map_lio_benchmark PRIVATE /W4 /utf-8)
 +else()
-+    target_compile_options(voxel_map_algorithm PRIVATE -Wall -Wextra)
-+    target_compile_options(voxel_map_benchmark PRIVATE -Wall -Wextra -Wpedantic)
++    target_compile_options(voxel_map_lio_algorithm PRIVATE -Wall -Wextra)
++    target_compile_options(voxel_map_lio_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 +endif()
 diff --git a/include/common_lib.h b/include/common_lib.h
 index 0976e1a..4d0cade 100644
@@ -263,10 +263,10 @@ index 0000000..4b81fec
 +}
 diff --git a/standalone/voxel_map_adapter.cpp b/standalone/voxel_map_adapter.cpp
 new file mode 100644
-index 0000000..fe9a2ac
+index 0000000..0fc94ae
 --- /dev/null
 +++ b/standalone/voxel_map_adapter.cpp
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,152 @@
 +#include "voxel_map_adapter.hpp"
 +
 +#include <spdlog/spdlog.h>
@@ -300,9 +300,13 @@ index 0000000..fe9a2ac
 +    slam_benchmark::ResultSink& sink) {
 +    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
 +                                         &slam_benchmark::SensorDefinition::type);
-+    if (lidar == sensors.end()) throw std::runtime_error("VoxelMap requires a LiDAR");
++    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
++                                       &slam_benchmark::SensorDefinition::type);
++    if (lidar == sensors.end() || imu == sensors.end())
++        throw std::runtime_error("VoxelMap requires one LiDAR and one IMU");
 +    sink_ = &sink;
 +    lidar_id_ = lidar->id;
++    imu_id_ = imu->id;
 +    const auto& transform = lidar->calibration.body_from_sensor;
 +    for (int row = 0; row < 4; ++row)
 +        for (int column = 0; column < 4; ++column)
@@ -319,6 +323,11 @@ index 0000000..fe9a2ac
 +        parameter(root, "min_eigenvalue_ratio", 0.01F);
 +    options.range_noise = parameter(root, "range_noise_m", 0.02F);
 +    options.angle_noise_degrees = parameter(root, "angle_noise_deg", 0.05F);
++    options.gyroscope_noise = parameter(root, "gyroscope_noise", 0.1);
++    options.accelerometer_noise = parameter(root, "accelerometer_noise", 0.1);
++    options.gyroscope_bias_noise = parameter(root, "gyroscope_bias_noise", 0.0001);
++    options.accelerometer_bias_noise =
++        parameter(root, "accelerometer_bias_noise", 0.0001);
 +    if (root["layer_point_sizes"])
 +        options.layer_point_sizes = root["layer_point_sizes"].as<std::vector<int>>();
 +    while (options.layer_point_sizes.size() <= static_cast<std::size_t>(options.max_layer))
@@ -330,10 +339,22 @@ index 0000000..fe9a2ac
 +        sink_->report_timing({nanoseconds(timestamp), stage, duration});
 +    });
 +    engine_.initialize(options);
-+    spdlog::info("VoxelMap standalone adapter initialized");
++    spdlog::info("VoxelMap (with imu) standalone adapter initialized");
 +}
 +
 +void VoxelMapAdapter::process(const slam_benchmark::SensorSample& sample) {
++    if (const auto* imu = std::get_if<slam_benchmark::ImuSample>(&sample.payload)) {
++        if (sample.sensor_id != imu_id_) return;
++        VoxelMapImuSample converted;
++        converted.timestamp = seconds(sample.timestamp_ns);
++        converted.angular_velocity << imu->angular_velocity_rad_s[0],
++            imu->angular_velocity_rad_s[1], imu->angular_velocity_rad_s[2];
++        converted.linear_acceleration << imu->linear_acceleration_m_s2[0],
++            imu->linear_acceleration_m_s2[1], imu->linear_acceleration_m_s2[2];
++        imu_queue_.push_back(std::move(converted));
++        drain();
++        return;
++    }
 +    const auto* cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload);
 +    if (cloud == nullptr || sample.sensor_id != lidar_id_) return;
 +    if (cloud->points.size() != cloud->point_time_offset_ns.size())
@@ -341,6 +362,7 @@ index 0000000..fe9a2ac
 +    const auto started = std::chrono::steady_clock::now();
 +    PointCloudXYZI::Ptr converted(new PointCloudXYZI());
 +    converted->reserve(cloud->points.size());
++    double maximum_offset = 0.0;
 +    for (std::size_t index = 0; index < cloud->points.size(); ++index) {
 +        const auto& source = cloud->points[index];
 +        const Eigen::Vector4d transformed =
@@ -351,8 +373,10 @@ index 0000000..fe9a2ac
 +        point.z = transformed.z();
 +        point.intensity = source.intensity;
 +        point.normal_x = point.normal_y = point.normal_z = 0.0F;
-+        point.curvature =
-+            static_cast<float>(static_cast<double>(cloud->point_time_offset_ns[index]) * 1e-6);
++        const double offset_ms =
++            static_cast<double>(cloud->point_time_offset_ns[index]) * 1e-6;
++        point.curvature = static_cast<float>(offset_ms);
++        maximum_offset = std::max(maximum_offset, offset_ms * 1e-3);
 +        converted->push_back(point);
 +    }
 +    sink_->report_timing(
@@ -360,7 +384,25 @@ index 0000000..fe9a2ac
 +         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
 +                                                   started)
 +             .count()});
-+    engine_.process(seconds(sample.timestamp_ns), converted);
++    const double start_time = seconds(sample.timestamp_ns);
++    lidar_queue_.push_back({start_time, start_time + maximum_offset,
++                            std::move(converted)});
++    drain();
++}
++
++void VoxelMapAdapter::drain() {
++    while (!lidar_queue_.empty() && !imu_queue_.empty() &&
++           imu_queue_.back().timestamp >= lidar_queue_.front().end_time) {
++        LidarFrame frame = std::move(lidar_queue_.front());
++        lidar_queue_.pop_front();
++        std::vector<VoxelMapImuSample> measurements;
++        while (!imu_queue_.empty() && imu_queue_.front().timestamp <= frame.end_time) {
++            measurements.push_back(std::move(imu_queue_.front()));
++            imu_queue_.pop_front();
++        }
++        if (!measurements.empty())
++            engine_.process(frame.start_time, frame.cloud, measurements);
++    }
 +}
 +
 +void VoxelMapAdapter::accept_pose(double timestamp, const StatesGroup& state) {
@@ -374,23 +416,26 @@ index 0000000..fe9a2ac
 +}
 +
 +void VoxelMapAdapter::finalize() {
++    drain();
 +    sink_->report_final_trajectory(trajectory_);
 +}
 diff --git a/standalone/voxel_map_adapter.hpp b/standalone/voxel_map_adapter.hpp
 new file mode 100644
-index 0000000..b59ce55
+index 0000000..7a0507c
 --- /dev/null
 +++ b/standalone/voxel_map_adapter.hpp
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,36 @@
 +#pragma once
 +
 +#include "voxel_map_engine.hpp"
 +
 +#include <slam_benchmark/algorithm.hpp>
 +
++#include <deque>
++
 +class VoxelMapAdapter final : public slam_benchmark::SlamAlgorithm {
 +public:
-+    [[nodiscard]] std::string_view name() const noexcept override { return "voxel_map"; }
++    [[nodiscard]] std::string_view name() const noexcept override { return "voxel_map_lio"; }
 +    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
 +                    const std::filesystem::path& config_path,
 +                    slam_benchmark::ResultSink& sink) override;
@@ -398,20 +443,30 @@ index 0000000..b59ce55
 +    void finalize() override;
 +
 +private:
++    struct LidarFrame {
++        double start_time{};
++        double end_time{};
++        PointCloudXYZI::Ptr cloud;
++    };
++
++    void drain();
 +    void accept_pose(double timestamp, const StatesGroup& state);
 +
 +    slam_benchmark::ResultSink* sink_{};
 +    VoxelMapEngine engine_;
 +    Eigen::Matrix4d body_from_lidar_ = Eigen::Matrix4d::Identity();
 +    slam_benchmark::SensorId lidar_id_{};
++    slam_benchmark::SensorId imu_id_{};
++    std::deque<VoxelMapImuSample> imu_queue_;
++    std::deque<LidarFrame> lidar_queue_;
 +    slam_benchmark::Trajectory trajectory_;
 +};
 diff --git a/standalone/voxel_map_engine.cpp b/standalone/voxel_map_engine.cpp
 new file mode 100644
-index 0000000..f91e8b9
+index 0000000..2c76343
 --- /dev/null
 +++ b/standalone/voxel_map_engine.cpp
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,424 @@
 +#include "voxel_map_engine.hpp"
 +
 +#include "voxel_map_util.hpp"
@@ -425,6 +480,9 @@ index 0000000..f91e8b9
 +#include <utility>
 +
 +namespace {
++
++constexpr std::size_t kImuInitializationSamples = 200;
++constexpr double kGravity = 9.81;
 +
 +double elapsed_ms(std::chrono::steady_clock::time_point start) {
 +    return std::chrono::duration<double, std::milli>(
@@ -456,15 +514,29 @@ index 0000000..f91e8b9
 +                                 options.scan_voxel_size);
 +    }
 +
-+    void process(double timestamp, const PointCloudXYZI::Ptr& cloud) {
++    void process(double timestamp, const PointCloudXYZI::Ptr& cloud,
++                 const std::vector<VoxelMapImuSample>& imu_samples) {
 +        if (cloud == nullptr || cloud->empty()) return;
-+        propagate(timestamp);
++        const double scan_end_time =
++            timestamp + std::max(0.0, static_cast<double>(
++                                          std::max_element(
++                                              cloud->points.begin(), cloud->points.end(),
++                                              [](const PointType& lhs, const PointType& rhs) {
++                                                  return lhs.curvature < rhs.curvature;
++                                              })
++                                              ->curvature) *
++                                          1e-3);
++        auto started = std::chrono::steady_clock::now();
++        const bool imu_ready = initialize_imu(imu_samples);
++        if (imu_ready) undistort(timestamp, scan_end_time, imu_samples, *cloud);
++        report(scan_end_time, "undistortion", elapsed_ms(started));
++        if (!imu_ready) return;
 +        propagated_ = state_;
 +
-+        auto started = std::chrono::steady_clock::now();
++        started = std::chrono::steady_clock::now();
 +        scan_filter_.setInputCloud(cloud);
 +        scan_filter_.filter(*downsampled_);
-+        report(timestamp, "downsampling", elapsed_ms(started));
++        report(scan_end_time, "downsampling", elapsed_ms(started));
 +        if (downsampled_->empty()) return;
 +
 +        std::vector<M3D> body_covariances;
@@ -486,7 +558,7 @@ index 0000000..f91e8b9
 +            buildVoxelMap(points, options_.voxel_size, options_.max_layer,
 +                          options_.layer_point_sizes, options_.max_points,
 +                          options_.max_points, options_.minimum_eigenvalue_ratio, map_);
-+            emit_pose(timestamp);
++            emit_pose(scan_end_time);
 +            return;
 +        }
 +
@@ -576,8 +648,8 @@ index 0000000..f91e8b9
 +                state_.cov = correction * state_.cov;
 +            }
 +        }
-+        report(timestamp, "map_search", search_duration);
-+        report(timestamp, "filter_update", optimization_duration);
++        report(scan_end_time, "map_search", search_duration);
++        report(scan_end_time, "filter_update", optimization_duration);
 +
 +        started = std::chrono::steady_clock::now();
 +        auto points = map_points(body_covariances, cross_matrices);
@@ -587,8 +659,175 @@ index 0000000..f91e8b9
 +        updateVoxelMap(points, options_.voxel_size, options_.max_layer,
 +                       options_.layer_point_sizes, options_.max_points,
 +                       options_.max_points, options_.minimum_eigenvalue_ratio, map_);
-+        report(timestamp, "map_update", elapsed_ms(started));
-+        emit_pose(timestamp);
++        report(scan_end_time, "map_update", elapsed_ms(started));
++        emit_pose(scan_end_time);
++    }
++
++    struct ImuPose {
++        double offset_time{};
++        V3D acceleration = V3D::Zero();
++        V3D angular_velocity = V3D::Zero();
++        V3D velocity = V3D::Zero();
++        V3D position = V3D::Zero();
++        M3D rotation = M3D::Identity();
++    };
++
++    bool initialize_imu(const std::vector<VoxelMapImuSample>& samples) {
++        if (imu_initialized_) return true;
++        for (const auto& sample : samples) {
++            ++imu_initialization_samples_;
++            if (imu_initialization_samples_ == 1) {
++                mean_acceleration_ = sample.linear_acceleration;
++                mean_angular_velocity_ = sample.angular_velocity;
++            } else {
++                const double count = static_cast<double>(imu_initialization_samples_);
++                mean_acceleration_ +=
++                    (sample.linear_acceleration - mean_acceleration_) / count;
++                mean_angular_velocity_ +=
++                    (sample.angular_velocity - mean_angular_velocity_) / count;
++            }
++        }
++        if (!samples.empty()) {
++            last_imu_ = samples.back();
++            has_last_imu_ = true;
++        }
++        if (imu_initialization_samples_ < kImuInitializationSamples ||
++            mean_acceleration_.norm() < 1e-6)
++            return false;
++
++        state_.gravity = -mean_acceleration_.normalized() * kGravity;
++        state_.bias_g = mean_angular_velocity_;
++        imu_initialized_ = true;
++        return false;
++    }
++
++    void propagate_imu(const V3D& angular_velocity, const V3D& acceleration,
++                       double dt, M3D& rotation, V3D& position, V3D& velocity) {
++        if (dt <= 0.0) return;
++        const V3D unbiased_gyro = angular_velocity - state_.bias_g;
++        const double acceleration_scale =
++            kGravity / std::max(mean_acceleration_.norm(), 1e-6);
++        const V3D unbiased_acceleration =
++            acceleration * acceleration_scale - state_.bias_a;
++
++        MD(DIM_STATE, DIM_STATE) transition =
++            MD(DIM_STATE, DIM_STATE)::Identity();
++        M3D acceleration_cross;
++        acceleration_cross << SKEW_SYM_MATRX(unbiased_acceleration);
++        transition.block<3, 3>(0, 0) = Exp(unbiased_gyro, -dt);
++        transition.block<3, 3>(0, 9) = -Eye3d * dt;
++        transition.block<3, 3>(3, 6) = Eye3d * dt;
++        transition.block<3, 3>(6, 0) = -rotation * acceleration_cross * dt;
++        transition.block<3, 3>(6, 12) = -rotation * dt;
++        transition.block<3, 3>(6, 15) = Eye3d * dt;
++        MD(DIM_STATE, DIM_STATE) process_noise =
++            MD(DIM_STATE, DIM_STATE)::Zero();
++        const double dt_squared = dt * dt;
++        process_noise.block<3, 3>(0, 0).diagonal().setConstant(
++            options_.gyroscope_noise * dt_squared);
++        process_noise.block<3, 3>(6, 6).diagonal().setConstant(
++            options_.accelerometer_noise * dt_squared);
++        process_noise.block<3, 3>(9, 9).diagonal().setConstant(
++            options_.gyroscope_bias_noise * dt_squared);
++        process_noise.block<3, 3>(12, 12).diagonal().setConstant(
++            options_.accelerometer_bias_noise * dt_squared);
++        state_.cov = transition * state_.cov * transition.transpose() + process_noise;
++
++        rotation *= Exp(unbiased_gyro, dt);
++        const V3D world_acceleration = rotation * unbiased_acceleration + state_.gravity;
++        position += velocity * dt + 0.5 * world_acceleration * dt_squared;
++        velocity += world_acceleration * dt;
++        last_world_acceleration_ = world_acceleration;
++        last_unbiased_gyro_ = unbiased_gyro;
++    }
++
++    void undistort(double scan_start_time, double scan_end_time,
++                   const std::vector<VoxelMapImuSample>& samples,
++                   PointCloudXYZI& cloud) {
++        std::vector<VoxelMapImuSample> imu;
++        imu.reserve(samples.size() + (has_last_imu_ ? 1U : 0U));
++        if (has_last_imu_) imu.push_back(last_imu_);
++        imu.insert(imu.end(), samples.begin(), samples.end());
++        std::sort(imu.begin(), imu.end(), [](const auto& lhs, const auto& rhs) {
++            return lhs.timestamp < rhs.timestamp;
++        });
++
++        std::sort(cloud.points.begin(), cloud.points.end(),
++                  [](const PointType& lhs, const PointType& rhs) {
++                      return lhs.curvature < rhs.curvature;
++                  });
++        M3D rotation = state_.rot_end;
++        V3D position = state_.pos_end;
++        V3D velocity = state_.vel_end;
++        std::vector<ImuPose> poses;
++        poses.reserve(imu.size() + 2);
++        poses.push_back({0.0, last_world_acceleration_, last_unbiased_gyro_,
++                         velocity, position, rotation});
++
++        double integrated_time = scan_start_time;
++        for (std::size_t index = 0; index + 1 < imu.size(); ++index) {
++            const auto& head = imu[index];
++            const auto& tail = imu[index + 1];
++            if (tail.timestamp <= scan_start_time || head.timestamp >= scan_end_time)
++                continue;
++            const double segment_start = std::max(integrated_time, scan_start_time);
++            const double segment_end = std::min(tail.timestamp, scan_end_time);
++            const double dt = segment_end - segment_start;
++            if (dt <= 0.0) continue;
++            const V3D angular_velocity =
++                0.5 * (head.angular_velocity + tail.angular_velocity);
++            const V3D acceleration =
++                0.5 * (head.linear_acceleration + tail.linear_acceleration);
++            propagate_imu(angular_velocity, acceleration, dt, rotation, position,
++                          velocity);
++            integrated_time = segment_end;
++            poses.push_back({integrated_time - scan_start_time,
++                             last_world_acceleration_, last_unbiased_gyro_, velocity,
++                             position, rotation});
++            if (integrated_time >= scan_end_time) break;
++        }
++
++        if (integrated_time < scan_end_time) {
++            const auto& extrapolation = imu.empty() ? last_imu_ : imu.back();
++            const double dt = scan_end_time - integrated_time;
++            propagate_imu(extrapolation.angular_velocity,
++                          extrapolation.linear_acceleration, dt, rotation, position,
++                          velocity);
++            poses.push_back({scan_end_time - scan_start_time,
++                             last_world_acceleration_, last_unbiased_gyro_, velocity,
++                             position, rotation});
++        }
++
++        state_.rot_end = rotation;
++        state_.pos_end = position;
++        state_.vel_end = velocity;
++        for (PointType& point : cloud.points) {
++            const double point_time = std::clamp(
++                static_cast<double>(point.curvature) * 1e-3, 0.0,
++                scan_end_time - scan_start_time);
++            const auto upper = std::upper_bound(
++                poses.begin(), poses.end(), point_time,
++                [](double value, const ImuPose& pose) {
++                    return value < pose.offset_time;
++                });
++            const ImuPose& pose = upper == poses.begin() ? poses.front() : *std::prev(upper);
++            const double dt = point_time - pose.offset_time;
++            const M3D point_rotation = pose.rotation * Exp(pose.angular_velocity, dt);
++            const V3D point_position =
++                pose.position + pose.velocity * dt + 0.5 * pose.acceleration * dt * dt;
++            const V3D source(point.x, point.y, point.z);
++            const V3D corrected =
++                state_.rot_end.transpose() *
++                (point_rotation * source + point_position - state_.pos_end);
++            point.x = static_cast<float>(corrected.x());
++            point.y = static_cast<float>(corrected.y());
++            point.z = static_cast<float>(corrected.z());
++        }
++
++        if (!samples.empty()) {
++            last_imu_ = samples.back();
++            has_last_imu_ = true;
++        }
 +    }
 +
 +    M3D world_covariance(const M3D& body_covariance, const M3D& cross) const {
@@ -613,26 +852,6 @@ index 0000000..f91e8b9
 +        return result;
 +    }
 +
-+    void propagate(double timestamp) {
-+        if (last_timestamp_ == 0.0) {
-+            last_timestamp_ = timestamp;
-+            return;
-+        }
-+        const double dt = std::max(0.0, timestamp - last_timestamp_);
-+        last_timestamp_ = timestamp;
-+        MD(DIM_STATE, DIM_STATE) transition =
-+            MD(DIM_STATE, DIM_STATE)::Identity();
-+        transition.block<3, 3>(0, 9) = Eye3d * dt;
-+        transition.block<3, 3>(3, 6) = Eye3d * dt;
-+        MD(DIM_STATE, DIM_STATE) process_noise =
-+            MD(DIM_STATE, DIM_STATE)::Zero();
-+        process_noise.block<3, 3>(9, 9).diagonal().setConstant(0.1 * dt * dt);
-+        process_noise.block<3, 3>(6, 6).diagonal().setConstant(0.1 * dt * dt);
-+        state_.cov = transition * state_.cov * transition.transpose() + process_noise;
-+        state_.rot_end *= Exp(state_.bias_g, dt);
-+        state_.pos_end += state_.vel_end * dt;
-+    }
-+
 +    void report(double timestamp, const char* stage, double duration) const {
 +        if (timing_callback_) timing_callback_(timestamp, stage, duration);
 +    }
@@ -649,7 +868,14 @@ index 0000000..f91e8b9
 +    std::unordered_map<VOXEL_LOC, OctoTree*> map_;
 +    PoseCallback pose_callback_;
 +    TimingCallback timing_callback_;
-+    double last_timestamp_ = 0.0;
++    VoxelMapImuSample last_imu_;
++    V3D mean_acceleration_ = V3D::Zero();
++    V3D mean_angular_velocity_ = V3D::Zero();
++    V3D last_world_acceleration_ = V3D::Zero();
++    V3D last_unbiased_gyro_ = V3D::Zero();
++    std::size_t imu_initialization_samples_ = 0;
++    bool has_last_imu_ = false;
++    bool imu_initialized_ = false;
 +};
 +
 +VoxelMapEngine::VoxelMapEngine() : impl_(std::make_unique<Impl>()) {}
@@ -661,15 +887,16 @@ index 0000000..f91e8b9
 +void VoxelMapEngine::set_timing_callback(TimingCallback callback) {
 +    impl_->timing_callback_ = std::move(callback);
 +}
-+void VoxelMapEngine::process(double timestamp, const PointCloudXYZI::Ptr& cloud) {
-+    impl_->process(timestamp, cloud);
++void VoxelMapEngine::process(double timestamp, const PointCloudXYZI::Ptr& cloud,
++                             const std::vector<VoxelMapImuSample>& imu_samples) {
++    impl_->process(timestamp, cloud, imu_samples);
 +}
 diff --git a/standalone/voxel_map_engine.hpp b/standalone/voxel_map_engine.hpp
 new file mode 100644
-index 0000000..ea3e5e3
+index 0000000..f73a075
 --- /dev/null
 +++ b/standalone/voxel_map_engine.hpp
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,50 @@
 +#pragma once
 +
 +#include "common_lib.h"
@@ -677,6 +904,12 @@ index 0000000..ea3e5e3
 +#include <functional>
 +#include <memory>
 +#include <vector>
++
++struct VoxelMapImuSample {
++    double timestamp{};
++    V3D angular_velocity = V3D::Zero();
++    V3D linear_acceleration = V3D::Zero();
++};
 +
 +class VoxelMapEngine {
 +public:
@@ -689,6 +922,10 @@ index 0000000..ea3e5e3
 +        float minimum_eigenvalue_ratio = 0.01F;
 +        float range_noise = 0.02F;
 +        float angle_noise_degrees = 0.05F;
++        double gyroscope_noise = 0.1;
++        double accelerometer_noise = 0.1;
++        double gyroscope_bias_noise = 0.0001;
++        double accelerometer_bias_noise = 0.0001;
 +        std::vector<int> layer_point_sizes{20, 10, 10};
 +    };
 +
@@ -703,7 +940,8 @@ index 0000000..ea3e5e3
 +    void initialize(const Options& options);
 +    void set_pose_callback(PoseCallback callback);
 +    void set_timing_callback(TimingCallback callback);
-+    void process(double timestamp, const PointCloudXYZI::Ptr& cloud);
++    void process(double timestamp, const PointCloudXYZI::Ptr& cloud,
++                 const std::vector<VoxelMapImuSample>& imu_samples);
 +
 +private:
 +    class Impl;

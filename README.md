@@ -17,7 +17,7 @@ frontend/                 # Vue/Vite 本地 benchmark 工作台
 doc/                      # 架构和移植说明
 ```
 
-目前 core 和四个算法适配均可独立链接、运行和输出结果；上游仓库 ref 已固定到已核验的 commit，移植差异通过 Git patch 保存。
+目前 core 和算法适配均可独立链接、运行和输出结果；上游仓库 ref 已固定到已核验的 commit，移植差异通过 Git patch 保存。算法和数据集由服务实时扫描 manifest，不需要同步修改前端列表。
 
 ## 构建 core
 
@@ -60,12 +60,14 @@ python scripts/patch_algorithms.py check fast_lio
 每个算法可执行程序遵循统一参数：
 
 ```sh
-python scripts/run_benchmark.py fast_lio datasets/example/manifest.yaml sequence_01
+python scripts/run_benchmark.py fast_lio datasets/example/manifest.yaml sequence_01 --run-mode full_speed
+python scripts/run_benchmark.py fast_lio datasets/example/manifest.yaml sequence_01 --run-mode realtime
 python scripts/analyze_results.py results
 ```
 
 原始输出包括 `sensor_messages.csv`、`realtime_pose.csv`、
-`final_trajectory.csv`、`timings.csv`、`cpu.csv` 和 `summary.csv`。
+`final_trajectory.csv`、`timings.csv`、`cpu.csv` 和 `summary.csv`。`full_speed` 不等待
+bag 时间间隔，用于测吞吐；`realtime` 按消息时间戳节流，用于评估实时 CPU 需求。
 
 ## Web 工作台
 

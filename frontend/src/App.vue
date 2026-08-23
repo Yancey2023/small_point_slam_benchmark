@@ -6,12 +6,14 @@ import DatasetPicker from '@/components/DatasetPicker.vue'
 import PerformancePanel from '@/components/PerformancePanel.vue'
 import ResultPanel from '@/components/ResultPanel.vue'
 import RunProgress from '@/components/RunProgress.vue'
+import RunModePicker from '@/components/RunModePicker.vue'
 import { useBenchmark } from '@/composables/useBenchmark'
 
 const {
   catalog,
   selectedDatasetIds,
   selectedAlgorithmIds,
+  selectedRunMode,
   results,
   run,
   loading,
@@ -52,10 +54,15 @@ const hasResults = computed(() => results.value.length > 0)
             <DatasetPicker v-model="selectedDatasetIds" :datasets="catalog.datasets" />
             <AlgorithmPicker v-model="selectedAlgorithmIds" :algorithms="catalog.algorithms" />
             <div class="launch-card">
-              <div>
+              <div class="launch-copy">
                 <strong>准备一次新实验</strong>
                 <span>{{ plannedJobs }} 个任务将按顺序运行，避免干扰 CPU 统计</span>
               </div>
+              <RunModePicker
+                v-if="selectedRunMode"
+                v-model="selectedRunMode"
+                :modes="catalog.runModes"
+              />
               <button type="button" :disabled="!canRun" @click="start">
                 <span>{{ starting ? '正在准备…' : '开始跑起来' }}</span>
                 <i aria-hidden="true">→</i>
@@ -122,7 +129,7 @@ main { position: relative; z-index: 1; width: min(1180px, calc(100% - 40px)); ma
 .selection-column { display: grid; gap: 16px; }
 .status-column { min-width: 0; }
 .launch-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 19px 20px; border: 1px solid var(--line-soft); border-radius: 22px; background: #f8f9f7; box-shadow: var(--shadow-card); }
-.launch-card > div { display: grid; gap: 3px; }
+.launch-copy { display: grid; min-width: 145px; gap: 3px; }
 .launch-card strong { font-size: 14px; }
 .launch-card span { color: var(--ink-muted); font-size: 11px; }
 .launch-card button { display: flex; min-width: 154px; align-items: center; justify-content: space-between; gap: 15px; padding: 13px 14px 13px 17px; border: 0; border-radius: 15px; color: white; background: #59798c; box-shadow: 0 9px 21px rgba(65, 91, 106, 0.2); cursor: pointer; font-weight: 800; transition: 160ms ease; }
@@ -152,6 +159,10 @@ footer { display: flex; width: min(1180px, calc(100% - 40px)); justify-content: 
 @media (max-width: 900px) {
   .workspace-grid { grid-template-columns: 1fr; }
   .status-column { min-height: 390px; }
+}
+@media (max-width: 1050px) {
+  .launch-card { align-items: stretch; flex-direction: column; }
+  .launch-card button { width: 100%; }
 }
 @media (max-width: 650px) {
   main, footer { width: min(100% - 24px, 1180px); }

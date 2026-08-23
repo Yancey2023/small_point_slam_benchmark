@@ -35,6 +35,13 @@ const std::string& required(const std::map<std::string, std::string, std::less<>
     return it->second;
 }
 
+RunMode run_mode(const std::map<std::string, std::string, std::less<>>& values) {
+    const auto it = values.find("--run-mode");
+    if (it == values.end() || it->second == "full_speed") return RunMode::FullSpeed;
+    if (it->second == "realtime") return RunMode::Realtime;
+    throw std::invalid_argument("invalid --run-mode: " + it->second);
+}
+
 }  // namespace
 
 int run_benchmark_main(int argc, char** argv, SlamAlgorithm& algorithm) {
@@ -42,7 +49,7 @@ int run_benchmark_main(int argc, char** argv, SlamAlgorithm& algorithm) {
         if (argc == 2 && std::string_view(argv[1]) == "--help") {
             std::cout << "Usage: " << argv[0]
                       << " --dataset-manifest <path> --bag <name> --config <path>"
-                         " --output <directory>\n";
+                         " --output <directory> [--run-mode full_speed|realtime]\n";
             return 0;
         }
         const auto arguments = parse_arguments(argc, argv);
@@ -57,7 +64,8 @@ int run_benchmark_main(int argc, char** argv, SlamAlgorithm& algorithm) {
         const BagDefinition* bag = &find_bag(manifest, bag_name);
 #if defined(SLAM_BENCHMARK_HAS_ROSBAG_IO)
         RosbagDatasetReader reader;
-        BenchmarkRunner runner({output_path});
+        BenchmarkRunner runner({output_path, std::chrono::milliseconds{100},
+                                run_mode(arguments)});
         runner.run(algorithm, reader, *bag, config_path);
         return 0;
 #else

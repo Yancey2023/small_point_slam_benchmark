@@ -1,4 +1,12 @@
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type RunMode = 'full_speed' | 'realtime'
+
+export interface RunModeCatalogItem {
+  id: RunMode
+  name: string
+  description: string
+  cpuDescription: string
+}
 
 export interface DatasetCatalogItem {
   id: string
@@ -21,12 +29,14 @@ export interface AlgorithmCatalogItem {
 export interface CatalogResponse {
   datasets: DatasetCatalogItem[]
   algorithms: AlgorithmCatalogItem[]
+  runModes: RunModeCatalogItem[]
   buildDirectory: string
 }
 
 export interface CreateRunRequest {
   datasetIds: string[]
   algorithmIds: string[]
+  runMode: RunMode
 }
 
 export interface RunJob {
@@ -36,6 +46,8 @@ export interface RunJob {
   bagName: string
   algorithmId: string
   algorithmName: string
+  runMode: RunMode
+  runModeName: string
   status: RunStatus
   processedMessages: number
   expectedMessages: number | null
@@ -64,6 +76,8 @@ export interface BenchmarkResult {
   bagName: string
   algorithmId: string
   algorithmName: string
+  runMode: RunMode
+  runModeName: string
   hasTrajectory: boolean
   hasPerformance: boolean
   updatedAt: string
@@ -99,18 +113,15 @@ export interface PerformanceMetric {
   label: string
   value: number
   unit: 'ms' | '%' | 'count'
-  group:
-    | 'overview'
-    | 'message'
-    | 'stage_mean'
-    | 'stage_median'
-    | 'stage_p95'
-    | 'stage_max'
-    | 'stage_total'
-    | 'stage_count'
+  group: string
+  groupLabel: string
+  defaultSelected: boolean
   lowerIsBetter: boolean
 }
 
 export interface PerformanceResponse {
+  runMode: RunMode
+  runModeLabel: string
+  cpuDescription: string
   metrics: PerformanceMetric[]
 }

@@ -10,9 +10,16 @@
 
 namespace slam_benchmark {
 
+enum class RunMode { FullSpeed, Realtime };
+
+[[nodiscard]] constexpr const char* to_string(RunMode mode) noexcept {
+    return mode == RunMode::Realtime ? "realtime" : "full_speed";
+}
+
 struct BenchmarkOptions {
     std::filesystem::path output_directory;
     std::chrono::milliseconds cpu_sample_period{100};
+    RunMode run_mode{RunMode::FullSpeed};
 };
 
 struct BenchmarkSummary {

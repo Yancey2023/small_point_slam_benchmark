@@ -1,0 +1,23 @@
+schema_version: 1
+name: VoxelMap (with imu)
+description: Generalized VoxelMap variant with IMU propagation and point-level LiDAR undistortion.
+authors: [Chongjian Yuan, Wei Xu]
+license: GPL-2.0
+repository:
+  name: VoxelMap
+  url: https://github.com/hku-mars/VoxelMap.git
+  ref: d787ee8ccfb0e509a36adb2c52bd5da97b29c39a
+dependencies:
+  - {name: PCL, url: https://github.com/PointCloudLibrary/pcl.git}
+  - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
+paper:
+  title: "Efficient and Probabilistic Adaptive Voxel Mapping for Accurate Online LiDAR Odometry"
+  url: https://arxiv.org/abs/2109.07082
+sensors: [lidar, imu]
+timing_stages:
+  - lidar_preprocess
+  - undistortion
+  - downsampling
+  - map_search
+  - filter_update
+  - map_update

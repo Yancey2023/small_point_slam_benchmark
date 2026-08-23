@@ -648,10 +648,10 @@ index 0000000..e49bbd8
 +};
 diff --git a/standalone/fast_lio_engine.cpp b/standalone/fast_lio_engine.cpp
 new file mode 100644
-index 0000000..7d458c3
+index 0000000..7e92566
 --- /dev/null
 +++ b/standalone/fast_lio_engine.cpp
-@@ -0,0 +1,367 @@
+@@ -0,0 +1,372 @@
 +#include "fast_lio_engine.hpp"
 +
 +#include "IMU_Processing.hpp"
@@ -756,10 +756,12 @@ index 0000000..7d458c3
 +        selected_.assign(point_count, true);
 +        residuals_.assign(point_count, -1000.0F);
 +
++        map_search_duration_ms_ = 0.0;
 +        started = std::chrono::steady_clock::now();
 +        double solve_time = 0.0;
 +        filter_.update_iterated_dyn_share_modified(kLaserPointCovariance, solve_time);
-+        report(measures.lidar_end_time, "filter_update", elapsed_ms(started));
++        report(measures.lidar_end_time, "filter_update",
++               std::max(0.0, elapsed_ms(started) - map_search_duration_ms_));
 +        state_ = filter_.get_x();
 +        lidar_position_ = state_.pos + state_.rot * state_.offset_T_L_I;
 +
@@ -936,7 +938,9 @@ index 0000000..7d458c3
 +            selected_points_->push_back(down_body_->points[index]);
 +            selected_normals_->push_back(normals_->points[index]);
 +        }
-+        report(current_time_, "map_search", elapsed_ms(started));
++        const double map_search_duration = elapsed_ms(started);
++        map_search_duration_ms_ += map_search_duration;
++        report(current_time_, "map_search", map_search_duration);
 +        if (selected_points_->empty()) {
 +            data.valid = false;
 +            return;
@@ -992,6 +996,7 @@ index 0000000..7d458c3
 +    TimingCallback timing_callback_;
 +    double first_lidar_time_ = 0.0;
 +    double current_time_ = 0.0;
++    double map_search_duration_ms_ = 0.0;
 +    bool initialized_ = false;
 +    bool first_scan_ = true;
 +    bool ekf_initialized_ = false;

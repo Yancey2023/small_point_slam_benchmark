@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { PerformanceMetric, PerformanceResponse } from '../shared/contracts.js'
+import { runModeInfo } from './run-modes.js'
 
 type CsvRow = Record<string, string>
 
@@ -62,6 +63,17 @@ const sensorLabels: Record<string, string> = {
   wheel_speed: '轮速消息',
 }
 
+const groupLabels: Record<string, string> = {
+  overview: '总览',
+  message: '按消息类型处理耗时',
+  stage_mean: '阶段平均耗时',
+  stage_median: '阶段中位耗时',
+  stage_p95: '阶段 P95 耗时',
+  stage_max: '阶段最大耗时',
+  stage_total: '阶段累计耗时',
+  stage_count: '阶段调用次数',
+}
+
 async function readCsv(filePath: string): Promise<CsvRow[]> {
   const lines = (await readFile(filePath, 'utf8')).trim().split(/\r?\n/)
   const headers = lines.shift()?.split(',') ?? []
@@ -96,10 +108,19 @@ function metric(
   label: string,
   value: number,
   unit: PerformanceMetric['unit'],
-  group: PerformanceMetric['group'] = 'overview',
+  group = 'overview',
   lowerIsBetter = true,
 ): PerformanceMetric {
-  return { id, label, value, unit, group, lowerIsBetter }
+  return {
+    id,
+    label,
+    value,
+    unit,
+    group,
+    groupLabel: groupLabels[group] ?? group,
+    defaultSelected: group === 'overview',
+    lowerIsBetter,
+  }
 }
 
 function aggregateByTimestamp(rows: CsvRow[], stages: string[]): number[] {
@@ -118,7 +139,7 @@ function timingStatistics(
   idPrefix: string,
   label: string,
   durations: number[],
-  groupForAll?: PerformanceMetric['group'],
+  groupForAll?: string,
 ): PerformanceMetric[] {
   if (!durations.length) return []
   return [
@@ -139,6 +160,8 @@ export async function readPerformance(outputDirectory: string): Promise<Performa
     readCsv(path.join(outputDirectory, 'timings.csv')),
   ])
   const summary = summaryRows[0]
+  const mode = runModeInfo(summary?.run_mode)
+  const cpuLowerIsBetter = mode.id === 'realtime'
   const normalizedCpuValues = cpuRows
     .map((row) => Number(row.normalized_percent))
     .filter(Number.isFinite)
@@ -166,7 +189,17 @@ export async function readPerformance(outputDirectory: string): Promise<Performa
       'message',
     )
   })
-  const stageMetrics = commonStages.flatMap((stage) =>
+  const consumedStages = new Set(commonStages.flatMap((stage) => stage.rawStages))
+  const discoveredStages = [...new Set(
+    timingRows
+      .map((row) => row.stage ?? '')
+      .filter((stage) => stage && stage !== 'total' && stage !== 'finalize' && !consumedStages.has(stage)),
+  )].map((stage) => ({
+    id: stage,
+    label: stage.replaceAll('_', ' '),
+    rawStages: [stage],
+  }))
+  const stageMetrics = [...commonStages, ...discoveredStages].flatMap((stage) =>
     timingStatistics(
       `stage:${stage.id}`,
       stage.label,
@@ -175,6 +208,9 @@ export async function readPerformance(outputDirectory: string): Promise<Performa
   )
 
   return {
+    runMode: mode.id,
+    runModeLabel: mode.name,
+    cpuDescription: mode.cpuDescription,
     metrics: [
       metric('wall_time_ms', '运行总耗时', number(summary, 'wall_time_ms'), 'ms'),
       metric(
@@ -188,21 +224,29 @@ export async function readPerformance(outputDirectory: string): Promise<Performa
         '平均 CPU 占用（归一化）',
         number(summary, 'mean_cpu_normalized_percent'),
         '%',
+        'overview',
+        cpuLowerIsBetter,
       ),
       metric(
         'p95_cpu_percent',
         'P95 CPU 占用（归一化）',
         percentile(normalizedCpuValues, 0.95),
         '%',
+        'overview',
+        cpuLowerIsBetter,
       ),
       metric(
         'peak_cpu_percent',
         '峰值 CPU 占用（归一化）',
         Math.max(0, ...normalizedCpuValues),
         '%',
+        'overview',
+        cpuLowerIsBetter,
       ),
-      metric('mean_core_cpu_percent', '平均 CPU 单核当量', mean(coreCpuValues), '%'),
-      metric('peak_core_cpu_percent', '峰值 CPU 单核当量', Math.max(0, ...coreCpuValues), '%'),
+      metric('mean_core_cpu_percent', '平均 CPU 单核当量', mean(coreCpuValues), '%',
+        'overview', cpuLowerIsBetter),
+      metric('peak_core_cpu_percent', '峰值 CPU 单核当量', Math.max(0, ...coreCpuValues), '%',
+        'overview', cpuLowerIsBetter),
       metric(
         'message_count',
         '处理消息总数',

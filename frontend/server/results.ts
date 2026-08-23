@@ -1,4 +1,4 @@
-import { access, stat } from 'node:fs/promises'
+import { access, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 
 import type {
@@ -7,6 +7,7 @@ import type {
   ResultsResponse,
 } from '../shared/contracts.js'
 import type { RuntimeCatalog } from './catalog.js'
+import { runModeInfo } from './run-modes.js'
 
 function pathSegment(value: string): string {
   const safe = value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '_')
@@ -19,6 +20,17 @@ async function exists(filePath: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+async function resultRunMode(summaryPath: string): Promise<ReturnType<typeof runModeInfo>> {
+  try {
+    const [header = '', values = ''] = (await readFile(summaryPath, 'utf8')).split(/\r?\n/)
+    const columns = header.split(',')
+    const row = values.split(',')
+    return runModeInfo(row[columns.indexOf('run_mode')])
+  } catch {
+    return runModeInfo(undefined)
   }
 }
 
@@ -75,6 +87,7 @@ export async function discoverResults(
       const modifiedTimes = await Promise.all(
         availableFiles.map(async (filePath) => (await stat(filePath)).mtimeMs),
       )
+      const mode = await resultRunMode(path.join(absoluteOutputDirectory, 'summary.csv'))
       results.push({
         id: Buffer.from(relativeDirectory.split(path.sep).join('/')).toString('base64url'),
         datasetId: dataset.id,
@@ -82,6 +95,8 @@ export async function discoverResults(
         bagName: dataset.bagName,
         algorithmId: algorithm.id,
         algorithmName: algorithm.name,
+        runMode: mode.id,
+        runModeName: mode.name,
         hasTrajectory,
         hasPerformance,
         updatedAt: new Date(Math.max(...modifiedTimes)).toISOString(),

@@ -78,6 +78,7 @@ describe('stored benchmark results', () => {
     expect(publicResults(results).results).toMatchObject([{
       datasetId: dataset.id,
       algorithmId: algorithm.id,
+      runMode: 'full_speed',
       hasTrajectory: true,
       hasPerformance: true,
     }])

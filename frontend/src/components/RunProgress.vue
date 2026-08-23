@@ -38,7 +38,7 @@ watch(
     <span class="eyebrow">RUN STATUS</span>
     <h2>{{ stateCopy[run.status] }}</h2>
     <p v-if="activeJob" class="current-job">
-      {{ activeJob.datasetName }} / {{ activeJob.algorithmName }}
+      {{ activeJob.datasetName }} / {{ activeJob.algorithmName }} · {{ activeJob.runModeName }}
     </p>
     <p v-else class="current-job">
       {{ run.completedJobs }} / {{ run.totalJobs }} 个任务已结束

@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 import type { BenchmarkResult, TrajectoryResponse } from '../../shared/contracts'
 import { fetchResultTrajectory } from '@/api/client'
 import TrajectoryPlot from '@/components/TrajectoryPlot.vue'
+import { algorithmColor } from '@/presentation'
 
 const props = defineProps<{
   results: BenchmarkResult[]
@@ -18,12 +19,6 @@ const loadingJobIds = ref(new Set<string>())
 const errors = ref<Record<string, string>>({})
 let knownAlgorithmIds = new Set<string>()
 
-const colorByAlgorithm: Record<string, string> = {
-  fast_lio: '#477b9d',
-  point_lio: '#5d927d',
-  voxel_map: '#b7863c',
-  super_lio: '#766f91',
-}
 const dashByDataset = ['', '9 5', '2 5', '12 4 2 4']
 
 const datasetOptions = computed(() => uniqueOptions('datasetId', 'datasetName'))
@@ -46,8 +41,8 @@ const selectedSeries = computed(() =>
     const datasetIndex = datasetOptions.value.findIndex((item) => item.id === job.datasetId)
     return [{
       id: job.id,
-      label: `${job.datasetName} · ${job.algorithmName}`,
-      color: colorByAlgorithm[job.algorithmId] ?? '#687b84',
+      label: `${job.datasetName} · ${job.algorithmName} · ${job.runModeName}`,
+      color: algorithmColor(job.algorithmId),
       dash: dashByDataset[datasetIndex % dashByDataset.length],
       trajectory,
     }]
@@ -178,7 +173,7 @@ function meters(value: number): string {
             @click="selectedAlgorithmIds = toggle(selectedAlgorithmIds, algorithm.id)"
           >
             <span class="checkmark">{{ selectedAlgorithmIds.includes(algorithm.id) ? '✓' : '' }}</span>
-            <span class="tab-dot" :style="{ background: colorByAlgorithm[algorithm.id] }" />
+            <span class="tab-dot" :style="{ background: algorithmColor(algorithm.id) }" />
             <span>{{ algorithm.label }}</span>
           </button>
         </fieldset>
@@ -229,8 +224,8 @@ h2 { margin: 0 0 3px; font-size: 23px; }
 .result-filters { display: grid; align-content: start; gap: 15px; }
 fieldset { display: grid; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
 legend { display: flex; width: calc(100% - 10px); align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; color: #68797f; font-size: 11px; font-weight: 900; letter-spacing: .08em; }
-legend button { padding: 4px 7px; border: 0; border-radius: 7px; color: #60777f; background: #e8efec; cursor: pointer; font-size: 9px; font-weight: 800; letter-spacing: 0; }
-.result-filters button {
+legend button { flex: none; padding: 4px 7px; border: 0; border-radius: 7px; color: #60777f; background: #e8efec; cursor: pointer; font-size: 9px; font-weight: 800; letter-spacing: 0; white-space: nowrap; }
+.result-filters fieldset > button {
   display: grid;
   grid-template-columns: 21px minmax(0, 1fr);
   align-items: center;
@@ -246,10 +241,10 @@ legend button { padding: 4px 7px; border: 0; border-radius: 7px; color: #60777f;
   font-weight: 700;
   text-align: left;
 }
-.result-filters fieldset:last-child button { grid-template-columns: 21px 9px minmax(0, 1fr); }
-.result-filters button:hover { background: #f0f3f1; }
-.result-filters button.active { border-color: #cbd7d5; background: #f4f7f5; }
-.result-filters button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-filters fieldset:last-child > button { grid-template-columns: 21px 9px minmax(0, 1fr); }
+.result-filters fieldset > button:hover { background: #f0f3f1; }
+.result-filters fieldset > button.active { border-color: #cbd7d5; background: #f4f7f5; }
+.result-filters fieldset > button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .checkmark { display: grid; width: 20px; height: 20px; place-items: center; border: 1.5px solid #b8c4c5; border-radius: 7px; color: #fff; font-size: 11px; }
 .active .checkmark { border-color: #607c89; background: #607c89; }
 .result-filters fieldset:first-child .checkmark { border-radius: 50%; font-size: 8px; }

@@ -11,7 +11,9 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUPPORTED_ALGORITHMS = ("fast_lio", "point_lio", "voxel_map", "super_lio")
+SUPPORTED_ALGORITHMS = (
+    "fast_lio", "point_lio", "voxel_map", "voxel_map_lio", "super_lio",
+)
 
 
 @dataclass(frozen=True)
@@ -63,4 +65,3 @@ def source_path(name: str) -> Path:
 
 def patch_directory(name: str) -> Path:
     return ROOT / "algorithm" / name / "patchs"
-

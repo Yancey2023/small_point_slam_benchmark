@@ -6,8 +6,10 @@
 
 #include <chrono>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 namespace slam_benchmark {
 namespace {
@@ -57,7 +59,7 @@ public:
           cpu_csv(options.output_directory / "cpu.csv",
                   "elapsed_ms,core_percent,normalized_percent"),
           summary_csv(options.output_directory / "summary.csv",
-                      "message_count,wall_time_ms,algorithm_process_time_ms,mean_cpu_normalized_percent") {}
+                      "message_count,wall_time_ms,algorithm_process_time_ms,mean_cpu_normalized_percent,run_mode") {}
 
     BenchmarkOptions options;
     CsvWriter message_csv;
@@ -83,10 +85,24 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
     std::uint64_t cpu_count = 0;
     auto last_cpu_sample = std::chrono::steady_clock::now();
     const auto wall_start = last_cpu_sample;
+    std::optional<TimestampNs> first_message_timestamp;
+    std::chrono::steady_clock::time_point replay_start;
 
     spdlog::info("running {} on {}", algorithm.name(), bag.name);
     algorithm.initialize(bag.sensors, algorithm_config, *this);
     reader.read(bag, [&](SensorSample&& sample) {
+        if (impl_->options.run_mode == RunMode::Realtime) {
+            if (!first_message_timestamp) {
+                first_message_timestamp = sample.timestamp_ns;
+                replay_start = std::chrono::steady_clock::now();
+            }
+            const TimestampNs relative_timestamp =
+                sample.timestamp_ns >= *first_message_timestamp
+                    ? sample.timestamp_ns - *first_message_timestamp
+                    : 0;
+            std::this_thread::sleep_until(
+                replay_start + std::chrono::nanoseconds(relative_timestamp));
+        }
         impl_->message_csv.row(std::to_string(sample.sensor_id) + ',' +
                                to_string(payload_type(sample.payload)) + ',' +
                                std::to_string(sample.timestamp_ns) + ',' +
@@ -126,7 +142,8 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
 
     std::ostringstream row;
     row << std::setprecision(10) << summary.message_count << ',' << summary.wall_time_ms << ','
-        << summary.algorithm_process_time_ms << ',' << summary.mean_cpu_normalized_percent;
+        << summary.algorithm_process_time_ms << ',' << summary.mean_cpu_normalized_percent << ','
+        << to_string(impl_->options.run_mode);
     impl_->summary_csv.row(row.str());
     spdlog::info("finished {} messages in {:.3f} ms", summary.message_count,
                  summary.wall_time_ms);

@@ -496,10 +496,10 @@ index 0000000..89a2946
 +}
 diff --git a/standalone/super_lio_adapter.cpp b/standalone/super_lio_adapter.cpp
 new file mode 100644
-index 0000000..0f475a9
+index 0000000..f43a511
 --- /dev/null
 +++ b/standalone/super_lio_adapter.cpp
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,153 @@
 +#include "super_lio_adapter.hpp"
 +
 +#include "lio/params.h"
@@ -508,6 +508,7 @@ index 0000000..0f475a9
 +#include <spdlog/spdlog.h>
 +
 +#include <algorithm>
++#include <chrono>
 +#include <cmath>
 +#include <stdexcept>
 +
@@ -601,6 +602,7 @@ index 0000000..0f475a9
 +    } else if (const auto* cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload)) {
 +        if (cloud->points.size() != cloud->point_time_offset_ns.size())
 +            throw std::runtime_error("point/time array size mismatch");
++        const auto started = std::chrono::steady_clock::now();
 +        LI2Sup::LidarData value;
 +        value.start_time = seconds(sample.timestamp_ns);
 +        value.pc.reset(new pcl::PointCloud<LI2Sup::PointXTZIT>());
@@ -614,6 +616,11 @@ index 0000000..0f475a9
 +        }
 +        value.end_time = value.start_time + maximum_offset;
 +        lidar_queue_.push_back(std::move(value));
++        sink_->report_timing(
++            {sample.timestamp_ns, "lidar_preprocess",
++             std::chrono::duration<double, std::milli>(
++                 std::chrono::steady_clock::now() - started)
++                 .count()});
 +    }
 +    drain();
 +}

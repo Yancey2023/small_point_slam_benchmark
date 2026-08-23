@@ -1,0 +1,5 @@
+set(_source "${CMAKE_CURRENT_SOURCE_DIR}/source/VoxelMap")
+if(NOT EXISTS "${_source}/CMakeLists.txt")
+    message(FATAL_ERROR "Run scripts/download_algorithms.py voxel_map_lio and scripts/patch_algorithms.py apply voxel_map_lio")
+endif()
+add_subdirectory("${_source}" VoxelMap)

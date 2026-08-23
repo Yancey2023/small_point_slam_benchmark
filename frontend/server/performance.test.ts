@@ -22,7 +22,7 @@ describe('readPerformance', () => {
     await Promise.all([
       writeFile(
         path.join(directory, 'summary.csv'),
-        'message_count,wall_time_ms,algorithm_process_time_ms,mean_cpu_normalized_percent\n3,2500,1800,12.5\n',
+        'message_count,wall_time_ms,algorithm_process_time_ms,mean_cpu_normalized_percent,run_mode\n3,2500,1800,12.5,full_speed\n',
       ),
       writeFile(
         path.join(directory, 'cpu.csv'),
@@ -34,7 +34,7 @@ describe('readPerformance', () => {
       ),
       writeFile(
         path.join(directory, 'timings.csv'),
-        'timestamp_ns,stage,duration_ms\n100,total,10\n100,filter_update,2\n100,knn_search,5\n200,total,99\n300,total,30\n300,filter_update,4\n300,knn_search,7\n',
+        'timestamp_ns,stage,duration_ms\n100,total,10\n100,filter_update,2\n100,knn_search,5\n100,new_stage,1\n200,total,99\n300,total,30\n300,filter_update,4\n300,knn_search,7\n',
       ),
     ])
 
@@ -52,8 +52,36 @@ describe('readPerformance', () => {
     expect(values['stage:filter_update:p95_ms']).toBeCloseTo(3.9)
     expect(values['stage:filter_update:count']).toBe(2)
     expect(values['stage:map_search:mean_ms']).toBe(6)
+    expect(values['stage:new_stage:mean_ms']).toBe(1)
     expect(result.metrics.some((metric) => metric.label.startsWith('KNN'))).toBe(false)
     expect(result.metrics.find((metric) => metric.id === 'stage:filter_update:p95_ms')?.group)
       .toBe('stage_p95')
+    expect(result.metrics.find((metric) => metric.id === 'stage:filter_update:p95_ms')?.groupLabel)
+      .toBe('阶段 P95 耗时')
+    expect(result.metrics.find((metric) => metric.id === 'mean_cpu_percent')?.lowerIsBetter)
+      .toBe(false)
+    expect(result.runMode).toBe('full_speed')
+    expect(result.cpuDescription).toContain('不是越低越好')
+  })
+
+  it('marks CPU metrics as lower-is-better for realtime playback', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'slam-performance-realtime-'))
+    temporaryDirectories.push(directory)
+    await Promise.all([
+      writeFile(
+        path.join(directory, 'summary.csv'),
+        'message_count,wall_time_ms,algorithm_process_time_ms,mean_cpu_normalized_percent,run_mode\n1,100,10,5,realtime\n',
+      ),
+      writeFile(path.join(directory, 'cpu.csv'), 'elapsed_ms,core_percent,normalized_percent\n100,50,5\n'),
+      writeFile(path.join(directory, 'sensor_messages.csv'), 'sensor_id,sensor_type,timestamp_ns,item_count\n1,lidar,100,1\n'),
+      writeFile(path.join(directory, 'timings.csv'), 'timestamp_ns,stage,duration_ms\n100,total,10\n'),
+    ])
+
+    const result = await readPerformance(directory)
+
+    expect(result.runMode).toBe('realtime')
+    expect(result.metrics.find((metric) => metric.id === 'mean_cpu_percent')?.lowerIsBetter)
+      .toBe(true)
+    expect(result.cpuDescription).toContain('越低越好')
   })
 })

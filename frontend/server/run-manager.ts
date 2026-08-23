@@ -7,6 +7,7 @@ import type { Readable } from 'node:stream'
 import type { CreateRunRequest, RunJob, RunSnapshot, RunStatus } from '../shared/contracts.js'
 import type { RuntimeCatalog } from './catalog.js'
 import { relativeResultDirectory } from './results.js'
+import { isRunMode, runModeInfo } from './run-modes.js'
 
 interface InternalJob extends RunJob {
   manifestPath: string
@@ -57,6 +58,8 @@ export class RunManager {
     if (this.activeRun()) throw new Error('已有测试正在运行，请等待完成或先取消')
     const datasetIds = unique(request.datasetIds ?? [])
     const algorithmIds = unique(request.algorithmIds ?? [])
+    if (!isRunMode(request.runMode)) throw new Error('请选择有效的运行模式')
+    const mode = runModeInfo(request.runMode)
     if (datasetIds.length === 0 || algorithmIds.length === 0) {
       throw new Error('至少选择一个数据集和一个算法')
     }
@@ -83,6 +86,8 @@ export class RunManager {
           bagName: dataset.bagName,
           algorithmId,
           algorithmName: algorithm.name,
+          runMode: mode.id,
+          runModeName: mode.name,
           status: 'queued',
           processedMessages: 0,
           expectedMessages: dataset.expectedMessages,
@@ -213,7 +218,9 @@ export class RunManager {
     await mkdir(job.absoluteOutputDirectory, { recursive: true })
     job.status = 'running'
     job.startedAt = new Date().toISOString()
-    run.snapshot.logs.push(`开始 ${job.datasetName}/${job.bagName} · ${job.algorithmName}`)
+    run.snapshot.logs.push(
+      `开始 ${job.datasetName}/${job.bagName} · ${job.algorithmName} · ${job.runModeName}`,
+    )
     this.update(run)
 
     const args = [
@@ -221,6 +228,7 @@ export class RunManager {
       '--bag', job.bagName,
       '--config', job.configPath,
       '--output', job.absoluteOutputDirectory,
+      '--run-mode', job.runMode,
     ]
     const child = spawn(job.executablePath, args, {
       cwd: this.projectRoot,

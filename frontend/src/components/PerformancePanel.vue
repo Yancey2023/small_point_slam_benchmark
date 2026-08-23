@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 
 import type { BenchmarkResult, PerformanceMetric, PerformanceResponse } from '../../shared/contracts'
 import { fetchResultPerformance } from '@/api/client'
+import { algorithmColor } from '@/presentation'
 
 const props = defineProps<{
   results: BenchmarkResult[]
@@ -18,24 +19,6 @@ const loadingJobIds = ref(new Set<string>())
 const errors = ref<Record<string, string>>({})
 let knownAlgorithmIds = new Set<string>()
 let metricSelectionInitialized = false
-
-const colorByAlgorithm: Record<string, string> = {
-  fast_lio: '#477b9d',
-  point_lio: '#5d927d',
-  voxel_map: '#b7863c',
-  super_lio: '#766f91',
-}
-const groupLabels: Record<PerformanceMetric['group'], string> = {
-  overview: '总览',
-  message: '按消息类型处理耗时',
-  stage_mean: '阶段平均耗时',
-  stage_median: '阶段中位耗时',
-  stage_p95: '阶段 P95 耗时',
-  stage_max: '阶段最大耗时',
-  stage_total: '阶段累计耗时',
-  stage_count: '阶段调用次数',
-}
-const groupOrder = Object.keys(groupLabels) as PerformanceMetric['group'][]
 
 const datasetOptions = computed(() => uniqueOptions('datasetId', 'datasetName'))
 const algorithmOptions = computed(() => uniqueOptions('algorithmId', 'algorithmName'))
@@ -57,12 +40,25 @@ const metricOptions = computed(() => {
   }
   return [...options.values()]
 })
-const metricGroups = computed(() =>
-  groupOrder.flatMap((group) => {
-    const metrics = metricOptions.value.filter((metric) => metric.group === group)
-    return metrics.length ? [{ id: group, label: groupLabels[group], metrics }] : []
+const metricGroups = computed(() => {
+  const groups = new Map<string, { id: string; label: string; metrics: PerformanceMetric[] }>()
+  for (const metric of metricOptions.value) {
+    const group = groups.get(metric.group) ?? {
+      id: metric.group,
+      label: metric.groupLabel,
+      metrics: [],
+    }
+    group.metrics.push(metric)
+    groups.set(metric.group, group)
+  }
+  return [...groups.values()]
+})
+const cpuDescriptions = computed(() => [...new Set(
+  selectedJobs.value.flatMap((job) => {
+    const performance = performances.value[job.id]
+    return performance ? [`${performance.runModeLabel}：${performance.cpuDescription}`] : []
   }),
-)
+)])
 const charts = computed(() =>
   selectedMetricIds.value.flatMap((metricId) => {
     const definition = metricOptions.value.find((metric) => metric.id === metricId)
@@ -72,14 +68,17 @@ const charts = computed(() =>
       if (!metric) return []
       return [{
         id: job.id,
-        label: `${job.datasetName} · ${job.algorithmName}`,
+        label: `${job.datasetName} · ${job.algorithmName} · ${job.runModeName}`,
         value: metric.value,
-        color: colorByAlgorithm[job.algorithmId] ?? '#687b84',
+        color: algorithmColor(job.algorithmId),
+        lowerIsBetter: metric.lowerIsBetter,
       }]
     })
     const maximum = Math.max(0, ...rawEntries.map((entry) => entry.value))
     return [{
       ...definition,
+      lowerIsBetter:
+        rawEntries.length > 0 && rawEntries.every((entry) => entry.lowerIsBetter),
       entries: rawEntries.map((entry) => ({
         ...entry,
         width: maximum > 0 ? Math.max(2, (entry.value / maximum) * 100) : 0,
@@ -123,7 +122,7 @@ watch(
 watch(metricOptions, (metrics) => {
   if (!metricSelectionInitialized && metrics.length) {
     selectedMetricIds.value = metrics
-      .filter((metric) => metric.group === 'overview')
+      .filter((metric) => metric.defaultSelected)
       .map((metric) => metric.id)
     metricSelectionInitialized = true
   }
@@ -229,7 +228,7 @@ function formatValue(value: number, unit: PerformanceMetric['unit']): string {
               @click="selectedAlgorithmIds = toggle(selectedAlgorithmIds, algorithm.id)"
             >
               <span>{{ selectedAlgorithmIds.includes(algorithm.id) ? '✓' : '' }}</span>
-              <i :style="{ background: colorByAlgorithm[algorithm.id] }" />
+              <i :style="{ background: algorithmColor(algorithm.id) }" />
               {{ algorithm.label }}
             </button>
           </div>
@@ -265,6 +264,9 @@ function formatValue(value: number, unit: PerformanceMetric['unit']): string {
 
       <div v-if="loadingJobIds.size" class="loading-note">正在读取性能数据…</div>
       <p v-for="(message, jobId) in errors" :key="jobId" class="chart-error">{{ message }}</p>
+      <div v-if="cpuDescriptions.length" class="cpu-notes">
+        <p v-for="description in cpuDescriptions" :key="description">{{ description }}</p>
+      </div>
 
       <div v-if="charts.length" class="charts">
         <article v-for="chart in charts" :key="chart.id" class="chart">
@@ -340,6 +342,8 @@ legend { padding: 0 5px; color: #68797f; font-size: 11px; font-weight: 900; lett
 .metric-group header button { padding: 3px 7px; border: 0; border-radius: 7px; color: #60777f; background: #e8efec; cursor: pointer; font-size: 9px; font-weight: 800; }
 .loading-note { color: var(--ink-muted); font-size: 11px; text-align: center; }
 .chart-error { margin: 0; color: #a85e62; font-size: 11px; text-align: center; }
+.cpu-notes { display: grid; gap: 5px; padding: 11px 13px; border: 1px solid #dce5e2; border-radius: 13px; color: #63757a; background: #f1f5f3; }
+.cpu-notes p { margin: 0; font-size: 10px; line-height: 1.55; }
 
 .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .chart { min-width: 0; padding: 17px; border: 1px solid #e2e7e5; border-radius: 19px; background: #fbfcfa; }

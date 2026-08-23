@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import type { BenchmarkResult, CatalogResponse, RunSnapshot } from '../../shared/contracts'
+import type { BenchmarkResult, CatalogResponse, RunMode, RunSnapshot } from '../../shared/contracts'
 import { cancelRun, createRun, fetchCatalog, fetchResults, observeRun } from '@/api/client'
 
 const terminalStatuses = new Set(['completed', 'failed', 'cancelled'])
@@ -9,6 +9,7 @@ export function useBenchmark() {
   const catalog = ref<CatalogResponse | null>(null)
   const selectedDatasetIds = ref<string[]>([])
   const selectedAlgorithmIds = ref<string[]>([])
+  const selectedRunMode = ref<RunMode | null>(null)
   const results = ref<BenchmarkResult[]>([])
   const run = ref<RunSnapshot | null>(null)
   const loading = ref(true)
@@ -21,6 +22,7 @@ export function useBenchmark() {
     () =>
       selectedDatasetIds.value.length > 0 &&
       selectedAlgorithmIds.value.length > 0 &&
+      selectedRunMode.value !== null &&
       !starting.value &&
       !['queued', 'running'].includes(run.value?.status ?? ''),
   )
@@ -37,6 +39,7 @@ export function useBenchmark() {
         selectedAlgorithmIds.value = loadedCatalog.algorithms
           .filter((item) => item.available)
           .map((item) => item.id)
+        selectedRunMode.value = loadedCatalog.runModes[0]?.id ?? null
         selectionsInitialized = true
       }
     } catch (reason) {
@@ -76,13 +79,14 @@ export function useBenchmark() {
   }
 
   async function start(): Promise<void> {
-    if (!canRun.value) return
+    if (!canRun.value || !selectedRunMode.value) return
     starting.value = true
     error.value = null
     try {
       const createdRun = await createRun({
         datasetIds: selectedDatasetIds.value,
         algorithmIds: selectedAlgorithmIds.value,
+        runMode: selectedRunMode.value,
       })
       run.value = createdRun
       watchRun(createdRun.id)
@@ -109,6 +113,7 @@ export function useBenchmark() {
     catalog,
     selectedDatasetIds,
     selectedAlgorithmIds,
+    selectedRunMode,
     results,
     run,
     loading,

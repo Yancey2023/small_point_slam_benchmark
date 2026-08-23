@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <chrono>
 #include <stdexcept>
 
 using namespace slam_benchmark;
@@ -15,6 +16,14 @@ class OneSampleReader final : public DatasetReader {
 public:
     void read(const BagDefinition&, const SampleCallback& callback) override {
         callback(SensorSample{7, 42, ImuSample{}});
+    }
+};
+
+class RealtimeReader final : public DatasetReader {
+public:
+    void read(const BagDefinition&, const SampleCallback& callback) override {
+        callback(SensorSample{7, 1000000, ImuSample{}});
+        callback(SensorSample{7, 21000000, ImuSample{}});
     }
 };
 
@@ -49,5 +58,14 @@ int main() {
     expect(summary.message_count == 1);
     expect(std::filesystem::exists(output / "timings.csv"));
     expect(std::filesystem::exists(output / "final_trajectory.csv"));
+
+    RealtimeReader realtime_reader;
+    EchoAlgorithm realtime_algorithm;
+    BenchmarkRunner realtime_runner(
+        {output / "realtime", std::chrono::milliseconds{0}, RunMode::Realtime});
+    const auto started = std::chrono::steady_clock::now();
+    realtime_runner.run(realtime_algorithm, realtime_reader, bag, "unused.yaml");
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    expect(elapsed >= std::chrono::milliseconds{18});
     std::filesystem::remove_all(output);
 }

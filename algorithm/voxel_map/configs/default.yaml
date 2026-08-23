@@ -3,4 +3,3 @@ voxel_size_m: 1.0
 max_layer: 2
 max_points_per_voxel: 100
 min_eigenvalue_ratio: 0.01
-

@@ -8,6 +8,7 @@ import type {
   CatalogResponse,
   DatasetCatalogItem,
 } from '../shared/contracts.js'
+import { runModes } from './run-modes.js'
 
 interface DatasetRuntimeItem extends DatasetCatalogItem {
   manifestPath: string
@@ -167,6 +168,7 @@ export async function loadCatalog(
       algorithms: [...algorithms.values()].map(
         ({ configPath: _configPath, executablePath: _executablePath, ...item }) => item,
       ),
+      runModes: [...runModes],
       buildDirectory:
         [...discoveredBuilds].sort().join(', ') ||
         path.relative(projectRoot, configuredBuildDirectory) ||

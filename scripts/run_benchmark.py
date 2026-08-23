@@ -41,6 +41,8 @@ def main() -> int:
     parser.add_argument("--build-dir", type=Path, default=ROOT / "build" / "default")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--run-mode", choices=("full_speed", "realtime"),
+                        default="full_speed")
     args = parser.parse_args()
     try:
         dataset = load_yaml(args.dataset_manifest)
@@ -50,6 +52,7 @@ def main() -> int:
         config = args.config or ROOT / "algorithm" / args.algorithm / "configs" / "default.yaml"
         command = [str(executable), "--dataset-manifest", str(args.dataset_manifest),
                    "--bag", args.bag, "--config", str(config), "--output", str(output)]
+        command.extend(["--run-mode", args.run_mode])
         print("+", " ".join(command))
         return subprocess.run(command).returncode
     except (KeyError, ValueError, OSError, RuntimeError) as error:

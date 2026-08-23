@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 
 import type { AlgorithmCatalogItem } from '../../shared/contracts'
+import { algorithmColor, algorithmIcon } from '@/presentation'
 
 const props = defineProps<{
   algorithms: AlgorithmCatalogItem[]
@@ -15,13 +16,6 @@ const availableIds = computed(() =>
 const allSelected = computed(() =>
   availableIds.value.length > 0 && availableIds.value.every((id) => props.modelValue.includes(id)),
 )
-
-const palette: Record<string, { icon: string; className: string }> = {
-  fast_lio: { icon: 'F', className: 'ocean' },
-  point_lio: { icon: 'P', className: 'mint' },
-  voxel_map: { icon: 'V', className: 'lemon' },
-  super_lio: { icon: 'S', className: 'slate' },
-}
 
 function toggleAll(): void {
   emit('update:modelValue', allSelected.value ? [] : availableIds.value)
@@ -51,10 +45,8 @@ function toggle(id: string, checked: boolean, current: string[]): void {
         v-for="algorithm in algorithms"
         :key="algorithm.id"
         class="algorithm-option"
-        :class="[
-          palette[algorithm.id]?.className,
-          { selected: modelValue.includes(algorithm.id), unavailable: !algorithm.available },
-        ]"
+        :class="{ selected: modelValue.includes(algorithm.id), unavailable: !algorithm.available }"
+        :style="{ '--algorithm-color': algorithmColor(algorithm.id) }"
       >
         <input
           type="checkbox"
@@ -62,7 +54,7 @@ function toggle(id: string, checked: boolean, current: string[]): void {
           :disabled="!algorithm.available"
           @change="toggle(algorithm.id, ($event.target as HTMLInputElement).checked, modelValue)"
         />
-        <span class="algorithm-icon">{{ palette[algorithm.id]?.icon ?? 'A' }}</span>
+        <span class="algorithm-icon">{{ algorithmIcon(algorithm.name) }}</span>
         <span class="algorithm-name">{{ algorithm.name }}</span>
         <span class="sensor-tags">{{ algorithm.sensorTypes.join(' · ') }}</span>
         <span class="state-dot" :title="algorithm.available ? '可执行文件已就绪' : '尚未构建'" />
@@ -137,10 +129,6 @@ function toggle(id: string, checked: boolean, current: string[]): void {
   transition: 160ms ease;
 }
 
-.algorithm-option.mint { --algorithm-color: #638f7d; --algorithm-bg: #e2eee9; }
-.algorithm-option.lemon { --algorithm-color: #aa813f; --algorithm-bg: #f2ead9; }
-.algorithm-option.slate { --algorithm-color: #73758e; --algorithm-bg: #e8e8ee; }
-
 .algorithm-option:hover:not(.unavailable) { transform: translateY(-1px); }
 .algorithm-option.selected {
   border-color: var(--algorithm-color);
@@ -159,7 +147,7 @@ input:focus-visible ~ .algorithm-icon { outline: 3px solid rgba(100, 132, 146, 0
   place-items: center;
   border-radius: 15px 12px 16px 11px;
   color: var(--algorithm-color);
-  background: var(--algorithm-bg);
+  background: color-mix(in srgb, var(--algorithm-color) 16%, white);
   font-weight: 900;
 }
 
