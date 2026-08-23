@@ -1,0 +1,28 @@
+algorithm: small_point_lio
+point_filter_num: 1
+min_range_m: 0.2
+max_range_m: 100.0
+space_downsample: true
+filter_size_scan_m: 0.5
+gravity_m_s2: [0.0, 0.0, -9.81]
+fix_gravity_direction: true
+check_satu: true
+satu_acc: 30.0
+satu_gyro: 35.0
+acc_norm: 9.81
+map_voxel_size_m: 0.2
+init_map_size: 10
+estimate_extrinsics: false
+extrinsic_T: [0.0, 0.0, 0.0]
+extrinsic_R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+lidar_measurement_noise: 0.01
+accelerometer_noise: 0.1
+gyroscope_noise: 0.1
+velocity_cov: 20.0
+acceleration_cov: 500.0
+omg_cov: 1000.0
+accelerometer_bias_noise: 0.0001
+gyroscope_bias_noise: 0.0001
+plane_threshold: 0.1
+match_sqaured: 81.0
+publish_odometry_without_downsample: false

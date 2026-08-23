@@ -1,0 +1,21 @@
+schema_version: 1
+name: KISS-ICP
+description: Lightweight point-to-point ICP odometry with adaptive correspondence thresholds.
+authors: [Ignacio Vizzo, Tiziano Guadagnino, Jens Mersch, Louis Wiesmann, Jens Behley, Cyrill Stachniss]
+license: MIT
+repository:
+  name: kiss-icp
+  url: https://github.com/PRBonn/kiss-icp.git
+  ref: b16835283aee62f7d5e2bdf6c1c3bb2930de74ff
+dependencies:
+  - {name: Sophus, url: https://github.com/strasdat/Sophus.git}
+paper:
+  title: "KISS-ICP: In Defense of Point-to-Point ICP -- Simple, Accurate, and Robust Registration If Done the Right Way"
+  url: https://arxiv.org/abs/2209.15397
+sensors: [lidar]
+timing_stages:
+  - lidar_preprocess
+  - undistortion
+  - downsampling
+  - registration
+  - map_update

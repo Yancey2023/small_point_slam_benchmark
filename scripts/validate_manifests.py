@@ -23,6 +23,15 @@ def main() -> int:
             unknown = set(manifest["sensors"]) - {"lidar", "imu", "camera", "gnss", "wheel_speed"}
             if unknown:
                 raise ValueError(f"{name} contains unknown sensors: {sorted(unknown)}")
+            config_path = ROOT / "algorithm" / name / "configs" / "default.yaml"
+            config = load_yaml(config_path)
+            if config.get("algorithm") != name:
+                raise ValueError(
+                    f"{config_path} algorithm must be {name!r}, got {config.get('algorithm')!r}"
+                )
+            for key in ("filter_size_scan_m", "filter_size_map_m", "map_voxel_size_m"):
+                if key in config and (not isinstance(config[key], (int, float)) or config[key] <= 0):
+                    raise ValueError(f"{config_path} {key} must be positive")
         for path in sorted((ROOT / "datasets").glob("*/manifest.yaml")):
             manifest = load_yaml(path)
             require(manifest, ("name", "download_url", "bags"), str(path))

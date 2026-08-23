@@ -1,0 +1,24 @@
+schema_version: 1
+name: Faster-LIO
+description: Lightweight tightly coupled LiDAR-inertial odometry using parallel sparse incremental voxels.
+authors: [Chunge Bai, Tao Xiao, Yajie Chen, Haoqian Wang, Fang Zhang, Xiang Gao]
+license: GPL-2.0
+repository:
+  name: faster-lio
+  url: https://github.com/gaoxiang12/faster-lio.git
+  ref: ea0e0910a4cf2da49f569d168442a9c8c1bbe672
+dependencies:
+  - {name: IKFoM, url: https://github.com/hku-mars/IKFoM.git}
+  - {name: oneTBB, url: https://github.com/uxlfoundation/oneTBB.git}
+paper:
+  title: "Faster-LIO: Lightweight Tightly Coupled Lidar-Inertial Odometry Using Parallel Sparse Incremental Voxels"
+  url: https://doi.org/10.1109/LRA.2022.3152830
+sensors: [lidar, imu]
+timing_stages:
+  - lidar_preprocess
+  - undistortion
+  - downsampling
+  - state_propagation
+  - map_search
+  - filter_update
+  - map_update

@@ -12,7 +12,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_ALGORITHMS = (
-    "fast_lio", "point_lio", "voxel_map", "voxel_map_lio", "super_lio",
+    "fast_lio", "point_lio", "voxel_map", "voxel_map_with_imu", "super_lio",
+    "kiss_icp", "faster_lio", "small_point_lio",
 )
 
 

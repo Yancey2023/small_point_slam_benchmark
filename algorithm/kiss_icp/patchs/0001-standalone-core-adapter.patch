@@ -1,0 +1,363 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+new file mode 100644
+index 0000000..0121de1
+--- /dev/null
++++ b/CMakeLists.txt
+@@ -0,0 +1,39 @@
++cmake_minimum_required(VERSION 3.24)
++
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(Sophus CONFIG REQUIRED)
++find_package(TBB CONFIG REQUIRED)
++
++add_library(kiss_icp_algorithm STATIC
++    cpp/kiss_icp/core/Preprocessing.cpp
++    cpp/kiss_icp/core/Registration.cpp
++    cpp/kiss_icp/core/Threshold.cpp
++    cpp/kiss_icp/core/VoxelHashMap.cpp
++    cpp/kiss_icp/core/VoxelUtils.cpp
++    cpp/kiss_icp/pipeline/KissICP.cpp
++)
++target_include_directories(kiss_icp_algorithm PUBLIC cpp)
++target_link_libraries(kiss_icp_algorithm PUBLIC
++    Eigen3::Eigen
++    Sophus::Sophus
++    TBB::tbb
++)
++
++add_executable(kiss_icp_benchmark
++    standalone/kiss_icp_adapter.cpp
++    standalone/main.cpp
++)
++target_link_libraries(kiss_icp_benchmark PRIVATE
++    kiss_icp_algorithm
++    slam_benchmark::core
++    yaml-cpp::yaml-cpp
++    spdlog::spdlog
++)
++
++if(MSVC)
++    target_compile_options(kiss_icp_algorithm PRIVATE /W3 /utf-8)
++    target_compile_options(kiss_icp_benchmark PRIVATE /W4 /utf-8)
++else()
++    target_compile_options(kiss_icp_algorithm PRIVATE -Wall -Wextra)
++    target_compile_options(kiss_icp_benchmark PRIVATE -Wall -Wextra -Wpedantic)
++endif()
+diff --git a/cpp/kiss_icp/core/VoxelHashMap.cpp b/cpp/kiss_icp/core/VoxelHashMap.cpp
+index 69a87ec..e560e2e 100644
+--- a/cpp/kiss_icp/core/VoxelHashMap.cpp
++++ b/cpp/kiss_icp/core/VoxelHashMap.cpp
+@@ -54,7 +54,7 @@ std::tuple<Eigen::Vector3d, double> VoxelHashMap::GetClosestNeighbor(
+         const auto &query_voxel = voxel + voxel_shift;
+         auto search = map_.find(query_voxel);
+         if (search != map_.end()) {
+-            const auto &points = search.value();
++            const auto &points = search->second;
+             const Eigen::Vector3d &neighbor = *std::min_element(
+                 points.cbegin(), points.cend(), [&](const auto &lhs, const auto &rhs) {
+                     return (lhs - query).norm() < (rhs - query).norm();
+@@ -100,7 +100,7 @@ void VoxelHashMap::AddPoints(const std::vector<Eigen::Vector3d> &points) {
+         const auto voxel = PointToVoxel(point, voxel_size_);
+         auto search = map_.find(voxel);
+         if (search != map_.end()) {
+-            auto &voxel_points = search.value();
++            auto &voxel_points = search->second;
+             if (voxel_points.size() == max_points_per_voxel_ ||
+                 std::any_of(voxel_points.cbegin(), voxel_points.cend(),
+                             [&](const auto &voxel_point) {
+diff --git a/cpp/kiss_icp/core/VoxelHashMap.hpp b/cpp/kiss_icp/core/VoxelHashMap.hpp
+index 48a7c9d..f7adde5 100644
+--- a/cpp/kiss_icp/core/VoxelHashMap.hpp
++++ b/cpp/kiss_icp/core/VoxelHashMap.hpp
+@@ -26,10 +26,9 @@
+ // should at least acknoowledge the work from CT-ICP by giving a star on GitHub
+ #pragma once
+ 
+-#include <tsl/robin_map.h>
+-
+ #include <Eigen/Core>
+ #include <sophus/se3.hpp>
++#include <unordered_map>
+ #include <vector>
+ 
+ #include "VoxelUtils.hpp"
+@@ -53,6 +52,6 @@ struct VoxelHashMap {
+     double voxel_size_;
+     double max_distance_;
+     unsigned int max_points_per_voxel_;
+-    tsl::robin_map<Voxel, std::vector<Eigen::Vector3d>> map_;
++    std::unordered_map<Voxel, std::vector<Eigen::Vector3d>> map_;
+ };
+ }  // namespace kiss_icp
+diff --git a/cpp/kiss_icp/core/VoxelUtils.cpp b/cpp/kiss_icp/core/VoxelUtils.cpp
+index f8f8ea8..cea2c91 100644
+--- a/cpp/kiss_icp/core/VoxelUtils.cpp
++++ b/cpp/kiss_icp/core/VoxelUtils.cpp
+@@ -1,12 +1,12 @@
+ #include "VoxelUtils.hpp"
+ 
+-#include <tsl/robin_map.h>
++#include <unordered_map>
+ 
+ namespace kiss_icp {
+ 
+ std::vector<Eigen::Vector3d> VoxelDownsample(const std::vector<Eigen::Vector3d> &frame,
+                                              const double voxel_size) {
+-    tsl::robin_map<Voxel, Eigen::Vector3d> grid;
++    std::unordered_map<Voxel, Eigen::Vector3d> grid;
+     grid.reserve(frame.size());
+     std::for_each(frame.cbegin(), frame.cend(), [&](const auto &point) {
+         const auto voxel = PointToVoxel(point, voxel_size);
+diff --git a/cpp/kiss_icp/pipeline/KissICP.cpp b/cpp/kiss_icp/pipeline/KissICP.cpp
+index c40daaa..2119988 100644
+--- a/cpp/kiss_icp/pipeline/KissICP.cpp
++++ b/cpp/kiss_icp/pipeline/KissICP.cpp
+@@ -25,6 +25,7 @@
+ 
+ #include <Eigen/Core>
+ #include <vector>
++#include <chrono>
+ 
+ #include "kiss_icp/core/Preprocessing.hpp"
+ #include "kiss_icp/core/Registration.hpp"
+@@ -32,13 +33,25 @@
+ 
+ namespace kiss_icp::pipeline {
+ 
++namespace {
++double elapsed_ms(const std::chrono::steady_clock::time_point start) {
++    return std::chrono::duration<double, std::milli>(
++               std::chrono::steady_clock::now() - start)
++        .count();
++}
++}  // namespace
++
+ KissICP::Vector3dVectorTuple KissICP::RegisterFrame(const std::vector<Eigen::Vector3d> &frame,
+                                                     const std::vector<double> &timestamps) {
+     // Preprocess the input cloud
++    auto started = std::chrono::steady_clock::now();
+     const auto &preprocessed_frame = preprocessor_.Preprocess(frame, timestamps, last_delta_);
++    if (timing_callback_) timing_callback_("undistortion", elapsed_ms(started));
+ 
+     // Voxelize
++    started = std::chrono::steady_clock::now();
+     const auto &[source, frame_downsample] = Voxelize(preprocessed_frame);
++    if (timing_callback_) timing_callback_("downsampling", elapsed_ms(started));
+ 
+     // Get adaptive_threshold
+     const double sigma = adaptive_threshold_.ComputeThreshold();
+@@ -47,18 +60,22 @@ KissICP::Vector3dVectorTuple KissICP::RegisterFrame(const std::vector<Eigen::Vec
+     const auto initial_guess = last_pose_ * last_delta_;
+ 
+     // Run ICP
++    started = std::chrono::steady_clock::now();
+     const auto new_pose = registration_.AlignPointsToMap(source,         // frame
+                                                          local_map_,     // voxel_map
+                                                          initial_guess,  // initial_guess
+                                                          3.0 * sigma,    // max_correspondence_dist
+                                                          sigma);         // kernel
++    if (timing_callback_) timing_callback_("registration", elapsed_ms(started));
+ 
+     // Compute the difference between the prediction and the actual estimate
+     const auto model_deviation = initial_guess.inverse() * new_pose;
+ 
+     // Update step: threshold, local map, delta, and the last pose
+     adaptive_threshold_.UpdateModelDeviation(model_deviation);
++    started = std::chrono::steady_clock::now();
+     local_map_.Update(frame_downsample, new_pose);
++    if (timing_callback_) timing_callback_("map_update", elapsed_ms(started));
+     last_delta_ = last_pose_.inverse() * new_pose;
+     last_pose_ = new_pose;
+ 
+diff --git a/cpp/kiss_icp/pipeline/KissICP.hpp b/cpp/kiss_icp/pipeline/KissICP.hpp
+index b95a585..2e42407 100644
+--- a/cpp/kiss_icp/pipeline/KissICP.hpp
++++ b/cpp/kiss_icp/pipeline/KissICP.hpp
+@@ -25,6 +25,7 @@
+ #include <sophus/se3.hpp>
+ #include <tuple>
+ #include <vector>
++#include <functional>
+ 
+ #include "kiss_icp/core/Preprocessing.hpp"
+ #include "kiss_icp/core/Registration.hpp"
+@@ -57,6 +58,7 @@ class KissICP {
+ public:
+     using Vector3dVector = std::vector<Eigen::Vector3d>;
+     using Vector3dVectorTuple = std::tuple<Vector3dVector, Vector3dVector>;
++    using TimingCallback = std::function<void(const char *, double)>;
+ 
+ public:
+     explicit KissICP(const KISSConfig &config)
+@@ -83,6 +85,7 @@ public:
+     const Sophus::SE3d &delta() const { return last_delta_; }
+     Sophus::SE3d &delta() { return last_delta_; }
+     void Reset();
++    void SetTimingCallback(TimingCallback callback) { timing_callback_ = std::move(callback); }
+ 
+ private:
+     Sophus::SE3d last_pose_;
+@@ -94,6 +97,7 @@ private:
+     Registration registration_;
+     VoxelHashMap local_map_;
+     AdaptiveThreshold adaptive_threshold_;
++    TimingCallback timing_callback_;
+ };
+ 
+ }  // namespace kiss_icp::pipeline
+diff --git a/standalone/kiss_icp_adapter.cpp b/standalone/kiss_icp_adapter.cpp
+new file mode 100644
+index 0000000..1ff47c7
+--- /dev/null
++++ b/standalone/kiss_icp_adapter.cpp
+@@ -0,0 +1,106 @@
++#include "kiss_icp_adapter.hpp"
++
++#include <spdlog/spdlog.h>
++#include <yaml-cpp/yaml.h>
++
++#include <algorithm>
++#include <chrono>
++#include <cmath>
++#include <ranges>
++#include <stdexcept>
++
++namespace {
++template <typename T>
++T parameter(const YAML::Node& root, const char* key, T fallback) {
++    return root[key] ? root[key].as<T>() : fallback;
++}
++
++double elapsed_ms(const std::chrono::steady_clock::time_point start) {
++    return std::chrono::duration<double, std::milli>(
++               std::chrono::steady_clock::now() - start)
++        .count();
++}
++}  // namespace
++
++void KissIcpAdapter::initialize(
++    std::span<const slam_benchmark::SensorDefinition> sensors,
++    const std::filesystem::path& config_path,
++    slam_benchmark::ResultSink& sink) {
++    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
++                                         &slam_benchmark::SensorDefinition::type);
++    if (lidar == sensors.end()) throw std::runtime_error("KISS-ICP requires one LiDAR");
++
++    const YAML::Node root = YAML::LoadFile(config_path.string());
++    kiss_icp::pipeline::KISSConfig config;
++    config.max_range = parameter(root, "max_range_m", config.max_range);
++    config.min_range = parameter(root, "min_range_m", config.min_range);
++    config.voxel_size = parameter(root, "voxel_size_m", config.voxel_size);
++    config.max_points_per_voxel =
++        parameter(root, "max_points_per_voxel", config.max_points_per_voxel);
++    config.initial_threshold = parameter(root, "initial_threshold", config.initial_threshold);
++    config.min_motion_th = parameter(root, "min_motion_th", config.min_motion_th);
++    config.max_num_iterations =
++        parameter(root, "max_iterations", config.max_num_iterations);
++    config.convergence_criterion =
++        parameter(root, "convergence_criterion", config.convergence_criterion);
++    config.max_num_threads = parameter(root, "max_num_threads", config.max_num_threads);
++    config.deskew = parameter(root, "deskew", true);
++
++    const auto& transform = lidar->calibration.body_from_sensor;
++    Eigen::Matrix3d rotation;
++    rotation << transform[0], transform[1], transform[2], transform[4], transform[5],
++        transform[6], transform[8], transform[9], transform[10];
++    lidar_from_body_ = Sophus::SE3d(rotation, Eigen::Vector3d(
++        transform[3], transform[7], transform[11])).inverse();
++
++    sink_ = &sink;
++    pipeline_ = std::make_unique<kiss_icp::pipeline::KissICP>(config);
++    pipeline_->SetTimingCallback([this](const char* stage, double duration) {
++        sink_->report_timing({current_timestamp_, stage, duration});
++    });
++    spdlog::info("KISS-ICP standalone adapter initialized");
++}
++
++void KissIcpAdapter::process(const slam_benchmark::SensorSample& sample) {
++    const auto* cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload);
++    if (cloud == nullptr) return;
++    if (cloud->points.size() != cloud->point_time_offset_ns.size())
++        throw std::runtime_error("point/time array size mismatch");
++
++    current_timestamp_ = sample.timestamp_ns;
++    const auto started = std::chrono::steady_clock::now();
++    std::vector<Eigen::Vector3d> points;
++    std::vector<double> timestamps;
++    points.reserve(cloud->points.size());
++    timestamps.reserve(cloud->points.size());
++    std::int64_t minimum_offset = 0;
++    std::int64_t maximum_offset = 0;
++    for (std::size_t index = 0; index < cloud->points.size(); ++index) {
++        const auto& point = cloud->points[index];
++        if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
++            continue;
++        points.emplace_back(point.x, point.y, point.z);
++        const auto offset = cloud->point_time_offset_ns[index];
++        timestamps.push_back(static_cast<double>(offset) * 1e-9);
++        minimum_offset = std::min(minimum_offset, offset);
++        maximum_offset = std::max(maximum_offset, offset);
++    }
++    if (minimum_offset == maximum_offset) timestamps.clear();
++    sink_->report_timing({current_timestamp_, "lidar_preprocess", elapsed_ms(started)});
++
++    pipeline_->RegisterFrame(points, timestamps);
++    const Sophus::SE3d world_from_body = pipeline_->pose() * lidar_from_body_;
++    const Eigen::Quaterniond orientation(world_from_body.so3().unit_quaternion());
++    slam_benchmark::Pose pose;
++    pose.timestamp_ns = sample.timestamp_ns + static_cast<slam_benchmark::TimestampNs>(
++        std::max<std::int64_t>(0, maximum_offset));
++    pose.translation_m = {world_from_body.translation().x(), world_from_body.translation().y(),
++                          world_from_body.translation().z()};
++    pose.rotation_xyzw = {orientation.x(), orientation.y(), orientation.z(), orientation.w()};
++    trajectory_.push_back(pose);
++    sink_->report_realtime_pose(pose);
++}
++
++void KissIcpAdapter::finalize() {
++    sink_->report_final_trajectory(trajectory_);
++}
+diff --git a/standalone/kiss_icp_adapter.hpp b/standalone/kiss_icp_adapter.hpp
+new file mode 100644
+index 0000000..4ee0722
+--- /dev/null
++++ b/standalone/kiss_icp_adapter.hpp
+@@ -0,0 +1,24 @@
++#pragma once
++
++#include "kiss_icp/pipeline/KissICP.hpp"
++
++#include <slam_benchmark/algorithm.hpp>
++
++#include <memory>
++
++class KissIcpAdapter final : public slam_benchmark::SlamAlgorithm {
++public:
++    [[nodiscard]] std::string_view name() const noexcept override { return "kiss_icp"; }
++    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++                    const std::filesystem::path& config_path,
++                    slam_benchmark::ResultSink& sink) override;
++    void process(const slam_benchmark::SensorSample& sample) override;
++    void finalize() override;
++
++private:
++    slam_benchmark::ResultSink* sink_{};
++    std::unique_ptr<kiss_icp::pipeline::KissICP> pipeline_;
++    Sophus::SE3d lidar_from_body_;
++    slam_benchmark::Trajectory trajectory_;
++    slam_benchmark::TimestampNs current_timestamp_{};
++};
+diff --git a/standalone/main.cpp b/standalone/main.cpp
+new file mode 100644
+index 0000000..3d8e208
+--- /dev/null
++++ b/standalone/main.cpp
+@@ -0,0 +1,8 @@
++#include "kiss_icp_adapter.hpp"
++
++#include <slam_benchmark/application.hpp>
++
++int main(int argc, char** argv) {
++    KissIcpAdapter algorithm;
++    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
++}

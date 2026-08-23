@@ -1,0 +1,5 @@
+set(_source "${CMAKE_CURRENT_SOURCE_DIR}/source/kiss-icp")
+if(NOT EXISTS "${_source}/CMakeLists.txt")
+    message(FATAL_ERROR "Run scripts/download_algorithms.py kiss_icp and scripts/patch_algorithms.py apply kiss_icp")
+endif()
+add_subdirectory("${_source}" kiss-icp)

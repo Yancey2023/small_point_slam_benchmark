@@ -263,10 +263,10 @@ index 0000000..4b81fec
 +}
 diff --git a/standalone/voxel_map_adapter.cpp b/standalone/voxel_map_adapter.cpp
 new file mode 100644
-index 0000000..fe9a2ac
+index 0000000..e0e2880
 --- /dev/null
 +++ b/standalone/voxel_map_adapter.cpp
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,117 @@
 +#include "voxel_map_adapter.hpp"
 +
 +#include <spdlog/spdlog.h>
@@ -288,8 +288,9 @@ index 0000000..fe9a2ac
 +}
 +
 +template <typename T>
-+T parameter(const YAML::Node& root, const char* key, T fallback) {
-+    return root[key] ? root[key].as<T>() : fallback;
++T required_parameter(const YAML::Node& root, const char* key) {
++    if (!root[key]) throw std::runtime_error(std::string("missing parameter: ") + key);
++    return root[key].as<T>();
 +}
 +
 +}  // namespace
@@ -310,17 +311,21 @@ index 0000000..fe9a2ac
 +
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
 +    VoxelMapEngine::Options options;
-+    options.scan_voxel_size = parameter(root, "filter_size_scan_m", 0.5);
-+    options.voxel_size = parameter(root, "voxel_size_m", 1.0);
-+    options.max_layer = parameter(root, "max_layer", 2);
-+    options.max_points = parameter(root, "max_points_per_voxel", 100);
-+    options.max_iterations = parameter(root, "max_iterations", 4);
++    options.scan_filter_size_m = required_parameter<double>(root, "filter_size_scan_m");
++    options.map_voxel_size_m = required_parameter<double>(root, "map_voxel_size_m");
++    options.max_layer = required_parameter<int>(root, "max_layer");
++    options.max_points = required_parameter<int>(root, "max_points_per_voxel");
++    options.max_iterations = required_parameter<int>(root, "max_iterations");
 +    options.minimum_eigenvalue_ratio =
-+        parameter(root, "min_eigenvalue_ratio", 0.01F);
-+    options.range_noise = parameter(root, "range_noise_m", 0.02F);
-+    options.angle_noise_degrees = parameter(root, "angle_noise_deg", 0.05F);
-+    if (root["layer_point_sizes"])
-+        options.layer_point_sizes = root["layer_point_sizes"].as<std::vector<int>>();
++        required_parameter<float>(root, "min_eigenvalue_ratio");
++    options.range_noise = required_parameter<float>(root, "range_noise_m");
++    options.angle_noise_degrees = required_parameter<float>(root, "angle_noise_deg");
++    options.layer_point_sizes =
++        required_parameter<std::vector<int>>(root, "layer_point_sizes");
++    if (options.scan_filter_size_m <= 0.0 || options.map_voxel_size_m <= 0.0 ||
++        options.max_layer < 0 || options.max_points <= 0 || options.max_iterations <= 0 ||
++        options.layer_point_sizes.empty())
++        throw std::runtime_error("VoxelMap parameters must be positive");
 +    while (options.layer_point_sizes.size() <= static_cast<std::size_t>(options.max_layer))
 +        options.layer_point_sizes.push_back(options.layer_point_sizes.back());
 +
@@ -330,6 +335,9 @@ index 0000000..fe9a2ac
 +        sink_->report_timing({nanoseconds(timestamp), stage, duration});
 +    });
 +    engine_.initialize(options);
++    spdlog::info("VoxelMap parameters: scan filter={} m, map voxel={} m, iterations={}",
++                 options.scan_filter_size_m, options.map_voxel_size_m,
++                 options.max_iterations);
 +    spdlog::info("VoxelMap standalone adapter initialized");
 +}
 +
@@ -408,7 +416,7 @@ index 0000000..b59ce55
 +};
 diff --git a/standalone/voxel_map_engine.cpp b/standalone/voxel_map_engine.cpp
 new file mode 100644
-index 0000000..f91e8b9
+index 0000000..b3e7651
 --- /dev/null
 +++ b/standalone/voxel_map_engine.cpp
 @@ -0,0 +1,252 @@
@@ -452,8 +460,8 @@ index 0000000..f91e8b9
 +
 +    void initialize(const Options& options) {
 +        options_ = options;
-+        scan_filter_.setLeafSize(options.scan_voxel_size, options.scan_voxel_size,
-+                                 options.scan_voxel_size);
++        scan_filter_.setLeafSize(options.scan_filter_size_m, options.scan_filter_size_m,
++                                 options.scan_filter_size_m);
 +    }
 +
 +    void process(double timestamp, const PointCloudXYZI::Ptr& cloud) {
@@ -483,7 +491,7 @@ index 0000000..f91e8b9
 +        }
 +        if (map_.empty()) {
 +            const auto points = map_points(body_covariances, cross_matrices);
-+            buildVoxelMap(points, options_.voxel_size, options_.max_layer,
++            buildVoxelMap(points, options_.map_voxel_size_m, options_.max_layer,
 +                          options_.layer_point_sizes, options_.max_points,
 +                          options_.max_points, options_.minimum_eigenvalue_ratio, map_);
 +            emit_pose(timestamp);
@@ -508,7 +516,7 @@ index 0000000..f91e8b9
 +            std::vector<ptpl> matches;
 +            std::vector<V3D> unmatched;
 +            started = std::chrono::steady_clock::now();
-+            BuildResidualListOMP(map_, options_.voxel_size, 3.0, options_.max_layer,
++            BuildResidualListOMP(map_, options_.map_voxel_size_m, 3.0, options_.max_layer,
 +                                 query, matches, unmatched);
 +            search_duration += elapsed_ms(started);
 +            if (matches.size() < 3) break;
@@ -584,7 +592,7 @@ index 0000000..f91e8b9
 +        std::sort(points.begin(), points.end(), [](const auto& lhs, const auto& rhs) {
 +            return lhs.cov.diagonal().norm() < rhs.cov.diagonal().norm();
 +        });
-+        updateVoxelMap(points, options_.voxel_size, options_.max_layer,
++        updateVoxelMap(points, options_.map_voxel_size_m, options_.max_layer,
 +                       options_.layer_point_sizes, options_.max_points,
 +                       options_.max_points, options_.minimum_eigenvalue_ratio, map_);
 +        report(timestamp, "map_update", elapsed_ms(started));
@@ -666,7 +674,7 @@ index 0000000..f91e8b9
 +}
 diff --git a/standalone/voxel_map_engine.hpp b/standalone/voxel_map_engine.hpp
 new file mode 100644
-index 0000000..ea3e5e3
+index 0000000..f572911
 --- /dev/null
 +++ b/standalone/voxel_map_engine.hpp
 @@ -0,0 +1,39 @@
@@ -681,8 +689,8 @@ index 0000000..ea3e5e3
 +class VoxelMapEngine {
 +public:
 +    struct Options {
-+        double scan_voxel_size = 0.5;
-+        double voxel_size = 1.0;
++        double scan_filter_size_m = 0.5;
++        double map_voxel_size_m = 1.0;
 +        int max_layer = 2;
 +        int max_points = 100;
 +        int max_iterations = 4;

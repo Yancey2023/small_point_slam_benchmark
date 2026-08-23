@@ -496,7 +496,7 @@ index 0000000..89a2946
 +}
 diff --git a/standalone/super_lio_adapter.cpp b/standalone/super_lio_adapter.cpp
 new file mode 100644
-index 0000000..f43a511
+index 0000000..f56fbb6
 --- /dev/null
 +++ b/standalone/super_lio_adapter.cpp
 @@ -0,0 +1,153 @@
@@ -533,22 +533,22 @@ index 0000000..f43a511
 +    g_time_eva = false;
 +    g_save_map = false;
 +    g_if_filter = true;
-+    g_map_ds_size = parameter(root, "map_downsample_size_m", 0.2F);
++    g_map_ds_size = parameter(root, "filter_size_map_m", 0.5F);
 +    g_pcd_save_interval = -1;
 +    g_filter_rate = 1;
-+    const double blind = parameter(root, "blind_m", 0.1);
-+    const double max_range = parameter(root, "max_range_m", 200.0);
++    const double blind = parameter(root, "min_range_m", 0.5);
++    const double max_range = parameter(root, "max_range_m", 100.0);
 +    g_blind2 = static_cast<float>(blind * blind);
 +    g_maxrange2 = static_cast<float>(max_range * max_range);
 +    g_enable_downsample = true;
-+    g_voxel_fliter_size = parameter(root, "voxel_size_m", 0.5F);
++    g_voxel_fliter_size = parameter(root, "filter_size_scan_m", 0.5F);
 +    g_gravity_norm = parameter(root, "gravity_norm_m_s2", 9.81);
 +    g_imu_na = parameter(root, "accelerometer_noise", 0.01);
-+    g_imu_ng = parameter(root, "gyroscope_noise", 0.0001);
++    g_imu_ng = parameter(root, "gyroscope_noise", 0.1);
 +    g_imu_nba = parameter(root, "accelerometer_bias_noise", 0.0001);
-+    g_imu_nbg = parameter(root, "gyroscope_bias_noise", 0.000001);
++    g_imu_nbg = parameter(root, "gyroscope_bias_noise", 0.0001);
 +    g_ivox_capacity = parameter<std::size_t>(root, "map_capacity", 100000);
-+    g_ivox_resolution = parameter(root, "voxel_size_m", 0.5F);
++    g_ivox_resolution = parameter(root, "map_voxel_size_m", 0.5F);
 +    g_kf_max_iterations = parameter(root, "max_iterations", 4);
 +    g_kf_quit_eps = parameter(root, "convergence_epsilon", 1e-4);
 +    g_visual_map = false;

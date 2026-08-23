@@ -1,0 +1,777 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 51725ea..3a17f76 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,33 +1,39 @@
+-cmake_minimum_required(VERSION 3.5)
+-project(faster_lio)
+-
+-set(DEFAULT_BUILD_TYPE "Release")
+-
+-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+-set(CMAKE_CXX_EXTENSIONS OFF)
+-set(CMAKE_CXX_STANDARD 17)
+-
+-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -fexceptions -g -ggdb")
+-set(CMAKE_CXX_FLAGS_RELEASE "-O3 ${CMAKE_CXX_FLAGS}")
+-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS}")
+-
+-add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
+-add_subdirectory(thirdparty/livox_ros_driver)
+-
+-include(cmake/packages.cmake)
+-
+-#definitions
+-add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
+-
+-# options
+-option(WITH_IVOX_NODE_TYPE_PHC "Use PHC instead of default ivox node" OFF)
+-
+-if (WITH_IVOX_NODE_TYPE_PHC)
+-    message("USING_IVOX_NODE_TYPE_PHC")
+-    add_definitions(-DIVOX_NODE_TYPE_PHC)
+-else ()
+-    message("USING_IVOX_NODE_TYPE_DEFAULT")
++cmake_minimum_required(VERSION 3.24)
++
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
++find_package(TBB CONFIG REQUIRED)
++
++add_library(faster_lio_algorithm STATIC
++    src/options.cc
++    standalone/faster_lio_engine.cpp
++)
++target_include_directories(faster_lio_algorithm PUBLIC
++    include
++    standalone
++    ${PCL_INCLUDE_DIRS}
++)
++target_link_libraries(faster_lio_algorithm PUBLIC
++    Eigen3::Eigen
++    TBB::tbb
++    ${PCL_LIBRARIES}
++)
++
++add_executable(faster_lio_benchmark
++    standalone/faster_lio_adapter.cpp
++    standalone/main.cpp
++)
++target_link_libraries(faster_lio_benchmark PRIVATE
++    faster_lio_algorithm
++    slam_benchmark::core
++    yaml-cpp::yaml-cpp
++    spdlog::spdlog
++)
++
++if(MSVC)
++    target_compile_options(faster_lio_algorithm PRIVATE /W3 /utf-8)
++    target_compile_options(faster_lio_benchmark PRIVATE /W4 /utf-8)
++else()
++    target_compile_options(faster_lio_algorithm PRIVATE -Wall -Wextra)
++    target_compile_options(faster_lio_benchmark PRIVATE -Wall -Wextra -Wpedantic)
+ endif()
+-
+-add_subdirectory(src)
+-add_subdirectory(app)
+diff --git a/include/ivox3d/ivox3d.h b/include/ivox3d/ivox3d.h
+index 38e6a99..024abc2 100644
+--- a/include/ivox3d/ivox3d.h
++++ b/include/ivox3d/ivox3d.h
+@@ -5,9 +5,9 @@
+ #ifndef FASTER_LIO_IVOX3D_H
+ #define FASTER_LIO_IVOX3D_H
+ 
+-#include <glog/logging.h>
+ #include <execution>
+ #include <list>
++#include <stdexcept>
+ #include <thread>
+ 
+ #include "eigen_types.h"
+@@ -230,7 +230,7 @@ void IVox<dim, node_type, PointType>::GenerateNearbyGrids() {
+                          KeyType(-1, 1, 1),  KeyType(1, -1, 1),  KeyType(1, 1, -1),  KeyType(-1, -1, 1),
+                          KeyType(-1, 1, -1), KeyType(1, -1, -1), KeyType(-1, -1, -1)};
+     } else {
+-        LOG(ERROR) << "Unknown nearby_type!";
++        throw std::invalid_argument("unknown IVox nearby type");
+     }
+ }
+ 
+diff --git a/standalone/faster_lio_adapter.cpp b/standalone/faster_lio_adapter.cpp
+new file mode 100644
+index 0000000..64b5661
+--- /dev/null
++++ b/standalone/faster_lio_adapter.cpp
+@@ -0,0 +1,133 @@
++#include "faster_lio_adapter.hpp"
++
++#include <spdlog/spdlog.h>
++#include <yaml-cpp/yaml.h>
++
++#include <algorithm>
++#include <chrono>
++#include <cmath>
++#include <ranges>
++#include <stdexcept>
++
++namespace {
++double seconds(slam_benchmark::TimestampNs value) {
++    return static_cast<double>(value) * 1e-9;
++}
++
++slam_benchmark::TimestampNs nanoseconds(double value) {
++    return static_cast<slam_benchmark::TimestampNs>(std::llround(value * 1e9));
++}
++
++template <typename T>
++T parameter(const YAML::Node& root, const char* key, T fallback) {
++    return root[key] ? root[key].as<T>() : fallback;
++}
++}  // namespace
++
++void FasterLioAdapter::initialize(
++    std::span<const slam_benchmark::SensorDefinition> sensors,
++    const std::filesystem::path& config_path,
++    slam_benchmark::ResultSink& sink) {
++    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
++                                         &slam_benchmark::SensorDefinition::type);
++    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
++                                       &slam_benchmark::SensorDefinition::type);
++    if (lidar == sensors.end() || imu == sensors.end())
++        throw std::runtime_error("Faster-LIO requires one LiDAR and one IMU");
++
++    const YAML::Node root = YAML::LoadFile(config_path.string());
++    faster_lio::standalone::FasterLioEngine::Options options;
++    options.scan_voxel_size = parameter(root, "filter_size_scan_m", 0.5);
++    options.map_voxel_size = parameter(root, "filter_size_map_m", 0.5);
++    options.ivox_resolution = parameter(root, "map_voxel_size_m", 0.5);
++    options.ivox_nearby_type = parameter(root, "ivox_nearby_type", 18);
++    options.max_iterations = parameter(root, "max_iterations", 4);
++    options.estimate_extrinsics = parameter(root, "estimate_extrinsics", false);
++    options.gyroscope_covariance.setConstant(parameter(root, "gyroscope_noise", 0.1));
++    options.accelerometer_covariance.setConstant(parameter(root, "accelerometer_noise", 0.1));
++    options.gyroscope_bias_covariance.setConstant(
++        parameter(root, "gyroscope_bias_noise", 0.0001));
++    options.accelerometer_bias_covariance.setConstant(
++        parameter(root, "accelerometer_bias_noise", 0.0001));
++    const auto& transform = lidar->calibration.body_from_sensor;
++    options.lidar_rotation << transform[0], transform[1], transform[2], transform[4],
++        transform[5], transform[6], transform[8], transform[9], transform[10];
++    options.lidar_translation << transform[3], transform[7], transform[11];
++
++    sink_ = &sink;
++    engine_.set_pose_callback(
++        [this](double timestamp, const auto& state) { accept_pose(timestamp, state); });
++    engine_.set_timing_callback([this](double timestamp, const char* stage, double duration) {
++        sink_->report_timing({nanoseconds(timestamp), stage, duration});
++    });
++    engine_.initialize(options);
++    spdlog::info("Faster-LIO standalone adapter initialized");
++}
++
++void FasterLioAdapter::process(const slam_benchmark::SensorSample& sample) {
++    if (const auto* imu = std::get_if<slam_benchmark::ImuSample>(&sample.payload)) {
++        const auto started = std::chrono::steady_clock::now();
++        faster_lio::standalone::ImuMeasurement value;
++        value.timestamp = seconds(sample.timestamp_ns);
++        value.angular_velocity << imu->angular_velocity_rad_s[0],
++            imu->angular_velocity_rad_s[1], imu->angular_velocity_rad_s[2];
++        value.acceleration << imu->linear_acceleration_m_s2[0],
++            imu->linear_acceleration_m_s2[1], imu->linear_acceleration_m_s2[2];
++        imu_queue_.push_back(value);
++        const double duration = std::chrono::duration<double, std::milli>(
++            std::chrono::steady_clock::now() - started).count();
++        sink_->report_timing({sample.timestamp_ns, "imu_preprocess", duration});
++    } else if (const auto* cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload)) {
++        if (cloud->points.size() != cloud->point_time_offset_ns.size())
++            throw std::runtime_error("point/time array size mismatch");
++        const auto started = std::chrono::steady_clock::now();
++        faster_lio::standalone::Scan scan;
++        scan.begin_time = seconds(sample.timestamp_ns);
++        scan.end_time = scan.begin_time;
++        scan.points.reserve(cloud->points.size());
++        for (std::size_t index = 0; index < cloud->points.size(); ++index) {
++            const auto& source = cloud->points[index];
++            if (!std::isfinite(source.x) || !std::isfinite(source.y) || !std::isfinite(source.z))
++                continue;
++            const double offset = static_cast<double>(cloud->point_time_offset_ns[index]) * 1e-9;
++            scan.points.push_back({Eigen::Vector3f(source.x, source.y, source.z),
++                                   source.intensity, offset});
++            scan.end_time = std::max(scan.end_time, scan.begin_time + offset);
++        }
++        std::ranges::sort(scan.points, {}, &faster_lio::standalone::TimedPoint::offset_seconds);
++        lidar_queue_.push_back(std::move(scan));
++        const double duration = std::chrono::duration<double, std::milli>(
++            std::chrono::steady_clock::now() - started).count();
++        sink_->report_timing({sample.timestamp_ns, "lidar_preprocess", duration});
++    }
++    drain();
++}
++
++void FasterLioAdapter::drain() {
++    while (!lidar_queue_.empty() && !imu_queue_.empty() &&
++           imu_queue_.back().timestamp >= lidar_queue_.front().end_time) {
++        auto scan = std::move(lidar_queue_.front());
++        lidar_queue_.pop_front();
++        while (!imu_queue_.empty() && imu_queue_.front().timestamp <= scan.end_time) {
++            scan.imu.push_back(imu_queue_.front());
++            imu_queue_.pop_front();
++        }
++        if (!scan.imu.empty()) engine_.process(scan);
++    }
++}
++
++void FasterLioAdapter::accept_pose(
++    double timestamp, const faster_lio::standalone::PoseState& state) {
++    slam_benchmark::Pose pose;
++    pose.timestamp_ns = nanoseconds(timestamp);
++    pose.translation_m = {state.translation.x(), state.translation.y(), state.translation.z()};
++    pose.rotation_xyzw = {state.rotation.x(), state.rotation.y(),
++                          state.rotation.z(), state.rotation.w()};
++    trajectory_.push_back(pose);
++    sink_->report_realtime_pose(pose);
++}
++
++void FasterLioAdapter::finalize() {
++    drain();
++    sink_->report_final_trajectory(trajectory_);
++}
+diff --git a/standalone/faster_lio_adapter.hpp b/standalone/faster_lio_adapter.hpp
+new file mode 100644
+index 0000000..9d3bb23
+--- /dev/null
++++ b/standalone/faster_lio_adapter.hpp
+@@ -0,0 +1,27 @@
++#pragma once
++
++#include "faster_lio_engine.hpp"
++
++#include <slam_benchmark/algorithm.hpp>
++
++#include <deque>
++
++class FasterLioAdapter final : public slam_benchmark::SlamAlgorithm {
++public:
++    [[nodiscard]] std::string_view name() const noexcept override { return "faster_lio"; }
++    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++                    const std::filesystem::path& config_path,
++                    slam_benchmark::ResultSink& sink) override;
++    void process(const slam_benchmark::SensorSample& sample) override;
++    void finalize() override;
++
++private:
++    void drain();
++    void accept_pose(double timestamp, const faster_lio::standalone::PoseState& state);
++
++    slam_benchmark::ResultSink* sink_{};
++    faster_lio::standalone::FasterLioEngine engine_;
++    std::deque<faster_lio::standalone::ImuMeasurement> imu_queue_;
++    std::deque<faster_lio::standalone::Scan> lidar_queue_;
++    slam_benchmark::Trajectory trajectory_;
++};
+diff --git a/standalone/faster_lio_engine.cpp b/standalone/faster_lio_engine.cpp
+new file mode 100644
+index 0000000..76a34ce
+--- /dev/null
++++ b/standalone/faster_lio_engine.cpp
+@@ -0,0 +1,407 @@
++#include "faster_lio_engine.hpp"
++
++#include "ivox3d/ivox3d.h"
++#include "options.h"
++#include "use-ikfom.hpp"
++
++#include <pcl/filters/voxel_grid.h>
++#include <pcl/point_cloud.h>
++#include <pcl/point_types.h>
++
++#include <algorithm>
++#include <chrono>
++#include <cmath>
++#include <stdexcept>
++#include <utility>
++
++namespace faster_lio::standalone {
++namespace {
++using PointType = pcl::PointXYZINormal;
++using PointCloud = pcl::PointCloud<PointType>;
++using PointVector = std::vector<PointType, Eigen::aligned_allocator<PointType>>;
++constexpr int kMatchPoints = 5;
++constexpr double kLaserPointCovariance = 0.001;
++
++double elapsed_ms(const std::chrono::steady_clock::time_point start) {
++    return std::chrono::duration<double, std::milli>(
++               std::chrono::steady_clock::now() - start).count();
++}
++
++Eigen::Matrix3d skew(const Eigen::Vector3d& value) {
++    Eigen::Matrix3d result;
++    result << 0.0, -value.z(), value.y(), value.z(), 0.0, -value.x(),
++        -value.y(), value.x(), 0.0;
++    return result;
++}
++
++Eigen::Matrix3d exp_so3(const Eigen::Vector3d& rotation_vector) {
++    const double angle = rotation_vector.norm();
++    if (angle < 1e-12) return Eigen::Matrix3d::Identity() + skew(rotation_vector);
++    return Eigen::AngleAxisd(angle, rotation_vector / angle).toRotationMatrix();
++}
++
++bool estimate_plane(Eigen::Vector4f& plane, const PointVector& points) {
++    if (points.size() < 3) return false;
++    Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
++    for (const auto& point : points) centroid += point.getVector3fMap();
++    centroid /= static_cast<float>(points.size());
++    Eigen::Matrix3f covariance = Eigen::Matrix3f::Zero();
++    for (const auto& point : points) {
++        const Eigen::Vector3f centered = point.getVector3fMap() - centroid;
++        covariance.noalias() += centered * centered.transpose();
++    }
++    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> solver(covariance);
++    if (solver.info() != Eigen::Success) return false;
++    const Eigen::Vector3f normal = solver.eigenvectors().col(0);
++    plane << normal, -normal.dot(centroid);
++    return std::all_of(points.begin(), points.end(), [&](const PointType& point) {
++        return std::abs(plane.head<3>().dot(point.getVector3fMap()) + plane.w()) <=
++               options::ESTI_PLANE_THRESHOLD;
++    });
++}
++}  // namespace
++
++class FasterLioEngine::Impl {
++public:
++    using IVoxType = IVox<3, IVoxNodeType::DEFAULT, PointType>;
++
++    Impl()
++        : undistorted_(new PointCloud()), down_body_(new PointCloud()),
++          down_world_(new PointCloud()) {}
++
++    ~Impl() {
++        if (active_ == this) active_ = nullptr;
++    }
++
++    void initialize(const Options& options_value) {
++        options_ = options_value;
++        options::NUM_MAX_ITERATIONS = options_value.max_iterations;
++        scan_filter_.setLeafSize(options_value.scan_voxel_size, options_value.scan_voxel_size,
++                                 options_value.scan_voxel_size);
++        IVoxType::Options ivox_options;
++        ivox_options.resolution_ = static_cast<float>(options_value.ivox_resolution);
++        if (options_value.ivox_nearby_type == 0) ivox_options.nearby_type_ = IVoxType::NearbyType::CENTER;
++        else if (options_value.ivox_nearby_type == 6) ivox_options.nearby_type_ = IVoxType::NearbyType::NEARBY6;
++        else if (options_value.ivox_nearby_type == 26) ivox_options.nearby_type_ = IVoxType::NearbyType::NEARBY26;
++        else ivox_options.nearby_type_ = IVoxType::NearbyType::NEARBY18;
++        ivox_ = std::make_unique<IVoxType>(ivox_options);
++
++        Q_ = process_noise_cov();
++        Q_.block<3, 3>(0, 0).diagonal() = options_value.gyroscope_covariance;
++        Q_.block<3, 3>(3, 3).diagonal() = options_value.accelerometer_covariance;
++        Q_.block<3, 3>(6, 6).diagonal() = options_value.gyroscope_bias_covariance;
++        Q_.block<3, 3>(9, 9).diagonal() = options_value.accelerometer_bias_covariance;
++        double epsilon[23];
++        std::fill(std::begin(epsilon), std::end(epsilon), 0.001);
++        if (active_ != nullptr && active_ != this)
++            throw std::runtime_error("Faster-LIO supports one engine instance per process");
++        active_ = this;
++        filter_.init_dyn_share(get_f, df_dx, df_dw, &Impl::measurement_trampoline,
++                               options_value.max_iterations, epsilon);
++    }
++
++    void set_pose_callback(PoseCallback callback) { pose_callback_ = std::move(callback); }
++    void set_timing_callback(TimingCallback callback) { timing_callback_ = std::move(callback); }
++
++    void process(const Scan& scan) {
++        if (scan.points.empty() || scan.imu.empty()) return;
++        if (!imu_initialized_) {
++            initialize_imu(scan.imu);
++            return;
++        }
++
++        current_time_ = scan.end_time;
++        auto started = std::chrono::steady_clock::now();
++        propagate(scan);
++        report(scan.end_time, "state_propagation", elapsed_ms(started));
++
++        started = std::chrono::steady_clock::now();
++        undistort(scan);
++        report(scan.end_time, "undistortion", elapsed_ms(started));
++        if (undistorted_->empty()) return;
++
++        started = std::chrono::steady_clock::now();
++        scan_filter_.setInputCloud(undistorted_);
++        scan_filter_.filter(*down_body_);
++        report(scan.end_time, "downsampling", elapsed_ms(started));
++        if (down_body_->size() < 5) return;
++
++        state_ = filter_.get_x();
++        down_world_->resize(down_body_->size());
++        nearest_points_.resize(down_body_->size());
++        planes_.assign(down_body_->size(), Eigen::Vector4f::Zero());
++        selected_.assign(down_body_->size(), true);
++        residuals_.assign(down_body_->size(), 0.0F);
++
++        if (ivox_->NumValidGrids() == 0) {
++            started = std::chrono::steady_clock::now();
++            transform_scan(state_);
++            ivox_->AddPoints(down_world_->points);
++            report(scan.end_time, "map_update", elapsed_ms(started));
++            emit_pose(scan.end_time);
++            return;
++        }
++
++        map_search_ms_ = 0.0;
++        started = std::chrono::steady_clock::now();
++        double solve_time = 0.0;
++        filter_.update_iterated_dyn_share_modified(kLaserPointCovariance, solve_time);
++        report(scan.end_time, "filter_update",
++               std::max(0.0, elapsed_ms(started) - map_search_ms_));
++        state_ = filter_.get_x();
++
++        started = std::chrono::steady_clock::now();
++        update_map();
++        report(scan.end_time, "map_update", elapsed_ms(started));
++        emit_pose(scan.end_time);
++    }
++
++private:
++    void initialize_imu(const std::vector<ImuMeasurement>& measurements) {
++        for (const auto& imu : measurements) {
++            ++initial_imu_count_;
++            mean_acceleration_ +=
++                (imu.acceleration - mean_acceleration_) / static_cast<double>(initial_imu_count_);
++            mean_gyroscope_ +=
++                (imu.angular_velocity - mean_gyroscope_) / static_cast<double>(initial_imu_count_);
++            last_imu_ = imu;
++        }
++        if (initial_imu_count_ < 200) return;
++
++        state_ikfom state = filter_.get_x();
++        state.grav = S2(-mean_acceleration_.normalized() * 9.81);
++        state.bg = mean_gyroscope_;
++        state.offset_T_L_I = options_.lidar_translation;
++        state.offset_R_L_I = options_.lidar_rotation;
++        filter_.change_x(state);
++        auto covariance = filter_.get_P();
++        covariance.setIdentity();
++        covariance.block<6, 6>(6, 6) *= 0.00001;
++        covariance.block<3, 3>(15, 15) *= 0.0001;
++        covariance.block<3, 3>(18, 18) *= 0.001;
++        filter_.change_P(covariance);
++        last_imu_time_ = last_imu_.timestamp;
++        imu_initialized_ = true;
++    }
++
++    void propagate(const Scan& scan) {
++        input_ikfom input;
++        for (const auto& imu : scan.imu) {
++            if (imu.timestamp <= last_imu_time_) continue;
++            input.acc = imu.acceleration;
++            input.gyro = imu.angular_velocity;
++            double dt = imu.timestamp - last_imu_time_;
++            filter_.predict(dt, Q_, input);
++            last_imu_time_ = imu.timestamp;
++            last_imu_ = imu;
++        }
++        if (scan.end_time > last_imu_time_) {
++            input.acc = last_imu_.acceleration;
++            input.gyro = last_imu_.angular_velocity;
++            double dt = scan.end_time - last_imu_time_;
++            filter_.predict(dt, Q_, input);
++            last_imu_time_ = scan.end_time;
++        }
++    }
++
++    void undistort(const Scan& scan) {
++        undistorted_->clear();
++        undistorted_->reserve(scan.points.size());
++        Eigen::Vector3d angular_velocity = Eigen::Vector3d::Zero();
++        for (const auto& imu : scan.imu) angular_velocity += imu.angular_velocity;
++        angular_velocity /= static_cast<double>(scan.imu.size());
++        const auto state = filter_.get_x();
++        angular_velocity -= Eigen::Vector3d(state.bg[0], state.bg[1], state.bg[2]);
++        for (const auto& source : scan.points) {
++            const double point_time = scan.begin_time + source.offset_seconds;
++            const double remaining = std::clamp(scan.end_time - point_time, 0.0,
++                                                std::max(0.0, scan.end_time - scan.begin_time));
++            const Eigen::Vector3d corrected =
++                exp_so3(-angular_velocity * remaining) * source.position.cast<double>();
++            PointType point;
++            point.x = static_cast<float>(corrected.x());
++            point.y = static_cast<float>(corrected.y());
++            point.z = static_cast<float>(corrected.z());
++            point.intensity = source.intensity;
++            point.curvature = static_cast<float>(source.offset_seconds * 1000.0);
++            undistorted_->push_back(point);
++        }
++    }
++
++    static void measurement_trampoline(
++        state_ikfom& state, esekfom::dyn_share_datastruct<double>& data) {
++        if (active_ == nullptr) {
++            data.valid = false;
++            return;
++        }
++        active_->measurement_model(state, data);
++    }
++
++    void measurement_model(state_ikfom& state,
++                           esekfom::dyn_share_datastruct<double>& data) {
++        const auto started = std::chrono::steady_clock::now();
++        std::vector<Eigen::Vector4f> matched_points;
++        std::vector<Eigen::Vector4f> matched_planes;
++        matched_points.reserve(down_body_->size());
++        matched_planes.reserve(down_body_->size());
++
++        for (std::size_t index = 0; index < down_body_->size(); ++index) {
++            const auto& body_point = down_body_->points[index];
++            PointType& world_point = down_world_->points[index];
++            point_body_to_world(state, body_point, world_point);
++            auto& neighbors = nearest_points_[index];
++            if (data.converge) {
++                neighbors.clear();
++                ivox_->GetClosestPoint(world_point, neighbors, kMatchPoints);
++                selected_[index] = neighbors.size() >= 3 && estimate_plane(planes_[index], neighbors);
++            }
++            if (!selected_[index]) continue;
++            const float residual = planes_[index].head<3>().dot(world_point.getVector3fMap()) +
++                                   planes_[index].w();
++            if (body_point.getVector3fMap().norm() <= 81.0F * residual * residual) {
++                selected_[index] = false;
++                continue;
++            }
++            residuals_[index] = residual;
++            Eigen::Vector4f point = body_point.getVector4fMap();
++            point.w() = residual;
++            matched_points.push_back(point);
++            matched_planes.push_back(planes_[index]);
++        }
++
++        const double search_duration = elapsed_ms(started);
++        map_search_ms_ += search_duration;
++        report(current_time_, "map_search", search_duration);
++        if (matched_points.empty()) {
++            data.valid = false;
++            return;
++        }
++
++        data.h_x = Eigen::MatrixXd::Zero(matched_points.size(), 12);
++        data.h.resize(matched_points.size());
++        const Eigen::Matrix3d offset_rotation = state.offset_R_L_I.toRotationMatrix();
++        const Eigen::Matrix3d rotation_transpose = state.rot.toRotationMatrix().transpose();
++        for (std::size_t index = 0; index < matched_points.size(); ++index) {
++            const Eigen::Vector3d body = matched_points[index].head<3>().cast<double>();
++            const Eigen::Vector3d point = offset_rotation * body + state.offset_T_L_I;
++            const Eigen::Vector3d normal = matched_planes[index].head<3>().cast<double>();
++            const Eigen::Vector3d C = rotation_transpose * normal;
++            const Eigen::Vector3d A = skew(point) * C;
++            if (options_.estimate_extrinsics) {
++                const Eigen::Vector3d B = skew(body) * offset_rotation.transpose() * C;
++                data.h_x.block<1, 12>(index, 0) << normal.transpose(), A.transpose(),
++                    B.transpose(), C.transpose();
++            } else {
++                data.h_x.block<1, 12>(index, 0) << normal.transpose(), A.transpose(),
++                    0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
++            }
++            data.h(index) = -matched_points[index].w();
++        }
++    }
++
++    static void point_body_to_world(const state_ikfom& state, const PointType& input,
++                                    PointType& output) {
++        const Eigen::Vector3d body(input.x, input.y, input.z);
++        const Eigen::Vector3d world =
++            state.rot * (state.offset_R_L_I * body + state.offset_T_L_I) + state.pos;
++        output.x = static_cast<float>(world.x());
++        output.y = static_cast<float>(world.y());
++        output.z = static_cast<float>(world.z());
++        output.intensity = input.intensity;
++    }
++
++    void transform_scan(const state_ikfom& state) {
++        down_world_->resize(down_body_->size());
++        for (std::size_t index = 0; index < down_body_->size(); ++index)
++            point_body_to_world(state, down_body_->points[index], down_world_->points[index]);
++    }
++
++    void update_map() {
++        transform_scan(state_);
++        PointVector points_to_add;
++        PointVector direct_points;
++        points_to_add.reserve(down_world_->size());
++        direct_points.reserve(down_world_->size());
++        for (std::size_t index = 0; index < down_world_->size(); ++index) {
++            const PointType& world = down_world_->points[index];
++            const auto& nearby = nearest_points_[index];
++            if (nearby.empty()) {
++                points_to_add.push_back(world);
++                continue;
++            }
++            const Eigen::Vector3f center =
++                ((world.getVector3fMap() / static_cast<float>(options_.map_voxel_size))
++                     .array().floor() + 0.5F) * static_cast<float>(options_.map_voxel_size);
++            const Eigen::Vector3f neighbor_to_center = nearby.front().getVector3fMap() - center;
++            if ((neighbor_to_center.array().abs() >
++                 static_cast<float>(0.5 * options_.map_voxel_size)).all()) {
++                direct_points.push_back(world);
++                continue;
++            }
++            const float distance = (world.getVector3fMap() - center).squaredNorm();
++            bool add = true;
++            for (const auto& neighbor : nearby) {
++                if ((neighbor.getVector3fMap() - center).squaredNorm() < distance + 1e-6F) {
++                    add = false;
++                    break;
++                }
++            }
++            if (add) points_to_add.push_back(world);
++        }
++        ivox_->AddPoints(points_to_add);
++        ivox_->AddPoints(direct_points);
++    }
++
++    void report(double timestamp, const char* stage, double duration) const {
++        if (timing_callback_) timing_callback_(timestamp, stage, duration);
++    }
++
++    void emit_pose(double timestamp) const {
++        if (!pose_callback_) return;
++        PoseState pose;
++        pose.translation = state_.pos;
++        pose.rotation = Eigen::Quaterniond(state_.rot.toRotationMatrix());
++        pose_callback_(timestamp, pose);
++    }
++
++    Options options_;
++    std::unique_ptr<IVoxType> ivox_;
++    esekfom::esekf<state_ikfom, 12, input_ikfom> filter_;
++    esekfom::esekf<state_ikfom, 12, input_ikfom>::processnoisecovariance Q_;
++    state_ikfom state_;
++    pcl::VoxelGrid<PointType> scan_filter_;
++    PointCloud::Ptr undistorted_;
++    PointCloud::Ptr down_body_;
++    PointCloud::Ptr down_world_;
++    std::vector<PointVector> nearest_points_;
++    std::vector<Eigen::Vector4f> planes_;
++    std::vector<bool> selected_;
++    std::vector<float> residuals_;
++    PoseCallback pose_callback_;
++    TimingCallback timing_callback_;
++    Eigen::Vector3d mean_acceleration_ = Eigen::Vector3d::Zero();
++    Eigen::Vector3d mean_gyroscope_ = Eigen::Vector3d::Zero();
++    ImuMeasurement last_imu_;
++    std::size_t initial_imu_count_ = 0;
++    double last_imu_time_ = 0.0;
++    double current_time_ = 0.0;
++    double map_search_ms_ = 0.0;
++    bool imu_initialized_ = false;
++
++    static Impl* active_;
++};
++
++FasterLioEngine::Impl* FasterLioEngine::Impl::active_ = nullptr;
++
++FasterLioEngine::FasterLioEngine() : impl_(std::make_unique<Impl>()) {}
++FasterLioEngine::~FasterLioEngine() = default;
++void FasterLioEngine::initialize(const Options& options) { impl_->initialize(options); }
++void FasterLioEngine::process(const Scan& scan) { impl_->process(scan); }
++void FasterLioEngine::set_pose_callback(PoseCallback callback) {
++    impl_->set_pose_callback(std::move(callback));
++}
++void FasterLioEngine::set_timing_callback(TimingCallback callback) {
++    impl_->set_timing_callback(std::move(callback));
++}
++
++}  // namespace faster_lio::standalone
+diff --git a/standalone/faster_lio_engine.hpp b/standalone/faster_lio_engine.hpp
+new file mode 100644
+index 0000000..75ef84a
+--- /dev/null
++++ b/standalone/faster_lio_engine.hpp
+@@ -0,0 +1,72 @@
++#pragma once
++
++#include <Eigen/Core>
++#include <Eigen/Geometry>
++
++#include <cstdint>
++#include <functional>
++#include <memory>
++#include <vector>
++
++namespace faster_lio::standalone {
++
++struct TimedPoint {
++    Eigen::Vector3f position = Eigen::Vector3f::Zero();
++    float intensity = 0.0F;
++    double offset_seconds = 0.0;
++};
++
++struct ImuMeasurement {
++    double timestamp = 0.0;
++    Eigen::Vector3d acceleration = Eigen::Vector3d::Zero();
++    Eigen::Vector3d angular_velocity = Eigen::Vector3d::Zero();
++};
++
++struct Scan {
++    double begin_time = 0.0;
++    double end_time = 0.0;
++    std::vector<TimedPoint> points;
++    std::vector<ImuMeasurement> imu;
++};
++
++struct PoseState {
++    Eigen::Vector3d translation = Eigen::Vector3d::Zero();
++    Eigen::Quaterniond rotation = Eigen::Quaterniond::Identity();
++};
++
++class FasterLioEngine {
++public:
++    struct Options {
++        double scan_voxel_size = 0.5;
++        double map_voxel_size = 0.3;
++        double ivox_resolution = 0.5;
++        int ivox_nearby_type = 18;
++        int max_iterations = 4;
++        bool estimate_extrinsics = false;
++        Eigen::Vector3d lidar_translation = Eigen::Vector3d::Zero();
++        Eigen::Matrix3d lidar_rotation = Eigen::Matrix3d::Identity();
++        Eigen::Vector3d gyroscope_covariance = Eigen::Vector3d::Constant(0.1);
++        Eigen::Vector3d accelerometer_covariance = Eigen::Vector3d::Constant(0.1);
++        Eigen::Vector3d gyroscope_bias_covariance = Eigen::Vector3d::Constant(0.0001);
++        Eigen::Vector3d accelerometer_bias_covariance = Eigen::Vector3d::Constant(0.0001);
++    };
++
++    using PoseCallback = std::function<void(double, const PoseState&)>;
++    using TimingCallback = std::function<void(double, const char*, double)>;
++
++    FasterLioEngine();
++    ~FasterLioEngine();
++    FasterLioEngine(const FasterLioEngine&) = delete;
++    FasterLioEngine& operator=(const FasterLioEngine&) = delete;
++
++    void initialize(const Options& options);
++    void process(const Scan& scan);
++    void set_pose_callback(PoseCallback callback);
++    void set_timing_callback(TimingCallback callback);
++
++private:
++    class Impl;
++    std::unique_ptr<Impl> impl_;
++};
++
++}  // namespace faster_lio::standalone
+diff --git a/standalone/main.cpp b/standalone/main.cpp
+new file mode 100644
+index 0000000..8185aff
+--- /dev/null
++++ b/standalone/main.cpp
+@@ -0,0 +1,8 @@
++#include "faster_lio_adapter.hpp"
++
++#include <slam_benchmark/application.hpp>
++
++int main(int argc, char** argv) {
++    FasterLioAdapter algorithm;
++    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
++}

@@ -19,6 +19,9 @@ doc/                      # 架构和移植说明
 
 目前 core 和算法适配均可独立链接、运行和输出结果；上游仓库 ref 已固定到已核验的 commit，移植差异通过 Git patch 保存。算法和数据集由服务实时扫描 manifest，不需要同步修改前端列表。
 
+当前算法包括 FAST-LIO2、Point-LIO、VoxelMap、VoxelMap (with imu)、Super-LIO、
+KISS-ICP、Faster-LIO 和 Small Point LIO。
+
 ## 构建 core
 
 先把未开源的 `rosbag_io` 放到 `3rdparty/rosbag_io`。当前开发环境的来源是：
@@ -92,4 +95,5 @@ pnpm start:web
 生产服务默认监听 `http://127.0.0.1:4174`。为了保持 CPU 数据可比较，网页任务采用单队列顺序执行。
 
 更完整的接口与移植约束见 [架构说明](doc/architecture.md)、
-[算法移植指南](doc/porting_algorithms.md) 和 [移植状态](doc/port_status.md)。
+[算法参数约定](doc/algorithm_parameters.md)、[算法移植指南](doc/porting_algorithms.md)
+和 [移植状态](doc/port_status.md)。

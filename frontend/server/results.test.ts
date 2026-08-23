@@ -84,4 +84,5 @@ describe('stored benchmark results', () => {
     }])
     expect(results[0]?.absoluteOutputDirectory).toBe(outputDirectory)
   })
+
 })

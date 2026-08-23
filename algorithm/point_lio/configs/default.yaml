@@ -1,7 +1,11 @@
 algorithm: point_lio
 filter_size_map_m: 0.5
 filter_size_scan_m: 0.5
-max_iterations: 4
 estimate_extrinsics: false
 gravity_m_s2: [0.0, 0.0, -9.81]
-
+lidar_measurement_noise: 0.01
+gyroscope_noise: 0.1
+accelerometer_noise: 0.1
+gyroscope_bias_noise: 0.0001
+accelerometer_bias_noise: 0.0001
+initial_map_points: 100

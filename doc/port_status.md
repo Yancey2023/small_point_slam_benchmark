@@ -2,14 +2,16 @@
 
 上游基线已固定，避免 patch 随默认分支漂移：
 
-| 算法 | commit | 当前 ROS 耦合扫描 | 状态 |
-|---|---|---:|---|
-| FAST-LIO | `7cc4175de6f8ba2edf34bab02a42195b141027e9` | 92 处 | 待移植 |
-| Point-LIO | `4b86a469eb5572e70ed575af25b5f15dd06e8e3c` | 101 处 | 待移植 |
-| VoxelMap | `d787ee8ccfb0e509a36adb2c52bd5da97b29c39a` | 114 处 | 待移植 |
-| Super-LIO | `f89f48dc7aea6cfa262f18e4d03b319e04e0dbd2` | 77 处 | 待移植 |
+| 算法 | commit | 传感器 | 状态 |
+|---|---|---|---|
+| FAST-LIO | `7cc4175de6f8ba2edf34bab02a42195b141027e9` | LiDAR + IMU | 已移植 |
+| Point-LIO | `4b86a469eb5572e70ed575af25b5f15dd06e8e3c` | LiDAR + IMU | 已移植 |
+| VoxelMap | `d787ee8ccfb0e509a36adb2c52bd5da97b29c39a` | LiDAR | 已移植 |
+| VoxelMap (with imu) | `d787ee8ccfb0e509a36adb2c52bd5da97b29c39a` | LiDAR + IMU | 已移植 |
+| Super-LIO | `f89f48dc7aea6cfa262f18e4d03b319e04e0dbd2` | LiDAR + IMU | 已移植 |
+| KISS-ICP | `b16835283aee62f7d5e2bdf6c1c3bb2930de74ff` | LiDAR | 已移植 |
+| Faster-LIO | `ea0e0910a4cf2da49f569d168442a9c8c1bbe672` | LiDAR + IMU | 已移植 |
+| Small Point LIO | `ba8b4ce5bf80df8bbada44b984e12c460b269dd5` | LiDAR + IMU | 已移植 |
 
-这里的数字是 C/C++ 文件中 ROS include、类型和调用的初始文本扫描结果，只用于评估改动面，
-不等同于 patch 行数。四个 `patchs` 目录当前故意没有伪造 patch；只有真正完成算法数据入口、
-参数、日志、输出和阶段计时改造，并通过非 ROS 构建与数据回放后，才应标为已支持。
-
+“已移植”表示存在可从固定上游 commit 重放的 Git patch，且目标不依赖 ROS/ROS2，能独立
+链接 `slam_benchmark::core`。实包验证使用 `ACE/Mid-360/ACE实验室门口10hz`。

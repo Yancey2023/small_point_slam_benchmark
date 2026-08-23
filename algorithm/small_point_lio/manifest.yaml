@@ -1,0 +1,19 @@
+schema_version: 1
+name: Small Point LIO
+description: Compact tightly coupled point-wise LiDAR-inertial odometry.
+authors: [Yingjie Huang]
+license: MIT
+repository:
+  name: small_point_lio
+  url: https://github.com/Yancey2023/small_point_lio.git
+  ref: ba8b4ce5bf80df8bbada44b984e12c460b269dd5
+dependencies: []
+paper: {}
+sensors: [lidar, imu]
+timing_stages:
+  - lidar_preprocess
+  - downsampling
+  - state_propagation
+  - map_search
+  - filter_update
+  - map_update
