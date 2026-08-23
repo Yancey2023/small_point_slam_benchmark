@@ -1,0 +1,28 @@
+schema_version: 1
+name: ACE
+description: ACE Mid-360 datasets used for local benchmark validation.
+download_url: ""
+bags:
+  - name: mid360_lab_entrance_10hz
+    path: /media/yancey/New Volume2/project/rosbag/mid360/rosbag2_mid360_10hz/rosbag2_mid360_10hz.db3
+    sensors:
+      - id: 1
+        name: mid360_lidar
+        type: lidar
+        topic: /livox/lidar
+        message_type: livox_ros_driver2/msg/CustomMsg
+        units:
+          point_time: ns
+          distance: m
+        calibration:
+          body_from_sensor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+      - id: 2
+        name: mid360_imu
+        type: imu
+        topic: /livox/imu
+        message_type: sensor_msgs/msg/Imu
+        units:
+          angular_velocity: rad/s
+          acceleration: g
+        calibration:
+          body_from_sensor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]

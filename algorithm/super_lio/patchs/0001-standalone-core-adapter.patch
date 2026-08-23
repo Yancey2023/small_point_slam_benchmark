@@ -1,0 +1,558 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+new file mode 100644
+index 0000000..7120eee
+--- /dev/null
++++ b/CMakeLists.txt
+@@ -0,0 +1,43 @@
++cmake_minimum_required(VERSION 3.24)
++
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(PCL 1.10 REQUIRED COMPONENTS common filters io)
++find_package(TBB CONFIG REQUIRED)
++
++add_library(super_lio_algorithm STATIC
++    src/basic/src/Manifold.cpp
++    src/super_lio/src/lio/params.cpp
++    src/super_lio/src/lio/ESKF.cpp
++    src/super_lio/src/lio/super_lio.cpp
++)
++target_include_directories(super_lio_algorithm PUBLIC
++    src/basic/include
++    src/super_lio/include
++    ${PCL_INCLUDE_DIRS}
++)
++target_link_libraries(super_lio_algorithm PUBLIC
++    Eigen3::Eigen
++    TBB::tbb
++    spdlog::spdlog
++    ${PCL_LIBRARIES}
++)
++target_compile_definitions(super_lio_algorithm PUBLIC ROOT="${CMAKE_CURRENT_SOURCE_DIR}/")
++
++add_executable(super_lio_benchmark
++    standalone/main.cpp
++    standalone/super_lio_adapter.cpp
++)
++target_include_directories(super_lio_benchmark PRIVATE standalone)
++target_link_libraries(super_lio_benchmark PRIVATE
++    super_lio_algorithm
++    slam_benchmark::core
++    yaml-cpp::yaml-cpp
++)
++
++if(MSVC)
++    target_compile_options(super_lio_algorithm PRIVATE /W3 /utf-8)
++    target_compile_options(super_lio_benchmark PRIVATE /W4 /utf-8)
++else()
++    target_compile_options(super_lio_algorithm PRIVATE -Wall -Wextra)
++    target_compile_options(super_lio_benchmark PRIVATE -Wall -Wextra -Wpedantic)
++endif()
+diff --git a/src/basic/include/basic/logs.h b/src/basic/include/basic/logs.h
+index 7ed9f1b..51ffc5b 100644
+--- a/src/basic/include/basic/logs.h
++++ b/src/basic/include/basic/logs.h
+@@ -9,16 +9,10 @@
+ #ifndef CUSTOM_LOG_H_
+ #define CUSTOM_LOG_H_
+ 
+-#include <ctime>
+ #include <chrono>
+-#include <iomanip>
+-#include <iostream>
+ #include <filesystem>
+-#include <glog/logging.h>
+-#include <gflags/gflags.h>
+-
+-
+-using namespace google;
++#include <sstream>
++#include <spdlog/spdlog.h>
+ 
+ namespace BASIC {
+ 
+@@ -31,9 +25,29 @@ namespace BASIC {
+ #define CYAN "\033[36m"
+ #define WHITE "\033[37m"
+ 
+-#define gINFO(msg) LOG(INFO) << GREEN << " ---> "<< msg << RESET
+-#define gWARNING(msg) LOG(WARNING) << YELLOW << " ---> "<< msg << RESET
+-#define gERROR(msg) LOG(ERROR) << RED << " ---> "<< msg << RESET
++enum class LogLevel { INFO, WARNING, ERROR };
++
++class LogLine {
++public:
++  explicit LogLine(LogLevel level) : level_(level) {}
++  ~LogLine() {
++    if (level_ == LogLevel::ERROR) spdlog::error("{}", stream_.str());
++    else if (level_ == LogLevel::WARNING) spdlog::warn("{}", stream_.str());
++    else spdlog::info("{}", stream_.str());
++  }
++  template <typename T> LogLine& operator<<(T&& value) {
++    stream_ << std::forward<T>(value);
++    return *this;
++  }
++private:
++  LogLevel level_;
++  std::ostringstream stream_;
++};
++
++#define LOG(level) BASIC::LogLine(BASIC::LogLevel::level)
++#define gINFO(msg) LOG(INFO) << msg
++#define gWARNING(msg) LOG(WARNING) << msg
++#define gERROR(msg) LOG(ERROR) << msg
+ 
+ 
+ void init_log();
+@@ -42,4 +56,4 @@ void init_log_dir(std::string log_dir);
+ 
+ 
+ }  // namespace LI2Sup
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/src/basic/src/logs.cpp b/src/basic/src/logs.cpp
+index 6fc0360..86040ab 100644
+--- a/src/basic/src/logs.cpp
++++ b/src/basic/src/logs.cpp
+@@ -3,17 +3,13 @@
+ namespace BASIC {
+ 
+ void init_log(){
+-  FLAGS_logbufsecs = 0;
+-  FLAGS_minloglevel = google::INFO;
+-  FLAGS_alsologtostderr = true;
++  spdlog::set_level(spdlog::level::info);
+ }
+ 
+ 
+ void init_log_dir(std::string log_dir){
+-  FLAGS_logbufsecs = 0;
+-  FLAGS_minloglevel = google::INFO;
+-  FLAGS_alsologtostderr = true;
+-  FLAGS_log_dir = log_dir;
++  (void)log_dir;
++  init_log();
+ }
+ 
+-}
+\ No newline at end of file
++}
+diff --git a/src/super_lio/include/common/timer.h b/src/super_lio/include/common/timer.h
+index 41c8ae5..3bdb18f 100644
+--- a/src/super_lio/include/common/timer.h
++++ b/src/super_lio/include/common/timer.h
+@@ -1,7 +1,7 @@
+ #ifndef TIMER_H_
+ #define TIMER_H_
+ 
+-#include <glog/logging.h>
++#include "basic/logs.h"
+ #include <chrono>
+ #include <fstream>
+ #include <map>
+@@ -55,4 +55,4 @@ class Timer {
+   std::map<std::string, TimerRecord> records_;
+ };
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/src/super_lio/include/lio/super_lio.h b/src/super_lio/include/lio/super_lio.h
+index 15bf038..c59d39b 100644
+--- a/src/super_lio/include/lio/super_lio.h
++++ b/src/super_lio/include/lio/super_lio.h
+@@ -8,6 +8,7 @@
+ #include <iostream>
+ #include <cassert>
+ #include <filesystem>
++#include <functional>
+ 
+ #include <pcl/io/pcd_io.h>
+ #include <pcl/common/transforms.h>
+@@ -15,12 +16,10 @@
+ 
+ #include "basic/alias.h"
+ #include "common/ds.h"
+-#include "common/timer.h"
+ #include "params.h"
+ #include "ESKF.h"
+ #include "OctVoxMap/OctVoxMap.hpp"
+ #include "OctVoxMap/VoxelGridFilter.h"
+-#include "ros/ROSWrapper.h"
+ 
+ namespace LI2Sup{
+ 
+@@ -29,11 +28,14 @@ public:
+   SuperLIO(){};
+   ~SuperLIO(){};
+ 
+-  void setROSWrapper(const ROSWrapper::Ptr& wrapper){
+-    data_wrapper_ = wrapper;
+-  }
++  using PoseCallback = std::function<void(const NavState&)>;
++  using TimingCallback = std::function<void(const char*, double, double)>;
+   virtual void init();
+-  void process();
++  void process(const MeasureGroup& measures);
++  void setPoseCallback(PoseCallback callback) { pose_callback_ = std::move(callback); }
++  void setTimingCallback(TimingCallback callback) { timing_callback_ = std::move(callback); }
++  [[nodiscard]] bool initialized() const { return kf_ && kf_->init_; }
++  [[nodiscard]] NavState state() const { return kf_->GetNavState(); }
+   void saveMap();
+   void printTimeRecord();
+ 
+@@ -58,8 +60,9 @@ protected:
+   ESKF::Ptr kf_;
+   OctVoxMapType::Ptr ivox_;
+   VoxelGridClosest<BASIC::PointType> voxel_grid_fliter_;
+-  ROSWrapper::Ptr data_wrapper_;
+   MeasureGroup measures_;
++  PoseCallback pose_callback_;
++  TimingCallback timing_callback_;
+   
+   bool flg_init_ = false;
+   bool flg_first_scan_ = true;
+@@ -80,11 +83,9 @@ protected:
+   std::vector<std::array<double, 4>> abcd_vec_;
+   int pcd_index_ = -1;
+ 
+-  Timer time_record_;
+ };
+ 
+ } // namespace END.
+ 
+ #endif
+ 
+-
+diff --git a/src/super_lio/src/lio/super_lio.cpp b/src/super_lio/src/lio/super_lio.cpp
+index d1a3ae7..0025630 100644
+--- a/src/super_lio/src/lio/super_lio.cpp
++++ b/src/super_lio/src/lio/super_lio.cpp
+@@ -1,7 +1,8 @@
+ 
+ #include "lio/super_lio.h"
+ 
+-#include <sys/resource.h>
++#include <chrono>
++#include "basic/logs.h"
+ #include <tbb/parallel_for.h>
+ #include <tbb/blocked_range.h>
+ #include <tbb/concurrent_vector.h>
+@@ -65,7 +66,6 @@ inline bool compute_error(
+ void SuperLIO::init(){
+   ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
+   kf_.reset(new ESKF());
+-  data_wrapper_->setESKF(kf_);
+   
+   scan_undistort_full_.reset(new PointCloudType());
+   ds_undistort_.reset(new PointCloudType());
+@@ -104,10 +104,9 @@ void SuperLIO::stateWaitMapInit()
+   }
+ }
+ 
+-void SuperLIO::process(){
+-  if(!data_wrapper_->sync_measure(measures_)){
+-    return;
+-  }
++void SuperLIO::process(const MeasureGroup& measures){
++  measures_ = measures;
++  if (!measures_.lidar.pc || measures_.lidar.pc->empty() || measures_.imu.empty()) return;
+   (this->*state_fn_)();
+ }
+ 
+@@ -193,17 +192,17 @@ bool SuperLIO::map_init(){
+ 
+ void SuperLIO::stateProcess(){
+   frame_num_++;
+-  if(g_time_eva){
+-    time_record_.Evaluate([this](){Propagation_Undistort();}, "[Undistort]");
+-    time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
+-    time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
+-    time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
+-  }else{
+-    Propagation_Undistort();
+-    DownSample();
+-    Observe();
+-    UpdateMap();
+-  }
++  const auto stage = [this](const char* name, auto&& operation) {
++    const auto start = std::chrono::steady_clock::now();
++    operation();
++    const double duration = std::chrono::duration<double, std::milli>(
++        std::chrono::steady_clock::now() - start).count();
++    if (timing_callback_) timing_callback_(name, measures_.lidar.end_time, duration);
++  };
++  stage("undistortion", [this] { Propagation_Undistort(); });
++  stage("downsampling", [this] { DownSample(); });
++  stage("correspondence_search_filter_update", [this] { Observe(); });
++  stage("compact_map_update", [this] { UpdateMap(); });
+   Output();
+   caceData();
+ }
+@@ -236,11 +235,10 @@ void SuperLIO::caceData(){
+   static bool rm_PCD_dir = false;
+   if(!rm_PCD_dir){
+     rm_PCD_dir = true;
+-    std::string cmd = "rm -rf " + g_save_map_dir + "/PCD";
+-    [[maybe_unused]] int res;
+-    res = system(cmd.c_str());
+-    cmd = "mkdir -p " + g_save_map_dir + "/PCD";
+-    res = system(cmd.c_str());
++    const std::filesystem::path cache_dir =
++        std::filesystem::path(g_save_map_dir) / "PCD";
++    std::filesystem::remove_all(cache_dir);
++    std::filesystem::create_directories(cache_dir);
+   }
+ 
+   if (point_map_->size() > 0 && scan_wait_num >= g_pcd_save_interval) {
+@@ -350,14 +348,6 @@ void SuperLIO::saveMap(){
+ }
+ 
+ 
+-inline double get_cpu_time_seconds() {
+-  struct rusage usage;
+-  getrusage(RUSAGE_SELF, &usage);
+-  return usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1e6 +
+-         usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1e6;
+-}
+-
+-
+ void SuperLIO::Propagation_Undistort(){
+   propagate_states_.clear();
+   propagate_states_.emplace_back(kf_->GetDynamicState());
+@@ -559,34 +549,11 @@ void SuperLIO::UpdateMap() {
+ 
+ void SuperLIO::Output(){
+   auto state = kf_->GetNavState();
+-  data_wrapper_->pub_odom(state);  
+-
+-  Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
+-  transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
+-  transformation.block<3, 1>(0, 3) = state.p.cast<float>();
+-
+-  CloudPtr world_pc(new PointCloudType());
+-  
+-  if(g_visual_map){
+-    static int count = -1;
+-    count++;
+-    if(count % g_pub_step != 0){
+-      return;
+-    }
+-    count = 0;
+-    if(g_visual_dense){
+-      pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
+-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+-    }else{
+-      pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
+-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+-    }
+-  }
++  if (pose_callback_) pose_callback_(state);
+ }
+ 
+ void SuperLIO::printTimeRecord(){
+-  if(!g_time_eva) return;
+-  time_record_.PrintAll();
++  // Timing is forwarded per frame through TimingCallback.
+ }
+ 
+-} // namespace END.
+\ No newline at end of file
++} // namespace END.
+diff --git a/standalone/main.cpp b/standalone/main.cpp
+new file mode 100644
+index 0000000..89a2946
+--- /dev/null
++++ b/standalone/main.cpp
+@@ -0,0 +1,7 @@
++#include "super_lio_adapter.hpp"
++#include <slam_benchmark/application.hpp>
++
++int main(int argc, char** argv) {
++    SuperLioAdapter algorithm;
++    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
++}
+diff --git a/standalone/super_lio_adapter.cpp b/standalone/super_lio_adapter.cpp
+new file mode 100644
+index 0000000..0f475a9
+--- /dev/null
++++ b/standalone/super_lio_adapter.cpp
+@@ -0,0 +1,146 @@
++#include "super_lio_adapter.hpp"
++
++#include "lio/params.h"
++
++#include <yaml-cpp/yaml.h>
++#include <spdlog/spdlog.h>
++
++#include <algorithm>
++#include <cmath>
++#include <stdexcept>
++
++namespace {
++
++double seconds(slam_benchmark::TimestampNs value) {
++    return static_cast<double>(value) * 1e-9;
++}
++
++slam_benchmark::TimestampNs nanoseconds(double value) {
++    return static_cast<slam_benchmark::TimestampNs>(std::llround(value * 1e9));
++}
++
++template <typename T>
++T parameter(const YAML::Node& root, const char* key, T fallback) {
++    return root[key] ? root[key].as<T>() : fallback;
++}
++
++void load_parameters(const YAML::Node& root,
++                     std::span<const slam_benchmark::SensorDefinition> sensors) {
++    using namespace LI2Sup;
++    g_time_eva = false;
++    g_save_map = false;
++    g_if_filter = true;
++    g_map_ds_size = parameter(root, "map_downsample_size_m", 0.2F);
++    g_pcd_save_interval = -1;
++    g_filter_rate = 1;
++    const double blind = parameter(root, "blind_m", 0.1);
++    const double max_range = parameter(root, "max_range_m", 200.0);
++    g_blind2 = static_cast<float>(blind * blind);
++    g_maxrange2 = static_cast<float>(max_range * max_range);
++    g_enable_downsample = true;
++    g_voxel_fliter_size = parameter(root, "voxel_size_m", 0.5F);
++    g_gravity_norm = parameter(root, "gravity_norm_m_s2", 9.81);
++    g_imu_na = parameter(root, "accelerometer_noise", 0.01);
++    g_imu_ng = parameter(root, "gyroscope_noise", 0.0001);
++    g_imu_nba = parameter(root, "accelerometer_bias_noise", 0.0001);
++    g_imu_nbg = parameter(root, "gyroscope_bias_noise", 0.000001);
++    g_ivox_capacity = parameter<std::size_t>(root, "map_capacity", 100000);
++    g_ivox_resolution = parameter(root, "voxel_size_m", 0.5F);
++    g_kf_max_iterations = parameter(root, "max_iterations", 4);
++    g_kf_quit_eps = parameter(root, "convergence_epsilon", 1e-4);
++    g_visual_map = false;
++    g_flg_map_init = true;
++
++    g_lidar_imu = BASIC::SE3{};
++    g_odom_robo = BASIC::SE3{};
++    g_lidar_robo_yaw = BASIC::M3::Identity();
++    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
++                                         &slam_benchmark::SensorDefinition::type);
++    if (lidar == sensors.end()) throw std::runtime_error("Super-LIO requires a LiDAR");
++    BASIC::M3 rotation;
++    BASIC::V3 translation;
++    const auto& transform = lidar->calibration.body_from_sensor;
++    rotation << transform[0], transform[1], transform[2],
++                transform[4], transform[5], transform[6],
++                transform[8], transform[9], transform[10];
++    translation << transform[3], transform[7], transform[11];
++    g_lidar_imu = BASIC::SE3(rotation, translation);
++}
++
++}  // namespace
++
++void SuperLioAdapter::initialize(
++    std::span<const slam_benchmark::SensorDefinition> sensors,
++    const std::filesystem::path& config_path,
++    slam_benchmark::ResultSink& sink) {
++    const bool has_imu = std::ranges::any_of(sensors, [](const auto& sensor) {
++        return sensor.type == slam_benchmark::SensorType::Imu;
++    });
++    if (!has_imu) throw std::runtime_error("Super-LIO requires an IMU");
++    sink_ = &sink;
++    load_parameters(YAML::LoadFile(config_path.string()), sensors);
++    algorithm_.setPoseCallback([this](const LI2Sup::NavState& state) { accept_pose(state); });
++    algorithm_.setTimingCallback([this](const char* stage, double time, double duration) {
++        sink_->report_timing({nanoseconds(time), stage, duration});
++    });
++    algorithm_.init();
++    spdlog::info("Super-LIO standalone adapter initialized");
++}
++
++void SuperLioAdapter::process(const slam_benchmark::SensorSample& sample) {
++    if (const auto* imu = std::get_if<slam_benchmark::ImuSample>(&sample.payload)) {
++        LI2Sup::IMUData value;
++        value.secs = seconds(sample.timestamp_ns);
++        value.acc << imu->linear_acceleration_m_s2[0], imu->linear_acceleration_m_s2[1],
++                     imu->linear_acceleration_m_s2[2];
++        value.gyr << imu->angular_velocity_rad_s[0], imu->angular_velocity_rad_s[1],
++                     imu->angular_velocity_rad_s[2];
++        imu_queue_.push_back(value);
++    } else if (const auto* cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload)) {
++        if (cloud->points.size() != cloud->point_time_offset_ns.size())
++            throw std::runtime_error("point/time array size mismatch");
++        LI2Sup::LidarData value;
++        value.start_time = seconds(sample.timestamp_ns);
++        value.pc.reset(new pcl::PointCloud<LI2Sup::PointXTZIT>());
++        value.pc->reserve(cloud->points.size());
++        double maximum_offset = 0.0;
++        for (std::size_t index = 0; index < cloud->points.size(); ++index) {
++            const auto& point = cloud->points[index];
++            const double offset = static_cast<double>(cloud->point_time_offset_ns[index]) * 1e-9;
++            maximum_offset = std::max(maximum_offset, offset);
++            value.pc->emplace_back(point.x, point.y, point.z, point.intensity, offset);
++        }
++        value.end_time = value.start_time + maximum_offset;
++        lidar_queue_.push_back(std::move(value));
++    }
++    drain();
++}
++
++void SuperLioAdapter::drain() {
++    while (!lidar_queue_.empty() && !imu_queue_.empty() &&
++           imu_queue_.back().secs >= lidar_queue_.front().end_time) {
++        LI2Sup::MeasureGroup measures;
++        measures.lidar = std::move(lidar_queue_.front());
++        lidar_queue_.pop_front();
++        while (!imu_queue_.empty() && imu_queue_.front().secs <= measures.lidar.end_time) {
++            measures.imu.push_back(imu_queue_.front());
++            imu_queue_.pop_front();
++        }
++        if (!measures.imu.empty()) algorithm_.process(measures);
++    }
++}
++
++void SuperLioAdapter::accept_pose(const LI2Sup::NavState& state) {
++    const auto quaternion = state.R.quaternion();
++    slam_benchmark::Pose pose;
++    pose.timestamp_ns = nanoseconds(state.timestamp);
++    pose.translation_m = {state.p.x(), state.p.y(), state.p.z()};
++    pose.rotation_xyzw = {quaternion.x(), quaternion.y(), quaternion.z(), quaternion.w()};
++    trajectory_.push_back(pose);
++    sink_->report_realtime_pose(pose);
++}
++
++void SuperLioAdapter::finalize() {
++    drain();
++    sink_->report_final_trajectory(trajectory_);
++}
+diff --git a/standalone/super_lio_adapter.hpp b/standalone/super_lio_adapter.hpp
+new file mode 100644
+index 0000000..c0d980e
+--- /dev/null
++++ b/standalone/super_lio_adapter.hpp
+@@ -0,0 +1,26 @@
++#pragma once
++
++#include "lio/super_lio.h"
++#include <slam_benchmark/algorithm.hpp>
++
++#include <deque>
++
++class SuperLioAdapter final : public slam_benchmark::SlamAlgorithm {
++public:
++    [[nodiscard]] std::string_view name() const noexcept override { return "super_lio"; }
++    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++                    const std::filesystem::path& config_path,
++                    slam_benchmark::ResultSink& sink) override;
++    void process(const slam_benchmark::SensorSample& sample) override;
++    void finalize() override;
++
++private:
++    void drain();
++    void accept_pose(const LI2Sup::NavState& state);
++
++    slam_benchmark::ResultSink* sink_{};
++    LI2Sup::SuperLIO algorithm_;
++    std::deque<LI2Sup::IMUData> imu_queue_;
++    std::deque<LI2Sup::LidarData> lidar_queue_;
++    slam_benchmark::Trajectory trajectory_;
++};

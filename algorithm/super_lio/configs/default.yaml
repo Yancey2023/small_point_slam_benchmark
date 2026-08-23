@@ -1,0 +1,6 @@
+algorithm: super_lio
+voxel_size_m: 0.5
+max_iterations: 4
+estimate_extrinsics: false
+gravity_m_s2: [0.0, 0.0, -9.81]
+

@@ -1,0 +1,265 @@
+#include "slam_benchmark/dataset_reader.hpp"
+
+#include <rosbag_io/message_decoder.hpp>
+#include <rosbag_io/reader.hpp>
+
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <cstring>
+#include <map>
+#include <stdexcept>
+#include <string_view>
+
+namespace slam_benchmark {
+namespace {
+
+template <typename T> T byte_swap(T value) {
+  static_assert(std::is_trivially_copyable_v<T>);
+  std::array<std::byte, sizeof(T)> source{};
+  std::array<std::byte, sizeof(T)> target{};
+  std::memcpy(source.data(), &value, sizeof(T));
+  std::reverse_copy(source.begin(), source.end(), target.begin());
+  std::memcpy(&value, target.data(), sizeof(T));
+  return value;
+}
+
+template <typename T> T read_scalar(const std::uint8_t *data, bool big_endian) {
+  T value{};
+  std::memcpy(&value, data, sizeof(T));
+  if ((std::endian::native == std::endian::little) == big_endian &&
+      sizeof(T) > 1)
+    value = byte_swap(value);
+  return value;
+}
+
+double field_value(const std::uint8_t *data, std::uint8_t datatype,
+                   bool big_endian) {
+  switch (datatype) {
+  case 1:
+    return read_scalar<std::int8_t>(data, big_endian);
+  case 2:
+    return read_scalar<std::uint8_t>(data, big_endian);
+  case 3:
+    return read_scalar<std::int16_t>(data, big_endian);
+  case 4:
+    return read_scalar<std::uint16_t>(data, big_endian);
+  case 5:
+    return read_scalar<std::int32_t>(data, big_endian);
+  case 6:
+    return read_scalar<std::uint32_t>(data, big_endian);
+  case 7:
+    return read_scalar<float>(data, big_endian);
+  case 8:
+    return read_scalar<double>(data, big_endian);
+  default:
+    throw std::runtime_error("unsupported PointCloud2 field datatype");
+  }
+}
+
+std::size_t datatype_size(std::uint8_t datatype) {
+  switch (datatype) {
+  case 1:
+  case 2:
+    return 1;
+  case 3:
+  case 4:
+    return 2;
+  case 5:
+  case 6:
+  case 7:
+    return 4;
+  case 8:
+    return 8;
+  default:
+    throw std::runtime_error("unsupported PointCloud2 field datatype");
+  }
+}
+
+const rosbag_io::message::PointField *
+find_field(const rosbag_io::message::PointCloud2 &cloud, std::string_view name,
+           bool required) {
+  const auto it = std::ranges::find(cloud.fields, name,
+                                    &rosbag_io::message::PointField::name);
+  if (it == cloud.fields.end()) {
+    if (required)
+      throw std::runtime_error("PointCloud2 is missing field: " +
+                               std::string(name));
+    return nullptr;
+  }
+  if (it->offset + datatype_size(it->datatype) > cloud.point_step)
+    throw std::runtime_error("PointCloud2 field extends beyond point_step");
+  return &*it;
+}
+
+PointCloud convert_cloud(const rosbag_io::message::PointCloud2 &input,
+                         const SensorDefinition &sensor) {
+  const auto *x = find_field(input, "x", true);
+  const auto *y = find_field(input, "y", true);
+  const auto *z = find_field(input, "z", true);
+  const auto *intensity = find_field(input, "intensity", false);
+  const auto *ring = find_field(input, "ring", false);
+  const auto *time = find_field(input, sensor.point_time_field, true);
+  const std::size_t count =
+      static_cast<std::size_t>(input.width) * input.height;
+  if (input.point_step == 0 || input.data.size() < count * input.point_step)
+    throw std::runtime_error("invalid PointCloud2 data size");
+
+  PointCloud output;
+  output.points.reserve(count);
+  output.point_time_offset_ns.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto *point = input.data.data() + i * input.point_step;
+    PointXYZIR converted;
+    converted.x = static_cast<float>(
+        field_value(point + x->offset, x->datatype, input.is_bigendian) *
+        sensor.distance_to_meters);
+    converted.y = static_cast<float>(
+        field_value(point + y->offset, y->datatype, input.is_bigendian) *
+        sensor.distance_to_meters);
+    converted.z = static_cast<float>(
+        field_value(point + z->offset, z->datatype, input.is_bigendian) *
+        sensor.distance_to_meters);
+    if (intensity)
+      converted.intensity = static_cast<float>(field_value(
+          point + intensity->offset, intensity->datatype, input.is_bigendian));
+    if (ring)
+      converted.ring = static_cast<std::uint16_t>(field_value(
+          point + ring->offset, ring->datatype, input.is_bigendian));
+    output.points.push_back(converted);
+    output.point_time_offset_ns.push_back(static_cast<std::int64_t>(
+        std::llround(field_value(point + time->offset, time->datatype,
+                                 input.is_bigendian) *
+                     sensor.point_time_to_nanoseconds)));
+  }
+  return output;
+}
+
+PointCloud convert_livox(const rosbag_io::message::LivoxCustomMessage &input,
+                         const SensorDefinition &sensor) {
+  PointCloud output;
+  output.points.reserve(input.points.size());
+  output.point_time_offset_ns.reserve(input.points.size());
+  for (const auto &point : input.points) {
+    output.points.push_back({
+        static_cast<float>(point.x * sensor.distance_to_meters),
+        static_cast<float>(point.y * sensor.distance_to_meters),
+        static_cast<float>(point.z * sensor.distance_to_meters),
+        static_cast<float>(point.reflectivity),
+        point.line,
+    });
+    output.point_time_offset_ns.push_back(static_cast<std::int64_t>(
+        std::llround(static_cast<double>(point.offset_time) *
+                     sensor.point_time_to_nanoseconds)));
+  }
+  return output;
+}
+
+ImageFrame raw_image(const rosbag_io::message::Image &input) {
+  ImageFrame output;
+  output.width = input.width;
+  output.height = input.height;
+  output.row_stride = input.step;
+  output.encoding = input.encoding;
+  output.data.resize(input.data.size());
+  std::memcpy(output.data.data(), input.data.data(), input.data.size());
+  return output;
+}
+
+ImageFrame compressed_image(const rosbag_io::message::CompressedImage &input) {
+  ImageFrame output;
+  output.encoding = input.format;
+  output.compressed = true;
+  output.data.resize(input.data.size());
+  std::memcpy(output.data.data(), input.data.data(), input.data.size());
+  return output;
+}
+
+SensorPayload decode(const rosbag_io::SerializedMessage &message,
+                     const rosbag_io::TopicMetadata &topic,
+                     const SensorDefinition &sensor) {
+  switch (sensor.type) {
+  case SensorType::Lidar:
+    if (sensor.message_type.find("CustomMsg") != std::string::npos) {
+      return convert_livox(rosbag_io::decode_livox_custom_message(
+                               message.data, topic.serialization_format),
+                           sensor);
+    }
+    return convert_cloud(rosbag_io::decode_point_cloud2(
+                             message.data, topic.serialization_format),
+                         sensor);
+  case SensorType::Imu: {
+    const auto value =
+        rosbag_io::decode_imu(message.data, topic.serialization_format);
+    return ImuSample{
+        {value.angular_velocity.x * sensor.angular_velocity_to_rad_per_second,
+         value.angular_velocity.y * sensor.angular_velocity_to_rad_per_second,
+         value.angular_velocity.z * sensor.angular_velocity_to_rad_per_second},
+        {value.linear_acceleration.x *
+             sensor.acceleration_to_meters_per_second_squared,
+         value.linear_acceleration.y *
+             sensor.acceleration_to_meters_per_second_squared,
+         value.linear_acceleration.z *
+             sensor.acceleration_to_meters_per_second_squared},
+        {value.orientation.x, value.orientation.y, value.orientation.z,
+         value.orientation.w},
+    };
+  }
+  case SensorType::Camera:
+    if (sensor.message_type.find("CompressedImage") != std::string::npos)
+      return compressed_image(rosbag_io::decode_compressed_image(
+          message.data, topic.serialization_format));
+    return raw_image(
+        rosbag_io::decode_image(message.data, topic.serialization_format));
+  case SensorType::WheelSpeed: {
+    const auto value =
+        rosbag_io::decode_odometry(message.data, topic.serialization_format);
+    return WheelSpeed{value.twist.twist.linear.x * sensor.distance_to_meters,
+                      value.twist.twist.angular.z *
+                          sensor.angular_velocity_to_rad_per_second};
+  }
+  case SensorType::Gnss: {
+    const auto value =
+        rosbag_io::decode_nav_sat_fix(message.data, topic.serialization_format);
+    return GnssFix{value.latitude, value.longitude, value.altitude,
+                   value.position_covariance, value.status.status};
+  }
+  }
+  throw std::runtime_error("unreachable sensor type");
+}
+
+} // namespace
+
+void RosbagDatasetReader::read(const BagDefinition &bag,
+                               const SampleCallback &callback) {
+  rosbag_io::Reader reader(bag.path.string());
+  std::map<std::string, const SensorDefinition *, std::less<>> sensors;
+  for (const auto &sensor : bag.sensors)
+    sensors.emplace(sensor.topic, &sensor);
+
+  std::map<std::string, const rosbag_io::TopicMetadata *, std::less<>> topics;
+  for (const auto &topic : reader.topics())
+    topics.emplace(topic.name, &topic);
+  for (const auto &[topic_name, sensor] : sensors) {
+    (void)sensor;
+    if (!topics.contains(topic_name))
+      throw std::runtime_error("configured topic is absent from bag: " +
+                               topic_name);
+  }
+
+  while (reader.has_next()) {
+    auto serialized = reader.read_next();
+    const auto sensor_it = sensors.find(serialized.topic_name);
+    if (sensor_it == sensors.end())
+      continue;
+    const auto topic_it = topics.find(serialized.topic_name);
+    const auto &sensor = *sensor_it->second;
+    const TimestampNs timestamp = serialized.send_timestamp != 0
+                                      ? serialized.send_timestamp
+                                      : serialized.receive_timestamp;
+    callback(SensorSample{sensor.id, timestamp,
+                          decode(serialized, *topic_it->second, sensor)});
+  }
+}
+
+} // namespace slam_benchmark

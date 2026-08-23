@@ -1,0 +1,22 @@
+schema_version: 1
+name: Point-LIO
+description: High-bandwidth point-by-point LiDAR-inertial odometry.
+authors: [Dongjiao He, Wei Xu, Nan Chen, Fanze Kong, Chongjian Yuan, Fu Zhang]
+license: GPL-2.0
+repository:
+  name: Point-LIO
+  url: https://github.com/hku-mars/Point-LIO.git
+  ref: 4b86a469eb5572e70ed575af25b5f15dd06e8e3c
+dependencies:
+  - {name: ikd-Tree, url: https://github.com/hku-mars/ikd-Tree.git}
+  - {name: IKFoM, url: https://github.com/hku-mars/IKFoM.git}
+paper:
+  title: "Point-LIO: Robust High-Bandwidth Light Detection and Ranging Inertial Odometry"
+  url: https://arxiv.org/abs/2303.10091
+sensors: [lidar, imu]
+timing_stages:
+  - lidar_preprocess
+  - point_propagation
+  - knn_search
+  - filter_update
+  - map_update

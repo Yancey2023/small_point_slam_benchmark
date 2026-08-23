@@ -1,0 +1,24 @@
+# Local third-party source. rosbag_io will become a submodule after publication.
+/3rdparty/
+
+# Downloaded upstream trees and generated patched source trees.
+/algorithm_downloads/
+/algorithm/*/source/
+
+# Dataset payloads and benchmark outputs (manifests remain tracked).
+/datasets/**/data/
+/results/*
+!/results/README.md
+
+# Build/editor/Python artifacts.
+/build/
+/CMakeFiles/
+/CMakeCache.txt
+/out/
+/.cache/
+/.idea/
+/.vscode/
+__pycache__/
+*.py[cod]
+*.user
+.DS_Store

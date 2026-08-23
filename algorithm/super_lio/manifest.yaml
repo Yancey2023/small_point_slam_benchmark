@@ -1,0 +1,22 @@
+schema_version: 1
+name: Super-LIO
+description: Robust LiDAR-inertial odometry with a compact structured map.
+authors: [Liansheng Wang, Xinke Zhang, Chenhui Li, Dongjiao He, Yihan Pan, Jianjun Yi]
+license: GPL-3.0
+repository:
+  name: Super-LIO
+  url: https://github.com/Liansheng-Wang/Super-LIO.git
+  ref: f89f48dc7aea6cfa262f18e4d03b319e04e0dbd2
+dependencies:
+  - {name: oneTBB, url: https://github.com/uxlfoundation/oneTBB.git}
+  - {name: glog, url: https://github.com/google/glog.git}
+paper:
+  title: "Super-LIO: A Robust and Efficient LiDAR-Inertial Odometry System with a Compact Mapping Strategy"
+  url: https://doi.org/10.1109/LRA.2026.3653372
+sensors: [lidar, imu]
+timing_stages:
+  - lidar_preprocess
+  - undistortion
+  - correspondence_search
+  - filter_update
+  - compact_map_update
