@@ -13,7 +13,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_ALGORITHMS = (
     "fast_lio", "point_lio", "voxel_map", "voxel_map_with_imu", "super_lio",
-    "kiss_icp", "faster_lio", "small_point_lio",
+    "kiss_icp", "faster_lio", "small_point_lio", "small_point_slam",
 )
 
 
@@ -22,6 +22,8 @@ class Repository:
     name: str
     url: str
     ref: str
+    local_path: str | None = None
+    local_path_env: str | None = None
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -42,9 +44,18 @@ def repository_for(name: str) -> Repository:
     raw = algorithm_manifest(name).get("repository")
     if not isinstance(raw, dict):
         raise ValueError(f"algorithm/{name}/manifest.yaml has no repository mapping")
-    repository = Repository(str(raw["name"]), str(raw["url"]), str(raw["ref"]))
+    repository = Repository(
+        str(raw["name"]), str(raw.get("url", "")), str(raw["ref"]),
+        str(raw["local_path"]) if raw.get("local_path") else None,
+        str(raw["local_path_env"]) if raw.get("local_path_env") else None,
+    )
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", repository.name):
         raise ValueError(f"unsafe repository name: {repository.name!r}")
+    if repository.local_path_env and not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*", repository.local_path_env):
+        raise ValueError(f"unsafe environment variable: {repository.local_path_env!r}")
+    if not repository.url and not repository.local_path and not repository.local_path_env:
+        raise ValueError(f"algorithm/{name}/manifest.yaml repository needs url or local_path")
     return repository
 
 

@@ -1,0 +1,609 @@
+diff --git a/standalone/CMakeLists.txt b/standalone/CMakeLists.txt
+new file mode 100644
+index 0000000..cf2a955
+--- /dev/null
++++ b/standalone/CMakeLists.txt
+@@ -0,0 +1,48 @@
++cmake_minimum_required(VERSION 3.24)
++
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(TBB REQUIRED)
++find_package(small_gicp CONFIG REQUIRED)
++
++set(NAVIGATION_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
++
++add_library(small_point_slam_algorithm STATIC
++    "${NAVIGATION_ROOT}/src/localization/map/cached_ivox.cpp"
++    "${NAVIGATION_ROOT}/src/localization/observation/imu.cpp"
++    "${NAVIGATION_ROOT}/src/localization/observation/point_cloud.cpp"
++    "${NAVIGATION_ROOT}/src/localization/small_point_slam/eskf.cpp"
++    "${NAVIGATION_ROOT}/src/localization/small_point_slam/estimator.cpp"
++    "${NAVIGATION_ROOT}/src/localization/small_point_slam/parameters.cpp"
++    small_point_slam_engine.cpp
++)
++target_compile_features(small_point_slam_algorithm PUBLIC cxx_std_20)
++target_compile_definitions(small_point_slam_algorithm PUBLIC USE_PERFORMANCE_STATS)
++target_include_directories(small_point_slam_algorithm BEFORE PUBLIC
++    "${CMAKE_CURRENT_SOURCE_DIR}/include"
++    "${NAVIGATION_ROOT}/src"
++    "${CMAKE_CURRENT_SOURCE_DIR}"
++)
++target_link_libraries(small_point_slam_algorithm PUBLIC
++    Eigen3::Eigen
++    TBB::tbb
++    small_gicp::small_gicp
++    yaml-cpp::yaml-cpp
++    spdlog::spdlog
++)
++
++add_executable(small_point_slam_benchmark
++    main.cpp
++    small_point_slam_adapter.cpp
++)
++target_link_libraries(small_point_slam_benchmark PRIVATE
++    small_point_slam_algorithm
++    slam_benchmark::core
++)
++
++if(MSVC)
++    target_compile_options(small_point_slam_algorithm PRIVATE /W3 /utf-8)
++    target_compile_options(small_point_slam_benchmark PRIVATE /W4 /utf-8)
++else()
++    target_compile_options(small_point_slam_algorithm PRIVATE -Wall -Wextra)
++    target_compile_options(small_point_slam_benchmark PRIVATE -Wall -Wextra -Wpedantic)
++endif()
+diff --git a/standalone/include/common/common.h b/standalone/include/common/common.h
+new file mode 100644
+index 0000000..8a01f58
+--- /dev/null
++++ b/standalone/include/common/common.h
+@@ -0,0 +1,39 @@
++#pragma once
++
++#include <pch.h>
++
++namespace common {
++
++struct Odometry {
++    double timestamp{};
++    Eigen::Vector3f position = Eigen::Vector3f::Zero();
++    Eigen::Vector3f velocity = Eigen::Vector3f::Zero();
++    Eigen::Vector3f acceleration = Eigen::Vector3f::Zero();
++    Eigen::Matrix3f orientation = Eigen::Matrix3f::Identity();
++    Eigen::Vector3f angular_velocity = Eigen::Vector3f::Zero();
++};
++
++struct ImuStamped {
++    double timestamp{};
++    Eigen::Vector3f angular_velocity = Eigen::Vector3f::Zero();
++    Eigen::Vector3f linear_acceleration = Eigen::Vector3f::Zero();
++};
++
++struct PointStamped {
++    double timestamp{};
++    Eigen::Vector3f position = Eigen::Vector3f::Zero();
++};
++
++struct MapPlane {
++    Eigen::Vector3f center = Eigen::Vector3f::Zero();
++    Eigen::Vector3f x_axis = Eigen::Vector3f::UnitX();
++    Eigen::Vector3f y_axis = Eigen::Vector3f::UnitY();
++    Eigen::Vector3f normal = Eigen::Vector3f::UnitZ();
++    float minimum_eigenvalue{};
++    float middle_eigenvalue{};
++    float maximum_eigenvalue{};
++    Eigen::Matrix3f normal_covariance = Eigen::Matrix3f::Zero();
++    float alpha{0.8F};
++};
++
++}  // namespace common
+diff --git a/standalone/include/pch.h b/standalone/include/pch.h
+new file mode 100644
+index 0000000..02a7272
+--- /dev/null
++++ b/standalone/include/pch.h
+@@ -0,0 +1,57 @@
++#pragma once
++
++#include <Eigen/Core>
++#include <Eigen/Eigenvalues>
++#include <Eigen/Geometry>
++#include <Eigen/Sparse>
++
++#include <fmt/format.h>
++#include <small_gicp/points/traits.hpp>
++#include <small_gicp/util/fast_floor.hpp>
++#include <spdlog/spdlog.h>
++#include <tbb/blocked_range.h>
++#include <tbb/parallel_for.h>
++#include <tbb/parallel_sort.h>
++#include <yaml-cpp/yaml.h>
++
++#include <algorithm>
++#include <array>
++#include <chrono>
++#include <cmath>
++#include <compare>
++#include <cstddef>
++#include <cstdint>
++#include <deque>
++#include <filesystem>
++#include <fstream>
++#include <functional>
++#include <limits>
++#include <list>
++#include <memory>
++#include <mutex>
++#include <numbers>
++#include <numeric>
++#include <optional>
++#include <ranges>
++#include <set>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <unordered_map>
++#include <unordered_set>
++#include <utility>
++#include <vector>
++
++// The private project uses unordered_dense from its global dependency bundle.
++// This isolated LIO build only needs the standard map API, so keep that private
++// dependency out of the benchmark adapter.
++namespace ankerl::unordered_dense {
++template <class Key, class Value, class Hash = std::hash<Key>,
++          class Equal = std::equal_to<Key>,
++          class Allocator = std::allocator<std::pair<const Key, Value>>>
++using map = std::unordered_map<Key, Value, Hash, Equal, Allocator>;
++
++template <class Key, class Hash = std::hash<Key>, class Equal = std::equal_to<Key>,
++          class Allocator = std::allocator<Key>>
++using set = std::unordered_set<Key, Hash, Equal, Allocator>;
++}  // namespace ankerl::unordered_dense
+diff --git a/standalone/main.cpp b/standalone/main.cpp
+new file mode 100644
+index 0000000..8c06fb1
+--- /dev/null
++++ b/standalone/main.cpp
+@@ -0,0 +1,8 @@
++#include "small_point_slam_adapter.hpp"
++
++#include <slam_benchmark/application.hpp>
++
++int main(int argc, char** argv) {
++    SmallPointSlamAdapter algorithm;
++    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
++}
+diff --git a/standalone/small_point_slam_adapter.cpp b/standalone/small_point_slam_adapter.cpp
+new file mode 100644
+index 0000000..1b8b332
+--- /dev/null
++++ b/standalone/small_point_slam_adapter.cpp
+@@ -0,0 +1,127 @@
++#include "small_point_slam_adapter.hpp"
++
++#include <spdlog/spdlog.h>
++#include <yaml-cpp/yaml.h>
++
++#include <chrono>
++#include <cmath>
++#include <ranges>
++#include <stdexcept>
++
++namespace {
++double seconds(slam_benchmark::TimestampNs timestamp) {
++    return static_cast<double>(timestamp) * 1e-9;
++}
++
++slam_benchmark::TimestampNs nanoseconds(double timestamp) {
++    return static_cast<slam_benchmark::TimestampNs>(std::llround(timestamp * 1e9));
++}
++
++double elapsed_ms(std::chrono::steady_clock::time_point started) {
++    return std::chrono::duration<double, std::milli>(
++               std::chrono::steady_clock::now() - started).count();
++}
++
++Eigen::Matrix3f rotation(const slam_benchmark::SensorCalibration& calibration) {
++    const auto& value = calibration.body_from_sensor;
++    Eigen::Matrix3f result;
++    result << value[0], value[1], value[2], value[4], value[5], value[6],
++              value[8], value[9], value[10];
++    return result;
++}
++
++Eigen::Vector3f translation(const slam_benchmark::SensorCalibration& calibration) {
++    const auto& value = calibration.body_from_sensor;
++    return Eigen::Vector3f(static_cast<float>(value[3]),
++                           static_cast<float>(value[7]),
++                           static_cast<float>(value[11]));
++}
++}  // namespace
++
++void SmallPointSlamAdapter::initialize(
++    std::span<const slam_benchmark::SensorDefinition> sensors,
++    const std::filesystem::path& config_path,
++    slam_benchmark::ResultSink& sink) {
++    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
++                                         &slam_benchmark::SensorDefinition::type);
++    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
++                                       &slam_benchmark::SensorDefinition::type);
++    if (lidar == sensors.end() || imu == sensors.end()) {
++        throw std::runtime_error("Small Point SLAM requires one LiDAR and one IMU");
++    }
++
++    sink_ = &sink;
++    lidar_id_ = lidar->id;
++    imu_id_ = imu->id;
++    engine_ = std::make_unique<small_point_slam::standalone::SmallPointSlamEngine>(
++        YAML::LoadFile(config_path.string()), rotation(lidar->calibration),
++        translation(lidar->calibration), rotation(imu->calibration));
++    engine_->set_pose_callback(
++        [this](double timestamp, const small_point_slam::State& state) {
++            accept_pose(timestamp, state);
++        });
++    engine_->set_timing_callback([this](double timestamp, const char* stage,
++                                        double duration_ms) {
++        sink_->report_timing({nanoseconds(timestamp), stage, duration_ms});
++    });
++    spdlog::info("Small Point SLAM standalone adapter initialized");
++}
++
++void SmallPointSlamAdapter::process(const slam_benchmark::SensorSample& sample) {
++    if (!engine_) throw std::logic_error("Small Point SLAM is not initialized");
++    if (const auto* imu = std::get_if<slam_benchmark::ImuSample>(&sample.payload)) {
++        if (sample.sensor_id != imu_id_) return;
++        const auto started = std::chrono::steady_clock::now();
++        common::ImuStamped converted;
++        converted.timestamp = seconds(sample.timestamp_ns);
++        converted.angular_velocity = Eigen::Vector3f(
++            static_cast<float>(imu->angular_velocity_rad_s[0]),
++            static_cast<float>(imu->angular_velocity_rad_s[1]),
++            static_cast<float>(imu->angular_velocity_rad_s[2]));
++        converted.linear_acceleration = Eigen::Vector3f(
++            static_cast<float>(imu->linear_acceleration_m_s2[0]),
++            static_cast<float>(imu->linear_acceleration_m_s2[1]),
++            static_cast<float>(imu->linear_acceleration_m_s2[2]));
++        engine_->add_imu(converted);
++        sink_->report_timing({sample.timestamp_ns, "imu_preprocess", elapsed_ms(started)});
++    } else if (const auto* cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload)) {
++        if (sample.sensor_id != lidar_id_) return;
++        if (cloud->points.size() != cloud->point_time_offset_ns.size()) {
++            throw std::runtime_error("point/time array size mismatch");
++        }
++        const auto started = std::chrono::steady_clock::now();
++        std::vector<common::PointStamped> converted;
++        converted.reserve(cloud->points.size());
++        const double base_timestamp = seconds(sample.timestamp_ns);
++        for (std::size_t index = 0; index < cloud->points.size(); ++index) {
++            const auto& point = cloud->points[index];
++            if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
++                !std::isfinite(point.z)) continue;
++            converted.push_back({
++                base_timestamp + static_cast<double>(cloud->point_time_offset_ns[index]) * 1e-9,
++                Eigen::Vector3f(point.x, point.y, point.z)});
++        }
++        sink_->report_timing({sample.timestamp_ns, "lidar_preprocess", elapsed_ms(started)});
++        engine_->add_point_cloud(converted);
++    } else {
++        return;
++    }
++    engine_->handle_once();
++}
++
++void SmallPointSlamAdapter::accept_pose(double timestamp,
++                                         const small_point_slam::State& state) {
++    const Eigen::Quaterniond orientation(state.rotation);
++    slam_benchmark::Pose pose;
++    pose.timestamp_ns = nanoseconds(timestamp);
++    pose.translation_m = {state.position.x(), state.position.y(), state.position.z()};
++    pose.rotation_xyzw = {orientation.x(), orientation.y(), orientation.z(), orientation.w()};
++    trajectory_.push_back(pose);
++    sink_->report_realtime_pose(pose);
++}
++
++void SmallPointSlamAdapter::finalize() {
++    if (!engine_) return;
++    engine_->finalize();
++    sink_->report_final_trajectory(trajectory_);
++}
+diff --git a/standalone/small_point_slam_adapter.hpp b/standalone/small_point_slam_adapter.hpp
+new file mode 100644
+index 0000000..e2f759b
+--- /dev/null
++++ b/standalone/small_point_slam_adapter.hpp
+@@ -0,0 +1,28 @@
++#pragma once
++
++#include "small_point_slam_engine.hpp"
++
++#include <slam_benchmark/algorithm.hpp>
++
++#include <memory>
++
++class SmallPointSlamAdapter final : public slam_benchmark::SlamAlgorithm {
++public:
++    [[nodiscard]] std::string_view name() const noexcept override {
++        return "small_point_slam";
++    }
++    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++                    const std::filesystem::path& config_path,
++                    slam_benchmark::ResultSink& sink) override;
++    void process(const slam_benchmark::SensorSample& sample) override;
++    void finalize() override;
++
++private:
++    void accept_pose(double timestamp, const small_point_slam::State& state);
++
++    slam_benchmark::ResultSink* sink_{};
++    slam_benchmark::SensorId lidar_id_{};
++    slam_benchmark::SensorId imu_id_{};
++    std::unique_ptr<small_point_slam::standalone::SmallPointSlamEngine> engine_;
++    slam_benchmark::Trajectory trajectory_;
++};
+diff --git a/standalone/small_point_slam_engine.cpp b/standalone/small_point_slam_engine.cpp
+new file mode 100644
+index 0000000..6f939ea
+--- /dev/null
++++ b/standalone/small_point_slam_engine.cpp
+@@ -0,0 +1,202 @@
++#include "small_point_slam_engine.hpp"
++
++#include <algorithm>
++#include <limits>
++#include <stdexcept>
++#include <utility>
++
++namespace small_point_slam::standalone {
++namespace {
++
++YAML::Node normalized_config(const YAML::Node& input) {
++    YAML::Node result = YAML::Clone(input);
++    result["min_distance"] = input["min_range_m"].as<float>();
++    result["max_distance"] = input["max_range_m"].as<float>();
++    result["space_downsample_leaf_size"] = input["filter_size_scan_m"].as<float>();
++    result["map_resolution"] = input["map_voxel_size_m"].as<float>();
++    result["batch_update_max_iterated_times"] = input["max_iterations"].as<std::size_t>();
++    result["point_plane_distance_cov"] = input["lidar_measurement_noise"].as<double>();
++    result["imu_meas_acc_cov"] = input["accelerometer_noise"].as<double>();
++    result["imu_meas_omg_cov"] = input["gyroscope_noise"].as<double>();
++    result["ba_cov"] = input["accelerometer_bias_noise"].as<double>();
++    result["bg_cov"] = input["gyroscope_bias_noise"].as<double>();
++    return result;
++}
++
++enum class EventType { None, Imu, Point, DensePoint };
++
++struct NextEvent {
++    EventType type{EventType::None};
++    double timestamp{std::numeric_limits<double>::max()};
++};
++
++}  // namespace
++
++SmallPointSlamEngine::SmallPointSlamEngine(
++    const YAML::Node& config,
++    const Eigen::Matrix3f& body_from_lidar_rotation,
++    const Eigen::Vector3f& body_from_lidar_translation,
++    const Eigen::Matrix3f& body_from_imu_rotation) {
++    parameters_.read_parameters(normalized_config(config));
++    if (!parameters_.enable_imu) {
++        throw std::invalid_argument("Small Point SLAM benchmark requires enable_imu: true");
++    }
++
++    estimator_.parameters = &parameters_;
++    estimator_.performance_stats = &performance_stats_;
++    estimator_.kf.debug = parameters_.debug_eskf;
++    estimator_.kf.debug_point_window_start = parameters_.debug_point_window_start;
++    estimator_.kf.debug_point_window_end = parameters_.debug_point_window_end;
++    estimator_.kf.debug_point_update_row_stride = parameters_.debug_point_row_stride;
++    process_noise_ = estimator_.process_noise_cov();
++
++    point_cloud_.initialize(&parameters_, body_from_lidar_rotation,
++                            body_from_lidar_translation, &performance_stats_);
++    imu_.initialize(&parameters_, body_from_imu_rotation, &performance_stats_);
++    estimator_.reset();
++}
++
++void SmallPointSlamEngine::add_imu(const common::ImuStamped& sample) {
++    imu_.initialize_data(sample);
++}
++
++void SmallPointSlamEngine::add_point_cloud(
++    const std::vector<common::PointStamped>& cloud) {
++    point_cloud_.initialize_data(cloud);
++}
++
++void SmallPointSlamEngine::initialize_if_ready() {
++    point_cloud_.run_initialization_once(estimator_, initialization_timestamp_,
++                                         initialization_map_size_);
++    imu_.run_initialization_once(initialization_timestamp_);
++    if (initialization_timestamp_ <= 0.0 ||
++        initialization_map_size_ < parameters_.init_map_size ||
++        !imu_.initialization_ready()) {
++        return;
++    }
++
++    initialized_ = true;
++    current_timestamp_ = initialization_timestamp_;
++    estimator_.kf.init_timestamp(initialization_timestamp_);
++    imu_.initialize_filter_state(estimator_.kf);
++    estimator_.kf.align_to_gravity();
++    point_cloud_.finish_initialization(initialization_timestamp_, estimator_);
++    spdlog::info("Small Point SLAM initialized with {} map points",
++                 initialization_map_size_);
++}
++
++void SmallPointSlamEngine::handle_once() {
++    if (!initialized_) {
++        initialize_if_ready();
++        flush_timings(initialization_timestamp_);
++        return;
++    }
++    process_ready_events(false);
++    flush_timings(current_timestamp_);
++}
++
++void SmallPointSlamEngine::finalize() {
++    if (!initialized_) {
++        initialize_if_ready();
++    }
++    if (initialized_) {
++        process_ready_events(true);
++    }
++    flush_timings(current_timestamp_);
++}
++
++void SmallPointSlamEngine::process_ready_events(bool drain) {
++    bool updated = false;
++    const auto normal_ready = [&] {
++        // A Livox message timestamp marks the beginning of its scan while its
++        // points extend into the future. Do not advance through those points
++        // until an IMU sample is available to order against them, otherwise
++        // the following IMU samples would be incorrectly discarded as old.
++        return imu_.has_data() && point_cloud_.has_filter_data() &&
++               point_cloud_.has_dense_data();
++    };
++
++    while (drain ? (imu_.has_data() || point_cloud_.has_filter_data() ||
++                    point_cloud_.has_dense_data())
++                 : normal_ready()) {
++        NextEvent next;
++        const auto consider = [&next](EventType type, double timestamp) {
++            if (timestamp <= next.timestamp) next = {type, timestamp};
++        };
++        if (imu_.has_data()) consider(EventType::Imu, imu_.timestamp());
++        if (point_cloud_.has_filter_data())
++            consider(EventType::Point, point_cloud_.filter_timestamp());
++        if (point_cloud_.has_dense_data())
++            consider(EventType::DensePoint, point_cloud_.dense_timestamp());
++        if (next.type == EventType::None) break;
++
++        observation::UpdateResult result = observation::UpdateResult::Updated;
++        if (next.type == EventType::Imu) {
++            result = imu_.run_update_once(estimator_.kf, process_noise_, current_timestamp_);
++            if (imu_.was_saturated() && parameters_.map_update_suspend_duration > 0.0) {
++                estimator_.imu_saturated_until =
++                    current_timestamp_ + parameters_.map_update_suspend_duration;
++            }
++        } else if (next.type == EventType::Point) {
++            std::vector<PointWithNormal> unused_visual_points;
++            result = point_cloud_.run_update_once(estimator_, process_noise_,
++                                                  current_timestamp_, false,
++                                                  unused_visual_points);
++        } else {
++            point_cloud_.run_dense_once(estimator_.kf, dense_cloud_);
++        }
++        if (result == observation::UpdateResult::PredictionFailed) {
++            throw std::runtime_error("Small Point SLAM filter prediction failed");
++        }
++        updated = updated || result == observation::UpdateResult::Updated;
++    }
++    report_pose_if_changed(updated);
++}
++
++void SmallPointSlamEngine::report_pose_if_changed(bool updated) {
++    if (!updated || !pose_callback_ || current_timestamp_ <= last_pose_timestamp_) return;
++    pose_callback_(current_timestamp_, estimator_.kf.x);
++    last_pose_timestamp_ = current_timestamp_;
++}
++
++void SmallPointSlamEngine::flush_timings(double timestamp) {
++    if (!timing_callback_ || timestamp <= 0.0) return;
++    const auto delta = [this](PerfTimer timer) {
++        const std::size_t index = static_cast<std::size_t>(timer);
++        const double total = performance_stats_.get_time_stat(timer).total_time_ns;
++        const double value = std::max(0.0, total - previous_time_ns_[index]);
++        previous_time_ns_[index] = total;
++        return value * 1e-6;
++    };
++
++    const double downsampling = delta(PerfTimer::DataPreprocessing);
++    const double state_propagation = delta(PerfTimer::FilterPrediction);
++    const double imu_update = delta(PerfTimer::ImuUpdate);
++    const double point_update = delta(PerfTimer::PointCloudUpdate);
++    const double lookup = delta(PerfTimer::MapLookup);
++    const double residual = delta(PerfTimer::ResidualCalculation);
++    const double map_update = delta(PerfTimer::MapUpdate);
++    // These timers are nested in MapLookup and are advanced here to keep the
++    // snapshots consistent without double-counting them.
++    delta(PerfTimer::PlaneConstruction);
++
++    const auto report = [this, timestamp](const char* stage, double duration_ms) {
++        if (duration_ms > 0.0) timing_callback_(timestamp, stage, duration_ms);
++    };
++    report("downsampling", downsampling);
++    report("state_propagation", state_propagation);
++    report("map_search", lookup + residual);
++    report("filter_update", imu_update +
++              std::max(0.0, point_update - lookup - residual));
++    report("map_update", map_update);
++}
++
++void SmallPointSlamEngine::set_pose_callback(PoseCallback callback) {
++    pose_callback_ = std::move(callback);
++}
++
++void SmallPointSlamEngine::set_timing_callback(TimingCallback callback) {
++    timing_callback_ = std::move(callback);
++}
++
++}  // namespace small_point_slam::standalone
+diff --git a/standalone/small_point_slam_engine.hpp b/standalone/small_point_slam_engine.hpp
+new file mode 100644
+index 0000000..ae8ce33
+--- /dev/null
++++ b/standalone/small_point_slam_engine.hpp
+@@ -0,0 +1,52 @@
++#pragma once
++
++#include "localization/observation/imu.h"
++#include "localization/observation/point_cloud.h"
++#include "localization/small_point_slam/estimator.h"
++
++#include <array>
++#include <functional>
++
++namespace small_point_slam::standalone {
++
++class SmallPointSlamEngine {
++public:
++    using PoseCallback = std::function<void(double, const State&)>;
++    using TimingCallback = std::function<void(double, const char*, double)>;
++
++    SmallPointSlamEngine(const YAML::Node& config,
++                         const Eigen::Matrix3f& body_from_lidar_rotation,
++                         const Eigen::Vector3f& body_from_lidar_translation,
++                         const Eigen::Matrix3f& body_from_imu_rotation);
++
++    void add_imu(const common::ImuStamped& sample);
++    void add_point_cloud(const std::vector<common::PointStamped>& cloud);
++    void handle_once();
++    void finalize();
++    void set_pose_callback(PoseCallback callback);
++    void set_timing_callback(TimingCallback callback);
++
++private:
++    void initialize_if_ready();
++    void process_ready_events(bool drain);
++    void report_pose_if_changed(bool updated);
++    void flush_timings(double timestamp);
++
++    Parameters parameters_;
++    PerformanceStats performance_stats_;
++    Estimator estimator_;
++    observation::ImuObservation imu_;
++    observation::PointCloudObservation point_cloud_;
++    Eigen::Matrix<State::ValueType, State::DIM, State::DIM> process_noise_;
++    std::vector<Eigen::Vector3f> dense_cloud_;
++    std::array<double, static_cast<std::size_t>(PerfTimer::Count)> previous_time_ns_{};
++    double initialization_timestamp_{};
++    std::size_t initialization_map_size_{};
++    double current_timestamp_{};
++    double last_pose_timestamp_{-1.0};
++    bool initialized_{};
++    PoseCallback pose_callback_;
++    TimingCallback timing_callback_;
++};
++
++}  // namespace small_point_slam::standalone

@@ -21,6 +21,7 @@ doc/                      # 架构和移植说明
 
 当前算法包括 FAST-LIO2、Point-LIO、VoxelMap、VoxelMap (with imu)、Super-LIO、
 KISS-ICP、Faster-LIO 和 Small Point LIO。
+此外还支持尚未公开源码、通过本地 Git 工作树提供的 Small Point SLAM。
 
 ## 构建 core
 

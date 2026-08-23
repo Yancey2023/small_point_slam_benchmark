@@ -12,6 +12,7 @@
 | KISS-ICP | `b16835283aee62f7d5e2bdf6c1c3bb2930de74ff` | LiDAR | 已移植 |
 | Faster-LIO | `ea0e0910a4cf2da49f569d168442a9c8c1bbe672` | LiDAR + IMU | 已移植 |
 | Small Point LIO | `ba8b4ce5bf80df8bbada44b984e12c460b269dd5` | LiDAR + IMU | 已移植 |
+| Small Point SLAM | `403dc2d87194fa59a1d1cd2c836d6ba23e30bef2` | LiDAR + IMU | 已移植（私有本地源） |
 
 “已移植”表示存在可从固定上游 commit 重放的 Git patch，且目标不依赖 ROS/ROS2，能独立
 链接 `slam_benchmark::core`。实包验证使用 `ACE/Mid-360/ACE实验室门口10hz`。

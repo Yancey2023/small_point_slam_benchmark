@@ -1,0 +1,70 @@
+algorithm: small_point_slam
+
+point_filter_num: 1
+min_range_m: 0.5
+max_range_m: 100.0
+space_downsample: true
+space_downsample_center_based: true
+filter_size_scan_m: 0.5
+
+check_satu: true
+satu_acc: 29.43
+satu_gyro: 35.0
+zupt_enabled: true
+zupt_gyro_threshold: 0.01
+zupt_acc_threshold: 0.01
+zupt_sustain_duration: 0.3
+zupt_velocity_cov: 0.02
+zupt_attitude_cov: 0.1
+map_update_suspend_duration: 0.0
+
+map_voxel_size_m: 0.5
+init_map_size: 10
+plane_threshold: 0.005
+
+is_batch_update: true
+batch_dt: 0.005
+max_iterations: 4
+enable_twice_update: false
+twice_update_dt: 0.1
+twice_update_max_iterated_times: 5
+converge_epsilon: 0.0001
+enable_imu: true
+enable_wheel_speed: false
+enable_image_update: false
+debug_eskf: false
+debug_point_window_start: -1.0
+debug_point_window_end: -1.0
+debug_point_row_stride: 8
+
+lidar_measurement_noise: 0.01
+accelerometer_noise: 0.1
+gyroscope_noise: 0.1
+wheel_velocity_cov: 0.1
+wheel_omg_cov: 0.1
+wheel_stopping_velocity_cov: 0.1
+wheel_stopping_omg_cov: 0.01
+velocity_cov: 100.0
+acceleration_cov: 500.0
+omg_cov: 1000.0
+accelerometer_bias_noise: 0.0001
+gyroscope_bias_noise: 0.0001
+wheel_k_cov: 0.0001
+imu_off_velocity_cov: 10.0
+imu_off_omg_cov: 10.0
+imu_off_acceleration_cov: 0.05
+img_point_cov: 1000.0
+
+vio_map_resolution: 0.5
+vio_max_iterations: 5
+vio_outlier_threshold: 1000.0
+vio_patch_size: 8
+vio_patch_pyrimid_level: 4
+vio_grid_size: 5
+vio_grid_n_height: 17
+
+publish_pointcloud_time_interval: 0.000001
+publish_map_planes_time_interval: 0.5
+enable_map_planes_visualization: false
+map_planes_alpha: 0.8
+publish_odometry_without_downsample: false

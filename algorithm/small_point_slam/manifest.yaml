@@ -1,0 +1,25 @@
+schema_version: 1
+name: Small Point SLAM
+description: High-performance point-wise LiDAR-inertial SLAM with a compact cached voxel map.
+authors: [Yingjie Huang]
+license: Proprietary
+repository:
+  name: navigation
+  url: ""
+  local_path: /home/yancey/cpp/navigation
+  local_path_env: SMALL_POINT_SLAM_SOURCE_DIR
+  ref: 403dc2d87194fa59a1d1cd2c836d6ba23e30bef2
+dependencies:
+  - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
+  - {name: oneTBB, url: https://github.com/uxlfoundation/oneTBB.git}
+  - {name: small_gicp, url: https://github.com/koide3/small_gicp.git}
+paper: {}
+sensors: [lidar, imu]
+timing_stages:
+  - lidar_preprocess
+  - imu_preprocess
+  - downsampling
+  - state_propagation
+  - map_search
+  - filter_update
+  - map_update
