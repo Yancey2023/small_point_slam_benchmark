@@ -1,0 +1,11 @@
+{
+  "name": "small-point-slam-benchmark-workspace",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "dev": "pnpm --filter @slam-benchmark/frontend dev",
+    "build:web": "pnpm --filter @slam-benchmark/frontend build",
+    "test:web": "pnpm --filter @slam-benchmark/frontend test",
+    "start:web": "pnpm --filter @slam-benchmark/frontend start"
+  }
+}

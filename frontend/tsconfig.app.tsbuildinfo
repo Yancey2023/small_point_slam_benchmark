@@ -1,0 +1,1 @@
+{"root":["./src/env.d.ts","./src/main.ts","./src/api/client.ts","./src/composables/useBenchmark.ts","./src/App.vue","./src/components/AlgorithmPicker.vue","./src/components/DatasetPicker.vue","./src/components/ResultPanel.vue","./src/components/RunProgress.vue","./src/components/TrajectoryPlot.vue","./shared/contracts.ts"],"version":"5.9.3"}

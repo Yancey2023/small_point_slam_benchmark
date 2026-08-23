@@ -13,11 +13,11 @@ algorithm/<algorithm>/    # 上游信息、配置、Git patch
 algorithm_downloads/      # 原始上游仓库，不进入 Git
 results/<dataset>/<algo>/ # 原始和分析 CSV，不进入 Git
 scripts/                  # 下载、patch、运行、分析、校验
+frontend/                 # Vue/Vite 本地 benchmark 工作台
 doc/                      # 架构和移植说明
 ```
 
-目前 core、清单和脚本骨架可编译、可测试，上游仓库 ref 已固定到已核验的 commit。四个上游算法的独立可执行程序需要在各自的
-ROS-free 移植完成并生成 patch 后启用；仓库不会用假实现冒充算法结果。
+目前 core 和四个算法适配均可独立链接、运行和输出结果；上游仓库 ref 已固定到已核验的 commit，移植差异通过 Git patch 保存。
 
 ## 构建 core
 
@@ -66,6 +66,28 @@ python scripts/analyze_results.py results
 
 原始输出包括 `sensor_messages.csv`、`realtime_pose.csv`、
 `final_trajectory.csv`、`timings.csv`、`cpu.csv` 和 `summary.csv`。
+
+## Web 工作台
+
+根目录是 pnpm workspace，网页项目位于 `frontend`。开发模式同时启动 Vite 和本地任务 API：
+
+```sh
+pnpm install
+pnpm dev
+```
+
+打开 `http://127.0.0.1:5173`，即可勾选数据集和算法、查看实时消息进度，并多选数据集和算法查看 XY/XZ/YZ 轨迹投影，以及按指标筛选的性能横向条形图。服务会自动扫描 `results` 并复用之前运行的结果；性能面板除总耗时和 CPU 外，还可以比较每个算法阶段的平均、中位、P95、最大、累计耗时与调用次数。服务默认从
+`build/default` 查找算法，找不到时会自动选择 `build` 下最新的同名可执行文件；也可以通过跨平台环境变量
+`BENCHMARK_BUILD_DIR` 指定构建目录。
+
+生产构建及本地运行：
+
+```sh
+pnpm build:web
+pnpm start:web
+```
+
+生产服务默认监听 `http://127.0.0.1:4174`。为了保持 CPU 数据可比较，网页任务采用单队列顺序执行。
 
 更完整的接口与移植约束见 [架构说明](doc/architecture.md)、
 [算法移植指南](doc/porting_algorithms.md) 和 [移植状态](doc/port_status.md)。

@@ -1,0 +1,40 @@
+:root {
+  color: #39464e;
+  background: #f4f5f2;
+  font-family: Inter, "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --ink: #39464e;
+  --ink-soft: #66747b;
+  --ink-muted: #89959a;
+  --line-soft: rgba(207, 216, 215, 0.9);
+  --blue-soft: #e3edf2;
+  --mint-soft: #e1eee8;
+  --slate-soft: #e7ebef;
+  --radius-xl: 24px;
+  --shadow-card: 0 15px 45px rgba(57, 70, 78, 0.075);
+}
+
+* { box-sizing: border-box; }
+html { min-width: 320px; scroll-behavior: smooth; }
+body { min-width: 320px; min-height: 100vh; margin: 0; }
+body::before,
+body::after {
+  position: fixed;
+  z-index: 0;
+  width: 430px;
+  height: 430px;
+  border-radius: 50%;
+  content: "";
+  filter: blur(3px);
+  pointer-events: none;
+}
+body::before { top: -230px; left: -170px; background: rgba(205, 223, 230, 0.5); }
+body::after { right: -210px; bottom: -250px; background: rgba(208, 226, 216, 0.55); }
+button, input { font: inherit; }
+button:focus-visible, a:focus-visible { outline: 3px solid rgba(212, 149, 177, 0.35); outline-offset: 3px; }
+::selection { color: #30434e; background: #cedfe7; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
