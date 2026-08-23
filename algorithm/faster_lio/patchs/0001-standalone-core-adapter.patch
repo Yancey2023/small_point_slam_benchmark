@@ -272,10 +272,10 @@ index 0000000..9d3bb23
 +};
 diff --git a/standalone/faster_lio_engine.cpp b/standalone/faster_lio_engine.cpp
 new file mode 100644
-index 0000000..76a34ce
+index 0000000..3906740
 --- /dev/null
 +++ b/standalone/faster_lio_engine.cpp
-@@ -0,0 +1,407 @@
+@@ -0,0 +1,416 @@
 +#include "faster_lio_engine.hpp"
 +
 +#include "ivox3d/ivox3d.h"
@@ -289,6 +289,8 @@ index 0000000..76a34ce
 +#include <algorithm>
 +#include <chrono>
 +#include <cmath>
++#include <execution>
++#include <numeric>
 +#include <stdexcept>
 +#include <utility>
 +
@@ -523,7 +525,10 @@ index 0000000..76a34ce
 +        matched_points.reserve(down_body_->size());
 +        matched_planes.reserve(down_body_->size());
 +
-+        for (std::size_t index = 0; index < down_body_->size(); ++index) {
++        std::vector<std::size_t> indices(down_body_->size());
++        std::iota(indices.begin(), indices.end(), std::size_t{0});
++        std::for_each(std::execution::par_unseq, indices.begin(), indices.end(),
++                      [&](const std::size_t index) {
 +            const auto& body_point = down_body_->points[index];
 +            PointType& world_point = down_world_->points[index];
 +            point_body_to_world(state, body_point, world_point);
@@ -533,16 +538,20 @@ index 0000000..76a34ce
 +                ivox_->GetClosestPoint(world_point, neighbors, kMatchPoints);
 +                selected_[index] = neighbors.size() >= 3 && estimate_plane(planes_[index], neighbors);
 +            }
-+            if (!selected_[index]) continue;
++            if (!selected_[index]) return;
 +            const float residual = planes_[index].head<3>().dot(world_point.getVector3fMap()) +
 +                                   planes_[index].w();
 +            if (body_point.getVector3fMap().norm() <= 81.0F * residual * residual) {
 +                selected_[index] = false;
-+                continue;
++                return;
 +            }
 +            residuals_[index] = residual;
-+            Eigen::Vector4f point = body_point.getVector4fMap();
-+            point.w() = residual;
++        });
++
++        for (std::size_t index = 0; index < down_body_->size(); ++index) {
++            if (!selected_[index]) continue;
++            Eigen::Vector4f point = down_body_->points[index].getVector4fMap();
++            point.w() = residuals_[index];
 +            matched_points.push_back(point);
 +            matched_planes.push_back(planes_[index]);
 +        }

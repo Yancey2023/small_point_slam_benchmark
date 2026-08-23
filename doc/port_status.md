@@ -45,6 +45,12 @@ ctest --preset algorithms
 编译器可能报告来自上游 Eigen、IKFoM、ikd-Tree 或 fmt 的警告；这些警告不影响目标生成，
 但不能据此宣称其他编译器或平台已经过验证。
 
+## Small Point SLAM 热路径优化
+
+算法内部仍会精确记录每次阶段调用，但热路径不再为每个点调用系统时钟：x86/x64 使用串行化
+TSC，AArch64 使用虚拟计数器，Windows 的其他架构使用 QPC，未知平台回退到
+`steady_clock`。
+
 ## 资源指标与历史结果
 
 内存指标来自运行期间对当前进程常驻内存的周期采样。算法静态链接 core，因此 core 的资源

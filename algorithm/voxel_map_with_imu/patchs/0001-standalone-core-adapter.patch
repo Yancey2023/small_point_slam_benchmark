@@ -1,17 +1,13 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 27267a2..d3c6629 100644
+index 27267a2..65266da 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,92 +1,35 @@
+@@ -1,92 +1,50 @@
 -cmake_minimum_required(VERSION 2.8.3)
 -project(voxel_map)
-+cmake_minimum_required(VERSION 3.24)
- 
+-
 -SET(CMAKE_BUILD_TYPE "Release")
-+find_package(Eigen3 CONFIG REQUIRED)
-+find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
-+find_package(OpenMP REQUIRED)
- 
+-
 -ADD_COMPILE_OPTIONS(-std=c++14 )
 -ADD_COMPILE_OPTIONS(-std=c++14 )
 -set( CMAKE_CXX_FLAGS "-std=c++14 -O3" )
@@ -43,8 +39,21 @@ index 27267a2..d3c6629 100644
 -  endif()
 -else()
 -  add_definitions(-DMP_PROC_NUM=1)
--endif()
--
++cmake_minimum_required(VERSION 3.24)
++
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
++find_package(OpenMP REQUIRED)
++
++include(ProcessorCount)
++ProcessorCount(VOXEL_MAP_PROCESSOR_COUNT)
++set(VOXEL_MAP_PARALLEL_THREADS 1)
++if(VOXEL_MAP_PROCESSOR_COUNT GREATER 5)
++    set(VOXEL_MAP_PARALLEL_THREADS 4)
++elseif(VOXEL_MAP_PROCESSOR_COUNT GREATER 3)
++    math(EXPR VOXEL_MAP_PARALLEL_THREADS "${VOXEL_MAP_PROCESSOR_COUNT} - 2")
+ endif()
+ 
 -
 -find_package(catkin REQUIRED COMPONENTS
 -  geometry_msgs
@@ -91,19 +100,25 @@ index 27267a2..d3c6629 100644
 +    OpenMP::OpenMP_CXX
 +    ${PCL_LIBRARIES}
  )
- 
+-
 -generate_messages(
 - DEPENDENCIES
 - geometry_msgs
-+add_executable(voxel_map_with_imu_benchmark
-+    standalone/main.cpp
-+    standalone/voxel_map_adapter.cpp
++target_compile_definitions(voxel_map_with_imu_algorithm PRIVATE
++    MP_PROC_NUM=${VOXEL_MAP_PARALLEL_THREADS}
  )
--
++if(VOXEL_MAP_PARALLEL_THREADS GREATER 1)
++    target_compile_definitions(voxel_map_with_imu_algorithm PRIVATE MP_EN)
++endif()
+ 
 -catkin_package(
 -  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
 -  DEPENDS EIGEN3 PCL
 -  INCLUDE_DIRS
++add_executable(voxel_map_with_imu_benchmark
++    standalone/main.cpp
++    standalone/voxel_map_adapter.cpp
++)
 +target_link_libraries(voxel_map_with_imu_benchmark PRIVATE
 +    voxel_map_with_imu_algorithm
 +    slam_benchmark::core

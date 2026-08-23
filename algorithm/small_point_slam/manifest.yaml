@@ -13,6 +13,7 @@ dependencies:
   - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
   - {name: oneTBB, url: https://github.com/uxlfoundation/oneTBB.git}
   - {name: small_gicp, url: https://github.com/koide3/small_gicp.git}
+  - {name: unordered_dense, url: https://github.com/martinus/unordered_dense.git}
 paper: {}
 sensors: [lidar, imu]
 timing_stages:

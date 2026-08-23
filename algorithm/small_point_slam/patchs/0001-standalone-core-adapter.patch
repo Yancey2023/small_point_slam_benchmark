@@ -1,14 +1,245 @@
+diff --git a/src/localization/observation/point_cloud.cpp b/src/localization/observation/point_cloud.cpp
+index e237c3b..62e9567 100644
+--- a/src/localization/observation/point_cloud.cpp
++++ b/src/localization/observation/point_cloud.cpp
+@@ -25,7 +25,9 @@ namespace small_point_slam::observation {
+         performance_stats_->start_timer(PerfTimer::DataPreprocessing);
+ #endif
+         dense_points_.clear();
+-        dense_points_.reserve(std::max(dense_points_.capacity(), pointcloud.size() * 2));
++        if (dense_output_enabled_) {
++            dense_points_.reserve(std::max(dense_points_.capacity(), pointcloud.size() * 2));
++        }
+         filtered_points_.clear();
+         filtered_points_.reserve(std::max(filtered_points_.capacity(), pointcloud.size() * 2));
+ 
+@@ -40,7 +42,7 @@ namespace small_point_slam::observation {
+                              base_link_to_lidar_translation_;
+ #endif
+             minimum_timestamp = std::min(minimum_timestamp, point.timestamp);
+-            if (point.timestamp >= last_dense_timestamp_) {
++            if (dense_output_enabled_ && point.timestamp >= last_dense_timestamp_) {
+                 dense_points_.push_back(point);
+             }
+             if (i % parameters_->point_filter_num != 0 || point.timestamp < last_filter_timestamp_) {
+@@ -64,9 +66,11 @@ namespace small_point_slam::observation {
+         } else {
+             processed_pointcloud_ = std::move(filtered_points_);
+         }
+-        std::ranges::sort(dense_points_, [](const auto &left, const auto &right) {
+-            return left.timestamp < right.timestamp;
+-        });
++        if (dense_output_enabled_) {
++            std::ranges::sort(dense_points_, [](const auto &left, const auto &right) {
++                return left.timestamp < right.timestamp;
++            });
++        }
+         std::ranges::sort(processed_pointcloud_, [](const auto &left, const auto &right) {
+             return left.timestamp < right.timestamp;
+         });
+@@ -112,6 +116,16 @@ namespace small_point_slam::observation {
+ #endif
+     }
+ 
++    void PointCloudObservation::set_dense_output_enabled(bool enabled) {
++        dense_output_enabled_ = enabled;
++        if (!enabled) {
++            dense_data_.clear();
++            dense_points_.clear();
++            dense_points_.shrink_to_fit();
++            last_dense_timestamp_ = -1.0;
++        }
++    }
++
+     void PointCloudObservation::reset() {
+         filter_data_.clear();
+         dense_data_.clear();
+diff --git a/src/localization/observation/point_cloud.h b/src/localization/observation/point_cloud.h
+index 1577405..f20b65d 100644
+--- a/src/localization/observation/point_cloud.h
++++ b/src/localization/observation/point_cloud.h
+@@ -46,6 +46,7 @@ namespace small_point_slam::observation {
+ #endif
+         );
+         void initialize_data(const std::vector<common::PointStamped> &pointcloud);
++        void set_dense_output_enabled(bool enabled);
+         void reset();
+         // During initialization, buffered points are counted but NOT added to
+         // the map yet. They are added in finish_initialization() so that the
+@@ -99,6 +100,7 @@ namespace small_point_slam::observation {
+         // the map in finish_initialization() so that the map is built in the
+         // final (gravity-aligned) world frame.
+         std::vector<FilteredPoint> init_points_;
++        bool dense_output_enabled_ = true;
+ 
+         bool build_residual(PointPlane &point_plane);
+         bool update_filter_once(ESKF &filter);
+diff --git a/src/localization/small_point_slam/performance_stats.h b/src/localization/small_point_slam/performance_stats.h
+index b37d5ee..a94d530 100644
+--- a/src/localization/small_point_slam/performance_stats.h
++++ b/src/localization/small_point_slam/performance_stats.h
+@@ -7,11 +7,77 @@
+ #pragma once
+ 
+ #include <pch.h>
++#include <thread>
++
++#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64))
++#include <intrin.h>
++#elif defined(__i386__) || defined(__x86_64__)
++#include <x86intrin.h>
++#endif
++
++#if defined(_WIN32) && !defined(_M_IX86) && !defined(_M_X64)
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#endif
+ 
+ namespace small_point_slam {
+ 
+ #ifdef USE_PERFORMANCE_STATS
+ 
++    namespace performance_clock {
++
++        inline uint64_t tick() {
++#if defined(_M_IX86) || defined(_M_X64) || defined(__i386__) || defined(__x86_64__)
++            _mm_lfence();
++            const uint64_t value = __rdtsc();
++            _mm_lfence();
++            return value;
++#elif defined(__aarch64__)
++            uint64_t value;
++            asm volatile("isb; mrs %0, cntvct_el0" : "=r"(value));
++            return value;
++#elif defined(_WIN32)
++            LARGE_INTEGER value{};
++            QueryPerformanceCounter(&value);
++            return static_cast<uint64_t>(value.QuadPart);
++#else
++            return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
++                    std::chrono::steady_clock::now().time_since_epoch()).count());
++#endif
++        }
++
++        inline double nanoseconds_per_tick() {
++#if defined(_M_IX86) || defined(_M_X64) || defined(__i386__) || defined(__x86_64__)
++            // Calibrate once. Sleeping avoids turning the one-time calibration
++            // itself into tens of thousands of clock_gettime calls under
++            // instrumentation while still measuring the actual elapsed time.
++            const auto wall_start = std::chrono::steady_clock::now();
++            const uint64_t tick_start = tick();
++            std::this_thread::sleep_for(std::chrono::milliseconds(2));
++            const auto wall_end = std::chrono::steady_clock::now();
++            const uint64_t elapsed_ticks = tick() - tick_start;
++            const double elapsed_ns = std::chrono::duration<double, std::nano>(
++                    wall_end - wall_start).count();
++            return elapsed_ticks == 0 ? 1.0 : elapsed_ns / static_cast<double>(elapsed_ticks);
++#elif defined(__aarch64__)
++            uint64_t frequency;
++            asm volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
++            return frequency == 0 ? 1.0 : 1.0e9 / static_cast<double>(frequency);
++#elif defined(_WIN32)
++            LARGE_INTEGER frequency{};
++            QueryPerformanceFrequency(&frequency);
++            return frequency.QuadPart <= 0
++                           ? 1.0
++                           : 1.0e9 / static_cast<double>(frequency.QuadPart);
++#else
++            return 1.0;
++#endif
++        }
++
++    }  // namespace performance_clock
++
+     enum class PerfTimer : size_t {
+         DataPreprocessing,
+         // DataPreprocessing 的子阶段
+@@ -164,23 +230,30 @@ namespace small_point_slam {
+ 
+     class PerformanceStats {
+     public:
+-        PerformanceStats() {
++        PerformanceStats() : nanoseconds_per_tick_(performance_clock::nanoseconds_per_tick()) {
+             // 预分配所有timer
+             time_stats_.resize(static_cast<size_t>(PerfTimer::Count));
+         }
+ 
+         // 内联函数，减少函数调用开销
+         void start_timer(PerfTimer timer) {
+-            start_times_[static_cast<size_t>(timer)] = std::chrono::high_resolution_clock::now();
++            const auto index = static_cast<size_t>(timer);
++            timer_active_[index] = true;
++            start_times_[index] = performance_clock::tick();
+         }
+ 
+         void end_timer(PerfTimer timer) {
+-            auto end = std::chrono::high_resolution_clock::now();
+-            auto idx = static_cast<size_t>(timer);
+-            auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(
+-                                    end - start_times_[idx])
+-                                    .count();
+-            time_stats_[idx].add(static_cast<double>(duration));
++            const auto idx = static_cast<size_t>(timer);
++            if (!timer_active_[idx]) {
++                return;
++            }
++            timer_active_[idx] = false;
++            const uint64_t end = performance_clock::tick();
++            const uint64_t elapsed_ticks = end >= start_times_[idx]
++                                                   ? end - start_times_[idx]
++                                                   : 0;
++            time_stats_[idx].add(
++                    static_cast<double>(elapsed_ticks) * nanoseconds_per_tick_);
+         }
+ 
+ 
+@@ -225,6 +298,7 @@ namespace small_point_slam {
+                 stat = TimeStat{};
+             }
+             point_stats_ = PointCloudStats{};
++            timer_active_.fill(false);
+         }
+ 
+         [[nodiscard]] const TimeStat &get_time_stat(PerfTimer timer) const {
+@@ -246,9 +320,11 @@ namespace small_point_slam {
+         }
+ 
+ 
+-        std::array<std::chrono::high_resolution_clock::time_point, static_cast<size_t>(PerfTimer::Count)> start_times_;
++        std::array<uint64_t, static_cast<size_t>(PerfTimer::Count)> start_times_{};
++        std::array<bool, static_cast<size_t>(PerfTimer::Count)> timer_active_{};
+         std::vector<TimeStat> time_stats_;
+         PointCloudStats point_stats_;
++        double nanoseconds_per_tick_ = 1.0;
+     };
+ 
+ // 使用枚举的宏
 diff --git a/standalone/CMakeLists.txt b/standalone/CMakeLists.txt
 new file mode 100644
-index 0000000..cf2a955
+index 0000000..f459da8
 --- /dev/null
 +++ b/standalone/CMakeLists.txt
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,62 @@
 +cmake_minimum_required(VERSION 3.24)
 +
 +find_package(Eigen3 CONFIG REQUIRED)
 +find_package(TBB REQUIRED)
 +find_package(small_gicp CONFIG REQUIRED)
++
++find_package(unordered_dense CONFIG QUIET)
++if(NOT TARGET unordered_dense::unordered_dense)
++    include(FetchContent)
++    FetchContent_Declare(
++        unordered_dense
++        URL https://github.com/martinus/unordered_dense/archive/refs/tags/v4.9.2.tar.gz
++        URL_HASH SHA256=abe3b267cbec3094bd7ca84a9990d7723a8d3dda141e08c67e295e3175f6ee28
++        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
++    )
++    set(ANKERL_ENABLE_EXAMPLE OFF CACHE BOOL "Disable unordered_dense examples" FORCE)
++    FetchContent_MakeAvailable(unordered_dense)
++endif()
 +
 +set(NAVIGATION_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 +
@@ -32,6 +263,7 @@ index 0000000..cf2a955
 +    Eigen3::Eigen
 +    TBB::tbb
 +    small_gicp::small_gicp
++    unordered_dense::unordered_dense
 +    yaml-cpp::yaml-cpp
 +    spdlog::spdlog
 +)
@@ -99,10 +331,10 @@ index 0000000..8a01f58
 +}  // namespace common
 diff --git a/standalone/include/pch.h b/standalone/include/pch.h
 new file mode 100644
-index 0000000..02a7272
+index 0000000..98c1393
 --- /dev/null
 +++ b/standalone/include/pch.h
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,42 @@
 +#pragma once
 +
 +#include <Eigen/Core>
@@ -118,6 +350,7 @@ index 0000000..02a7272
 +#include <tbb/parallel_for.h>
 +#include <tbb/parallel_sort.h>
 +#include <yaml-cpp/yaml.h>
++#include <ankerl/unordered_dense.h>
 +
 +#include <algorithm>
 +#include <array>
@@ -142,24 +375,8 @@ index 0000000..02a7272
 +#include <stdexcept>
 +#include <string>
 +#include <string_view>
-+#include <unordered_map>
-+#include <unordered_set>
 +#include <utility>
 +#include <vector>
-+
-+// The private project uses unordered_dense from its global dependency bundle.
-+// This isolated LIO build only needs the standard map API, so keep that private
-+// dependency out of the benchmark adapter.
-+namespace ankerl::unordered_dense {
-+template <class Key, class Value, class Hash = std::hash<Key>,
-+          class Equal = std::equal_to<Key>,
-+          class Allocator = std::allocator<std::pair<const Key, Value>>>
-+using map = std::unordered_map<Key, Value, Hash, Equal, Allocator>;
-+
-+template <class Key, class Hash = std::hash<Key>, class Equal = std::equal_to<Key>,
-+          class Allocator = std::allocator<Key>>
-+using set = std::unordered_set<Key, Hash, Equal, Allocator>;
-+}  // namespace ankerl::unordered_dense
 diff --git a/standalone/main.cpp b/standalone/main.cpp
 new file mode 100644
 index 0000000..8c06fb1
@@ -343,10 +560,10 @@ index 0000000..e2f759b
 +};
 diff --git a/standalone/small_point_slam_engine.cpp b/standalone/small_point_slam_engine.cpp
 new file mode 100644
-index 0000000..6f939ea
+index 0000000..42e5f8d
 --- /dev/null
 +++ b/standalone/small_point_slam_engine.cpp
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,199 @@
 +#include "small_point_slam_engine.hpp"
 +
 +#include <algorithm>
@@ -372,7 +589,7 @@ index 0000000..6f939ea
 +    return result;
 +}
 +
-+enum class EventType { None, Imu, Point, DensePoint };
++enum class EventType { None, Imu, Point };
 +
 +struct NextEvent {
 +    EventType type{EventType::None};
@@ -401,6 +618,9 @@ index 0000000..6f939ea
 +
 +    point_cloud_.initialize(&parameters_, body_from_lidar_rotation,
 +                            body_from_lidar_translation, &performance_stats_);
++    // Dense points are a visualization-only output. The benchmark consumes
++    // poses and timings, so avoid transforming and retaining every raw point.
++    point_cloud_.set_dense_output_enabled(false);
 +    imu_.initialize(&parameters_, body_from_imu_rotation, &performance_stats_);
 +    estimator_.reset();
 +}
@@ -461,12 +681,10 @@ index 0000000..6f939ea
 +        // points extend into the future. Do not advance through those points
 +        // until an IMU sample is available to order against them, otherwise
 +        // the following IMU samples would be incorrectly discarded as old.
-+        return imu_.has_data() && point_cloud_.has_filter_data() &&
-+               point_cloud_.has_dense_data();
++        return imu_.has_data() && point_cloud_.has_filter_data();
 +    };
 +
-+    while (drain ? (imu_.has_data() || point_cloud_.has_filter_data() ||
-+                    point_cloud_.has_dense_data())
++    while (drain ? (imu_.has_data() || point_cloud_.has_filter_data())
 +                 : normal_ready()) {
 +        NextEvent next;
 +        const auto consider = [&next](EventType type, double timestamp) {
@@ -475,8 +693,6 @@ index 0000000..6f939ea
 +        if (imu_.has_data()) consider(EventType::Imu, imu_.timestamp());
 +        if (point_cloud_.has_filter_data())
 +            consider(EventType::Point, point_cloud_.filter_timestamp());
-+        if (point_cloud_.has_dense_data())
-+            consider(EventType::DensePoint, point_cloud_.dense_timestamp());
 +        if (next.type == EventType::None) break;
 +
 +        observation::UpdateResult result = observation::UpdateResult::Updated;
@@ -491,8 +707,6 @@ index 0000000..6f939ea
 +            result = point_cloud_.run_update_once(estimator_, process_noise_,
 +                                                  current_timestamp_, false,
 +                                                  unused_visual_points);
-+        } else {
-+            point_cloud_.run_dense_once(estimator_.kf, dense_cloud_);
 +        }
 +        if (result == observation::UpdateResult::PredictionFailed) {
 +            throw std::runtime_error("Small Point SLAM filter prediction failed");
@@ -551,10 +765,10 @@ index 0000000..6f939ea
 +}  // namespace small_point_slam::standalone
 diff --git a/standalone/small_point_slam_engine.hpp b/standalone/small_point_slam_engine.hpp
 new file mode 100644
-index 0000000..ae8ce33
+index 0000000..f3a0bdd
 --- /dev/null
 +++ b/standalone/small_point_slam_engine.hpp
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,51 @@
 +#pragma once
 +
 +#include "localization/observation/imu.h"
@@ -595,7 +809,6 @@ index 0000000..ae8ce33
 +    observation::ImuObservation imu_;
 +    observation::PointCloudObservation point_cloud_;
 +    Eigen::Matrix<State::ValueType, State::DIM, State::DIM> process_noise_;
-+    std::vector<Eigen::Vector3f> dense_cloud_;
 +    std::array<double, static_cast<std::size_t>(PerfTimer::Count)> previous_time_ns_{};
 +    double initialization_timestamp_{};
 +    std::size_t initialization_map_size_{};

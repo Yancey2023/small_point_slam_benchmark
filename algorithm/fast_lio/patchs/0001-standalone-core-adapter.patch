@@ -1,18 +1,13 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 5f91a33..f8c50f9 100644
+index 5f91a33..afbff5d 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,89 +1,41 @@
+@@ -1,89 +1,56 @@
 -cmake_minimum_required(VERSION 2.8.3)
 -project(fast_lio)
-+cmake_minimum_required(VERSION 3.24)
- 
+-
 -SET(CMAKE_BUILD_TYPE "Debug")
-+find_package(Eigen3 CONFIG REQUIRED)
-+find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
-+find_package(OpenMP REQUIRED)
-+find_package(Threads REQUIRED)
- 
+-
 -ADD_COMPILE_OPTIONS(-std=c++14 )
 -ADD_COMPILE_OPTIONS(-std=c++14 )
 -set( CMAKE_CXX_FLAGS "-std=c++14 -O3" )
@@ -43,8 +38,22 @@ index 5f91a33..f8c50f9 100644
 -  endif()
 -else()
 -  add_definitions(-DMP_PROC_NUM=1)
--endif()
--
++cmake_minimum_required(VERSION 3.24)
++
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
++find_package(OpenMP REQUIRED)
++find_package(Threads REQUIRED)
++
++include(ProcessorCount)
++ProcessorCount(FAST_LIO_PROCESSOR_COUNT)
++set(FAST_LIO_PARALLEL_THREADS 1)
++if(FAST_LIO_PROCESSOR_COUNT GREATER 4)
++    set(FAST_LIO_PARALLEL_THREADS 3)
++elseif(FAST_LIO_PROCESSOR_COUNT GREATER 3)
++    set(FAST_LIO_PARALLEL_THREADS 2)
+ endif()
+ 
 -find_package(OpenMP QUIET)
 -set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 -set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   ${OpenMP_C_FLAGS}")
@@ -99,7 +108,13 @@ index 5f91a33..f8c50f9 100644
 +    OpenMP::OpenMP_CXX
 +    Threads::Threads
 +    ${PCL_LIBRARIES}
++)
++target_compile_definitions(fast_lio_algorithm PRIVATE
++    MP_PROC_NUM=${FAST_LIO_PARALLEL_THREADS}
  )
++if(FAST_LIO_PARALLEL_THREADS GREATER 1)
++    target_compile_definitions(fast_lio_algorithm PRIVATE MP_EN)
++endif()
  
 -catkin_package(
 -  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
@@ -648,10 +663,10 @@ index 0000000..e49bbd8
 +};
 diff --git a/standalone/fast_lio_engine.cpp b/standalone/fast_lio_engine.cpp
 new file mode 100644
-index 0000000..7e92566
+index 0000000..39690fc
 --- /dev/null
 +++ b/standalone/fast_lio_engine.cpp
-@@ -0,0 +1,372 @@
+@@ -0,0 +1,376 @@
 +#include "fast_lio_engine.hpp"
 +
 +#include "IMU_Processing.hpp"
@@ -897,6 +912,10 @@ index 0000000..7e92566
 +        const auto started = std::chrono::steady_clock::now();
 +        selected_points_->clear();
 +        selected_normals_->clear();
++#ifdef MP_EN
++        omp_set_num_threads(MP_PROC_NUM);
++#pragma omp parallel for
++#endif
 +        for (std::size_t index = 0; index < down_body_->size(); ++index) {
 +            PointType& body = down_body_->points[index];
 +            PointType& world = down_world_->points[index];
