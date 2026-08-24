@@ -73,7 +73,7 @@ describe('readPerformance', () => {
     expect(result.metrics.every((metric) => Boolean(metric.description))).toBe(true)
     expect(result.metrics.every((metric) => Boolean(metric.groupDescription))).toBe(true)
     expect(result.metrics.find((metric) => metric.id === 'algorithm_cpu_time_ms')?.description)
-      .toContain('多个核心')
+      .toContain('所有CPU核心')
     expect(result.metrics.filter((metric) => metric.defaultSelected).map((metric) => metric.id))
       .toEqual(['algorithm_process_time_ms', 'algorithm_cpu_time_ms', 'peak_memory_mb'])
     expect(result.metrics.find((metric) => metric.id === 'stage:imu_preprocess:mean_ms')?.label)
