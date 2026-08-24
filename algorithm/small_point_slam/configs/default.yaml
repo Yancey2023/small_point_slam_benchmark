@@ -1,4 +1,5 @@
 algorithm: small_point_slam
+parallel_threads: 4
 
 point_filter_num: 1
 min_range_m: 0.5

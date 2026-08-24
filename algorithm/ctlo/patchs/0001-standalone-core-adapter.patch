@@ -1,0 +1,365 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 551bfc9..efdedce 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,42 +1,28 @@
+-cmake_minimum_required(VERSION 3.1)
+-project(ctlo)
+-set(CMAKE_CXX_STANDARD 14)
+-set(CMAKE_BUILD_TYPE "Release" CACHE STRING "set build type to release" FORCE)
++cmake_minimum_required(VERSION 3.24)
+ 
+-find_package(catkin REQUIRED COMPONENTS
+-  roscpp
+-  rospy
+-  rosbag
+-  std_msgs
+-  geometry_msgs
+-  nav_msgs
+-  sensor_msgs
+-  tf
+-)
++find_package(Ceres CONFIG REQUIRED)
++find_package(PCL REQUIRED COMPONENTS common)
++find_package(OpenMP REQUIRED)
+ 
+-find_package(Ceres REQUIRED)
+-find_package(PCL REQUIRED)
+-find_package(Eigen3 REQUIRED)
+-find_package(OpenMP)
+-if (OPENMP_FOUND)
+-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
++add_library(ctlo_algorithm INTERFACE)
++target_include_directories(ctlo_algorithm INTERFACE include ${PCL_INCLUDE_DIRS})
++target_link_libraries(ctlo_algorithm INTERFACE Ceres::ceres ${PCL_LIBRARIES})
++if(OpenMP_CXX_FOUND)
++  target_link_libraries(ctlo_algorithm INTERFACE OpenMP::OpenMP_CXX)
++  target_compile_definitions(ctlo_algorithm INTERFACE
++    OPENMPTHREAD=${SLAM_BENCHMARK_PARALLEL_THREADS}
++  )
+ endif()
+ 
+-catkin_package(
+-   INCLUDE_DIRS include
+-#  LIBRARIES ctlo
+-   CATKIN_DEPENDS roscpp rospy std_msgs geometry_msgs nav_msgs
+-   DEPENDS EIGEN3 PCL
+-#  DEPENDS system_lib
+-)
+-
+-include_directories(
+-  include
+-  ${catkin_INCLUDE_DIRS}
+-  ${PCL_INCLUDE_DIRS}
+-  ${CERES_INCLUDE_DIRS}
++add_executable(ctlo_benchmark standalone/ctlo_adapter.cpp standalone/main.cpp)
++target_link_libraries(ctlo_benchmark PRIVATE
++  ctlo_algorithm
++  slam_benchmark::core
++  yaml-cpp::yaml-cpp
++  spdlog::spdlog
+ )
+-
+-add_executable(lidar_odometry src/lidar_odometry_node.cpp)
+-target_link_libraries(lidar_odometry ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES}  ${OpenMP_CXX_FLAGS})
+\ No newline at end of file
++if(MSVC)
++  target_compile_options(ctlo_benchmark PRIVATE /W4 /utf-8)
++else()
++  target_compile_options(ctlo_benchmark PRIVATE -Wall -Wextra -Wpedantic)
++endif()
+diff --git a/include/lidar_odometry.hpp b/include/lidar_odometry.hpp
+index a45a291..bb88f7d 100644
+--- a/include/lidar_odometry.hpp
++++ b/include/lidar_odometry.hpp
+@@ -6,6 +6,9 @@
+ #include "point/feature_processor.hpp"
+ #include "point/ndt3.hpp"
+ 
++#include <chrono>
++#include <functional>
++
+ namespace ctlo {
+ class LidarOdometry {
+  public:
+@@ -18,10 +21,15 @@ class LidarOdometry {
+   transform::Rigid3d current_pose_;
+   transform::Rigid3d delta_pose_;
+   map::ActiveFeatureMap map_;
++  std::function<void(const char*, double)> timing_callback_;
+ 
+  public:
+   const transform::Rigid3d& currentPose() const { return current_pose_; }
+ 
++  void setTimingCallback(std::function<void(const char*, double)> callback) {
++    timing_callback_ = std::move(callback);
++  }
++
+   const pcl::PointCloud<point::RPoint>& groundPoints() const {
+     return feature_processor_.groundPoints();
+   }
+@@ -51,29 +59,34 @@ class LidarOdometry {
+   }
+ 
+   bool process(const pcl::PointCloud<pcl::PointXYZI>& original_point_cloud) {
+-    time_counter::tick("total");
+-    time_counter::tick("feature");
++    const auto feature_started = std::chrono::steady_clock::now();
+     feature_processor_.process(original_point_cloud);
+-    time_counter::tack("feature");
++    reportTiming("lidar_preprocess", feature_started);
+ 
+     auto begin_pose = current_pose_;
+     current_pose_ = begin_pose * delta_pose_;
+-    time_counter::tick("location");
++    const auto registration_started = std::chrono::steady_clock::now();
+     map_.locate(edgeFeatures(), planeFeatures(), begin_pose, current_pose_);
+-    time_counter::tack("location");
+-    std::cout << "begin: " << begin_pose << std::endl;
+-    std::cout << "end: " << current_pose_ << std::endl;
++    reportTiming("registration", registration_started);
+ 
+-    time_counter::tick("update");
++    const auto update_started = std::chrono::steady_clock::now();
+     map_.update(edgeFeatures(), planeFeatures(), edgePoints(), planePoints(),
+                 begin_pose, current_pose_);
+-    time_counter::tack("update");
+-    time_counter::tock("total");
++    reportTiming("map_update", update_started);
+ 
+     delta_pose_ = transform::delta(begin_pose, current_pose_);
+     feature_processor_.undistortPoints(
+         transform::delta(current_pose_, begin_pose).cast<float>());
+     return true;
+   }
++
++ private:
++  void reportTiming(const char* stage,
++                    const std::chrono::steady_clock::time_point& started) const {
++    if (!timing_callback_) return;
++    const double duration_ms = std::chrono::duration<double, std::milli>(
++        std::chrono::steady_clock::now() - started).count();
++    timing_callback_(stage, duration_ms);
++  }
+ };
+-}  // namespace ctlo
+\ No newline at end of file
++}  // namespace ctlo
+diff --git a/include/map/active_feature_map.hpp b/include/map/active_feature_map.hpp
+index af6e185..744bb3b 100644
+--- a/include/map/active_feature_map.hpp
++++ b/include/map/active_feature_map.hpp
+@@ -9,7 +9,9 @@
+ #include "../point/ndt3.hpp"
+ #include "../solver/ct_pose_solver.hpp"
+ 
+-#define OPENMPTHREAD 6
++#ifndef OPENMPTHREAD
++#define OPENMPTHREAD 1
++#endif
+ 
+ namespace ctlo {
+ namespace map {
+@@ -67,8 +69,12 @@ class ActiveFeatureMap {
+                        max_iteration_ - iter - 1, common::getNormal,
+                        source_planes, target_planes, plane_normals,
+                        plane_distortions, plane_weights);
+-      std::cout << "edge_correlation: " << source_edges.size()
+-                << ", plane_correlation: " << source_planes.size() << std::endl;
++      // Ceres rejects zero-row dynamic residual blocks. The first scan has no
++      // map correspondences by definition; keep its predicted pose and let the
++      // update step initialize the active map.
++      if (source_edges.empty() && source_planes.empty()) {
++        return false;
++      }
+       solver::CTPoseSolver solver(begin_pose, end_pose);
+       solver.addEdgesResidual(source_edges, target_edges, edge_principles,
+                               edge_distortions, edge_weights);
+@@ -139,8 +145,7 @@ class ActiveFeatureMap {
+     weights.clear();
+ #ifdef OPENMPTHREAD
+     std::mutex mutex;
+-#pragma omp parallel for num_threads(OPENMPTHREAD) \
+-    schedule(guided, OPENMPTHREAD)
++#pragma omp parallel for schedule(guided, OPENMPTHREAD)
+ #endif
+     for (size_t n = 0; n < points.size(); ++n) {
+       const auto& point = points[n];
+@@ -198,6 +203,7 @@ class ActiveFeatureMap {
+ 
+   static bool ifKeyFrame(const Container<point::Ndt3f>& ndts,
+                          const voxel::VoxelGrid<point::Ndt3f, Container>& map) {
++    if (ndts.empty()) return false;
+     size_t miss = 0;
+     for (const auto& ndt : ndts) {
+       if (map.get(ndt) == std::numeric_limits<size_t>::max()) ++miss;
+@@ -207,4 +213,4 @@ class ActiveFeatureMap {
+   }
+ };
+ }  // namespace map
+-}  // namespace ctlo
+\ No newline at end of file
++}  // namespace ctlo
+diff --git a/include/point/feature_processor.hpp b/include/point/feature_processor.hpp
+index c20a1fd..d6b47e1 100644
+--- a/include/point/feature_processor.hpp
++++ b/include/point/feature_processor.hpp
+@@ -122,13 +122,6 @@ class FeatureProcessor {
+     markNongroundPoints();
+     getPointsCurvature();
+     getAllPoints();
+-    std::cout << "ground: " << ground_points_.size()
+-              << ", segment: " << segment_points_.size()
+-              << ", outlier: " << outlier_points_.size()
+-              << ", edge_feature: " << edge_features_.size()
+-              << ", plane_feature: " << plane_features_.size()
+-              << ", edge: " << edge_points_.size()
+-              << ", plane: " << plane_points_.size() << std::endl;
+     return true;
+   }
+ 
+@@ -488,4 +481,4 @@ class FeatureProcessor {
+   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+ };
+ }  // namespace point
+-}  // namespace ctlo
+\ No newline at end of file
++}  // namespace ctlo
+diff --git a/standalone/ctlo_adapter.cpp b/standalone/ctlo_adapter.cpp
+new file mode 100644
+index 0000000..8ed17e3
+--- /dev/null
++++ b/standalone/ctlo_adapter.cpp
+@@ -0,0 +1,89 @@
++#include "ctlo_adapter.hpp"
++
++#include <spdlog/spdlog.h>
++#include <yaml-cpp/yaml.h>
++#include <omp.h>
++
++#include <chrono>
++#include <cmath>
++#include <ranges>
++#include <stdexcept>
++
++slam_benchmark::InitializationResult CtloAdapter::initialize(
++    std::span<const slam_benchmark::SensorDefinition> sensors,
++    const std::filesystem::path& config_path,
++    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true});
++    if (!compatibility) return compatibility;
++    const auto lidar = std::ranges::find(
++        sensors, slam_benchmark::SensorType::Lidar,
++        &slam_benchmark::SensorDefinition::type);
++    if (lidar == sensors.end()) {
++        throw std::runtime_error("CTLO requires one LiDAR");
++    }
++    const YAML::Node root = YAML::LoadFile(config_path.string());
++    const int parallel_threads = root["parallel_threads"]
++        ? root["parallel_threads"].as<int>()
++        : OPENMPTHREAD;
++    if (parallel_threads <= 0) {
++        throw std::runtime_error("parallel_threads must be positive");
++    }
++    omp_set_dynamic(0);
++    omp_set_num_threads(parallel_threads);
++    const auto& transform = lidar->calibration.body_from_sensor;
++    Eigen::Matrix3d rotation;
++    rotation << transform[0], transform[1], transform[2],
++        transform[4], transform[5], transform[6],
++        transform[8], transform[9], transform[10];
++    const ctlo::transform::Rigid3d body_from_lidar(
++        Eigen::Vector3d(transform[3], transform[7], transform[11]),
++        Eigen::Quaterniond(rotation));
++    lidar_from_body_ = body_from_lidar.inversed();
++    sink_ = &sink;
++    odometry_.setTimingCallback([this](const char* stage, double duration_ms) {
++        sink_->report_timing({current_timestamp_, stage, duration_ms});
++    });
++    spdlog::info("CTLO standalone adapter initialized with {} OpenMP compute threads",
++                 parallel_threads);
++    return {};
++}
++
++void CtloAdapter::process(const slam_benchmark::SensorSample& sample) {
++    const auto* source = std::get_if<slam_benchmark::PointCloud>(&sample.payload);
++    if (source == nullptr) return;
++    current_timestamp_ = sample.timestamp_ns;
++
++    const auto started = std::chrono::steady_clock::now();
++    pcl::PointCloud<pcl::PointXYZI> cloud;
++    cloud.reserve(source->points.size());
++    for (const auto& point : source->points) {
++        if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
++            continue;
++        }
++        pcl::PointXYZI converted;
++        converted.x = point.x;
++        converted.y = point.y;
++        converted.z = point.z;
++        converted.intensity = point.intensity;
++        cloud.push_back(converted);
++    }
++    const double conversion_ms = std::chrono::duration<double, std::milli>(
++        std::chrono::steady_clock::now() - started).count();
++    sink_->report_timing({sample.timestamp_ns, "lidar_preprocess", conversion_ms});
++
++    if (cloud.empty()) return;
++    odometry_.process(cloud);
++    const auto state = odometry_.currentPose() * lidar_from_body_;
++    const Eigen::Quaterniond quaternion(state.rotation());
++    slam_benchmark::Pose pose;
++    pose.timestamp_ns = sample.timestamp_ns;
++    pose.translation_m = {state.translation().x(), state.translation().y(), state.translation().z()};
++    pose.rotation_xyzw = {quaternion.x(), quaternion.y(), quaternion.z(), quaternion.w()};
++    trajectory_.push_back(pose);
++    sink_->report_realtime_pose(pose);
++}
++
++void CtloAdapter::finalize() {
++    sink_->report_final_trajectory(trajectory_);
++}
+diff --git a/standalone/ctlo_adapter.hpp b/standalone/ctlo_adapter.hpp
+new file mode 100644
+index 0000000..870600b
+--- /dev/null
++++ b/standalone/ctlo_adapter.hpp
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <lidar_odometry.hpp>
++#include <slam_benchmark/algorithm.hpp>
++
++class CtloAdapter final : public slam_benchmark::SlamAlgorithm {
++public:
++    [[nodiscard]] std::string_view name() const noexcept override { return "ctlo"; }
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++                    const std::filesystem::path& config_path,
++                    slam_benchmark::ResultSink& sink) override;
++    void process(const slam_benchmark::SensorSample& sample) override;
++    void finalize() override;
++
++private:
++    slam_benchmark::ResultSink* sink_{};
++    ctlo::LidarOdometry odometry_;
++    ctlo::transform::Rigid3d lidar_from_body_ =
++        ctlo::transform::Rigid3d::Identity();
++    slam_benchmark::TimestampNs current_timestamp_{};
++    slam_benchmark::Trajectory trajectory_;
++};
+diff --git a/standalone/main.cpp b/standalone/main.cpp
+new file mode 100644
+index 0000000..987b6eb
+--- /dev/null
++++ b/standalone/main.cpp
+@@ -0,0 +1,8 @@
++#include "ctlo_adapter.hpp"
++
++#include <slam_benchmark/application.hpp>
++
++int main(int argc, char** argv) {
++    CtloAdapter algorithm;
++    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
++}

@@ -66,7 +66,11 @@ int run_benchmark_main(int argc, char** argv, SlamAlgorithm& algorithm) {
         RosbagDatasetReader reader;
         BenchmarkRunner runner({output_path, std::chrono::milliseconds{100},
                                 run_mode(arguments)});
-        runner.run(algorithm, reader, *bag, config_path);
+        const auto summary = runner.run(algorithm, reader, *bag, config_path);
+        if (!summary.initialization) {
+            spdlog::warn("dataset is not compatible with {}: {}", algorithm.name(),
+                         summary.initialization.reason);
+        }
         return 0;
 #else
         (void)algorithm;

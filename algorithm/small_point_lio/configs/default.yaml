@@ -13,8 +13,6 @@ acc_norm: 9.81
 map_voxel_size_m: 0.2
 init_map_size: 10
 estimate_extrinsics: false
-extrinsic_T: [0.0, 0.0, 0.0]
-extrinsic_R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 lidar_measurement_noise: 0.01
 accelerometer_noise: 0.1
 gyroscope_noise: 0.1

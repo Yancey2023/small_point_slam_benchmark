@@ -1,0 +1,5 @@
+set(_source "${CMAKE_CURRENT_SOURCE_DIR}/source/PV-LIO")
+if(NOT EXISTS "${_source}/CMakeLists.txt")
+    message(FATAL_ERROR "Run scripts/download_algorithms.py pv_lio and scripts/patch_algorithms.py apply pv_lio")
+endif()
+add_subdirectory("${_source}" pv-lio)

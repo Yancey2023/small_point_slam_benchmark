@@ -1,0 +1,17 @@
+algorithm: pv_lio
+parallel_threads: 4
+filter_size_scan_m: 0.2
+filter_size_map_m: 0.2
+map_voxel_size_m: 0.5
+max_iterations: 4
+estimate_extrinsics: false
+max_layer: 2
+max_points_per_voxel: 100
+min_eigenvalue_ratio: 0.01
+range_noise_m: 0.02
+angle_noise_deg: 0.05
+gyroscope_noise: 0.1
+accelerometer_noise: 0.1
+gyroscope_bias_noise: 0.0001
+accelerometer_bias_noise: 0.0001
+layer_point_sizes: [20, 10, 10]

@@ -3,7 +3,9 @@ import { fileURLToPath, URL } from 'node:url'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  base: mode === 'static' ? './' : '/',
+  publicDir: mode === 'static' ? 'public' : false,
   plugins: [vue()],
   resolve: {
     alias: {
@@ -17,4 +19,4 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:4174',
     },
   },
-})
+}))

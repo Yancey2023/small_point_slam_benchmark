@@ -199,7 +199,7 @@ index 266b3fd..bb783d2 100755
          Estimator();
  
 diff --git a/src/small_point_lio/parameters.cpp b/src/small_point_lio/parameters.cpp
-index f3b7685..17facec 100755
+index f3b7685..7a2d24f 100755
 --- a/src/small_point_lio/parameters.cpp
 +++ b/src/small_point_lio/parameters.cpp
 @@ -11,17 +11,17 @@ namespace small_point_lio {
@@ -226,7 +226,7 @@ index f3b7685..17facec 100755
          check_satu = node["check_satu"].as<bool>();
          fix_gravity_direction = node["fix_gravity_direction"].as<bool>();
          satu_acc = node["satu_acc"].as<double>() * 0.99;
-@@ -29,11 +29,11 @@ namespace small_point_lio {
+@@ -29,33 +29,21 @@ namespace small_point_lio {
          acc_norm = node["acc_norm"].as<double>();
  
          // 地图
@@ -234,14 +234,22 @@ index f3b7685..17facec 100755
 +        map_resolution = node["map_voxel_size_m"].as<float>();
          init_map_size = node["init_map_size"].as<size_t>();
  
-         // 雷达与IMU相对位姿
+-        // 雷达与IMU相对位姿
 -        extrinsic_est_en = node["extrinsic_est_en"].as<bool>();
+-        extrinsic_T << node["extrinsic_T"][0].as<double>(),
+-                node["extrinsic_T"][1].as<double>(),
+-                node["extrinsic_T"][2].as<double>();
+-        extrinsic_R << node["extrinsic_R"][0].as<double>(),
+-                node["extrinsic_R"][1].as<double>(),
+-                node["extrinsic_R"][2].as<double>(),
+-                node["extrinsic_R"][3].as<double>(),
+-                node["extrinsic_R"][4].as<double>(),
+-                node["extrinsic_R"][5].as<double>(),
+-                node["extrinsic_R"][6].as<double>(),
+-                node["extrinsic_R"][7].as<double>(),
+-                node["extrinsic_R"][8].as<double>();
++        // 是否在线估计雷达与 IMU 外参；初值由初始化接口提供。
 +        extrinsic_est_en = node["estimate_extrinsics"].as<bool>();
-         extrinsic_T << node["extrinsic_T"][0].as<double>(),
-                 node["extrinsic_T"][1].as<double>(),
-                 node["extrinsic_T"][2].as<double>();
-@@ -48,14 +48,14 @@ namespace small_point_lio {
-                 node["extrinsic_R"][8].as<double>();
  
          // 滤波器参数
 -        laser_point_cov = node["laser_point_cov"].as<double>();
@@ -260,13 +268,82 @@ index f3b7685..17facec 100755
          plane_threshold = node["plane_threshold"].as<double>();
          match_sqaured = node["match_sqaured"].as<double>();
  
-@@ -63,4 +63,4 @@ namespace small_point_lio {
+@@ -63,4 +51,4 @@ namespace small_point_lio {
          publish_odometry_without_downsample = node["publish_odometry_without_downsample"].as<bool>();
      }
  
 -}// namespace small_point_lio
 \ No newline at end of file
 +}// namespace small_point_lio
+diff --git a/src/small_point_lio/parameters.h b/src/small_point_lio/parameters.h
+index cae8d49..6cd2376 100755
+--- a/src/small_point_lio/parameters.h
++++ b/src/small_point_lio/parameters.h
+@@ -29,8 +29,6 @@ namespace small_point_lio {
+         size_t init_map_size;
+ 
+         bool extrinsic_est_en;
+-        Eigen::Vector3d extrinsic_T;
+-        Eigen::Matrix3d extrinsic_R;
+ 
+         double laser_point_cov;
+         double imu_meas_acc_cov;
+diff --git a/src/small_point_lio/preprocess.cpp b/src/small_point_lio/preprocess.cpp
+index 59387be..06b32d7 100755
+--- a/src/small_point_lio/preprocess.cpp
++++ b/src/small_point_lio/preprocess.cpp
+@@ -7,6 +7,8 @@
+ #include "preprocess.h"
+ #include "parameters.h"
+ 
++#include <chrono>
++
+ namespace small_point_lio {
+ 
+     void Preprocess::reset() {
+@@ -18,7 +20,7 @@ namespace small_point_lio {
+         last_timestamp_dense_point = -1;
+     }
+ 
+-    void Preprocess::on_point_cloud_callback(const std::vector<common::Point> &pointcloud) {
++    double Preprocess::on_point_cloud_callback(const std::vector<common::Point> &pointcloud) {
+         dense_points.clear();
+         dense_points.reserve(pointcloud.size());
+         filtered_points.clear();
+@@ -40,8 +42,12 @@ namespace small_point_lio {
+             }
+             filtered_points.push_back(point);
+         }
++        double downsampling_duration_ms = 0.0;
+         if (parameters->space_downsample) {
++            const auto started = std::chrono::steady_clock::now();
+             downsampler.voxelgrid_sampling(filtered_points, processed_pointcloud, parameters->space_downsample_leaf_size);
++            downsampling_duration_ms = std::chrono::duration<double, std::milli>(
++                std::chrono::steady_clock::now() - started).count();
+         } else {
+             processed_pointcloud = std::move(filtered_points);
+         }
+@@ -61,6 +67,7 @@ namespace small_point_lio {
+             last_timestamp_lidar = processed_pointcloud.back().timestamp;
+             point_deque.insert(point_deque.end(), processed_pointcloud.begin(), processed_pointcloud.end());
+         }
++        return downsampling_duration_ms;
+     }
+ 
+     void Preprocess::on_imu_callback(const common::ImuMsg &imu_msg) {
+diff --git a/src/small_point_lio/preprocess.h b/src/small_point_lio/preprocess.h
+index 59d40e7..99d7352 100755
+--- a/src/small_point_lio/preprocess.h
++++ b/src/small_point_lio/preprocess.h
+@@ -32,7 +32,7 @@ namespace small_point_lio {
+         Preprocess() = default;
+ 
+         void reset();
+-        void on_point_cloud_callback(const std::vector<common::Point> &pointcloud);
++        double on_point_cloud_callback(const std::vector<common::Point> &pointcloud);
+         void on_imu_callback(const common::ImuMsg &imu_msg);
+     };
+ 
 diff --git a/src/small_point_lio/small_ivox.h b/src/small_point_lio/small_ivox.h
 index f420ea1..4a24bbf 100755
 --- a/src/small_point_lio/small_ivox.h
@@ -326,10 +403,10 @@ index f420ea1..4a24bbf 100755
      }
  
 diff --git a/src/small_point_lio/small_point_lio.cpp b/src/small_point_lio/small_point_lio.cpp
-index a12b96c..210dfcf 100755
+index a12b96c..b6a4b75 100755
 --- a/src/small_point_lio/small_point_lio.cpp
 +++ b/src/small_point_lio/small_point_lio.cpp
-@@ -6,6 +6,8 @@
+@@ -6,18 +6,27 @@
  
  #include "small_point_lio.h"
  
@@ -337,8 +414,43 @@ index a12b96c..210dfcf 100755
 +
  namespace small_point_lio {
  
-     SmallPointLio::SmallPointLio(const YAML::Node &node) {
-@@ -41,15 +43,25 @@ namespace small_point_lio {
+-    SmallPointLio::SmallPointLio(const YAML::Node &node) {
++    SmallPointLio::SmallPointLio(
++            const YAML::Node &node,
++            const Eigen::Vector3d &lidar_translation_in_imu,
++            const Eigen::Matrix3d &lidar_rotation_in_imu) {
+         // init param
+         parameters.read_parameters(node);
+         preprocess.parameters = &parameters;
+         estimator.parameters = &parameters;
+-        estimator.Lidar_T_wrt_IMU = parameters.extrinsic_T.cast<state::value_type>();
+-        estimator.Lidar_R_wrt_IMU = parameters.extrinsic_R.cast<state::value_type>();
++        estimator.Lidar_T_wrt_IMU =
++                lidar_translation_in_imu.cast<state::value_type>();
++        estimator.Lidar_R_wrt_IMU =
++                lidar_rotation_in_imu.cast<state::value_type>();
+         if (parameters.extrinsic_est_en) {
+-            estimator.kf.x.offset_T_L_I = parameters.extrinsic_T.cast<state::value_type>();
+-            estimator.kf.x.offset_R_L_I = parameters.extrinsic_R.cast<state::value_type>();
++            estimator.kf.x.offset_T_L_I =
++                    lidar_translation_in_imu.cast<state::value_type>();
++            estimator.kf.x.offset_R_L_I =
++                    lidar_rotation_in_imu.cast<state::value_type>();
+         }
+         Q = estimator.process_noise_cov();
+         estimator.imu_acceleration_scale = parameters.gravity.norm() / parameters.acc_norm;
+@@ -32,8 +41,8 @@ namespace small_point_lio {
+         is_init = false;
+     }
+ 
+-    void SmallPointLio::on_point_cloud_callback(const std::vector<common::Point> &pointcloud) {
+-        preprocess.on_point_cloud_callback(pointcloud);
++    double SmallPointLio::on_point_cloud_callback(const std::vector<common::Point> &pointcloud) {
++        return preprocess.on_point_cloud_callback(pointcloud);
+     }
+ 
+     void SmallPointLio::on_imu_callback(const common::ImuMsg &imu_msg) {
+@@ -41,15 +50,25 @@ namespace small_point_lio {
      }
  
      void SmallPointLio::handle_once() {
@@ -364,7 +476,7 @@ index a12b96c..210dfcf 100755
                  // fix gravity direction
                  if (parameters.fix_gravity_direction) {
                      estimator.kf.x.gravity = Eigen::Matrix<state::value_type, 3, 1>::Zero();
-@@ -76,6 +88,7 @@ namespace small_point_lio {
+@@ -76,6 +95,7 @@ namespace small_point_lio {
                  preprocess.dense_point_deque.clear();
                  preprocess.imu_deque.clear();
                  is_init = true;
@@ -372,7 +484,7 @@ index a12b96c..210dfcf 100755
              }
              return;
          }
-@@ -107,11 +120,17 @@ namespace small_point_lio {
+@@ -107,11 +127,17 @@ namespace small_point_lio {
                  time_current = point_lidar_frame.timestamp;
  
                  // predict
@@ -390,7 +502,7 @@ index a12b96c..210dfcf 100755
  
                  // publish odometry
                  if (parameters.publish_odometry_without_downsample) {
-@@ -119,7 +138,9 @@ namespace small_point_lio {
+@@ -119,7 +145,9 @@ namespace small_point_lio {
                  }
  
                  // map incremental
@@ -400,7 +512,7 @@ index a12b96c..210dfcf 100755
  
                  preprocess.point_deque.pop_front();
              } else {
-@@ -131,18 +152,29 @@ namespace small_point_lio {
+@@ -131,18 +159,29 @@ namespace small_point_lio {
                  time_current = imu_msg.timestamp;
  
                  // predict
@@ -430,7 +542,7 @@ index a12b96c..210dfcf 100755
          if (is_publish_odometry) {
              if (!parameters.publish_odometry_without_downsample) {
                  publish_odometry(time_current);
-@@ -164,6 +196,10 @@ namespace small_point_lio {
+@@ -164,6 +203,10 @@ namespace small_point_lio {
          this->odometry_callback = odometry_callback;
      }
  
@@ -442,10 +554,10 @@ index a12b96c..210dfcf 100755
          if (odometry_callback) {
              common::Odometry odometry;
 diff --git a/src/small_point_lio/small_point_lio.h b/src/small_point_lio/small_point_lio.h
-index 0bbe490..478408d 100644
+index 0bbe490..493072f 100644
 --- a/src/small_point_lio/small_point_lio.h
 +++ b/src/small_point_lio/small_point_lio.h
-@@ -23,6 +23,7 @@ namespace small_point_lio {
+@@ -23,16 +23,19 @@ namespace small_point_lio {
          std::vector<Eigen::Vector3f> pointcloud_odom_frame;
          std::function<void(const std::vector<Eigen::Vector3f> &pointcloud)> pointcloud_callback;
          std::function<void(const common::Odometry &odometry)> odometry_callback;
@@ -453,7 +565,21 @@ index 0bbe490..478408d 100644
          bool is_init = false;
  
      public:
-@@ -42,6 +43,8 @@ namespace small_point_lio {
+         Eigen::Matrix<state::value_type, state::DIM, state::DIM> Q;
+ 
+-        explicit SmallPointLio(const YAML::Node &node);
++        SmallPointLio(const YAML::Node &node,
++                      const Eigen::Vector3d &lidar_translation_in_imu,
++                      const Eigen::Matrix3d &lidar_rotation_in_imu);
+ 
+         void reset();
+ 
+-        void on_point_cloud_callback(const std::vector<common::Point> &pointcloud);
++        double on_point_cloud_callback(const std::vector<common::Point> &pointcloud);
+ 
+         void on_imu_callback(const common::ImuMsg &imu_msg);
+ 
+@@ -42,6 +45,8 @@ namespace small_point_lio {
  
          void set_odometry_callback(const std::function<void(const common::Odometry &odometry)> &odometry_callback);
  
@@ -478,12 +604,13 @@ index 0000000..377a74c
 +}
 diff --git a/standalone/small_point_lio_adapter.cpp b/standalone/small_point_lio_adapter.cpp
 new file mode 100644
-index 0000000..ab28935
+index 0000000..cd061a6
 --- /dev/null
 +++ b/standalone/small_point_lio_adapter.cpp
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,110 @@
 +#include "small_point_lio_adapter.hpp"
 +
++#include <slam_benchmark/calibration.hpp>
 +#include <spdlog/spdlog.h>
 +#include <yaml-cpp/yaml.h>
 +
@@ -507,10 +634,13 @@ index 0000000..ab28935
 +}
 +}  // namespace
 +
-+void SmallPointLioAdapter::initialize(
++slam_benchmark::InitializationResult SmallPointLioAdapter::initialize(
 +    std::span<const slam_benchmark::SensorDefinition> sensors,
 +    const std::filesystem::path& config_path,
 +    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true, .imu = true, .point_time = true});
++    if (!compatibility) return compatibility;
 +    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
 +                                         &slam_benchmark::SensorDefinition::type);
 +    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
@@ -518,21 +648,25 @@ index 0000000..ab28935
 +    if (lidar == sensors.end() || imu == sensors.end())
 +        throw std::runtime_error("Small Point LIO requires one LiDAR and one IMU");
 +
-+    YAML::Node config = YAML::LoadFile(config_path.string());
-+    const auto& transform = lidar->calibration.body_from_sensor;
-+    config["extrinsic_T"] = std::vector<double>{transform[3], transform[7], transform[11]};
-+    config["extrinsic_R"] = std::vector<double>{
-+        transform[0], transform[1], transform[2], transform[4], transform[5],
-+        transform[6], transform[8], transform[9], transform[10]};
++    const YAML::Node config = YAML::LoadFile(config_path.string());
++    const auto transform =
++        slam_benchmark::target_from_source(imu->calibration, lidar->calibration);
++    Eigen::Vector3d translation(transform[3], transform[7], transform[11]);
++    Eigen::Matrix3d rotation;
++    rotation << transform[0], transform[1], transform[2],
++        transform[4], transform[5], transform[6],
++        transform[8], transform[9], transform[10];
 +
 +    sink_ = &sink;
-+    algorithm_ = std::make_unique<small_point_lio::SmallPointLio>(config);
++    algorithm_ = std::make_unique<small_point_lio::SmallPointLio>(
++        config, translation, rotation);
 +    algorithm_->set_odometry_callback(
 +        [this](const common::Odometry& odometry) { accept_odometry(odometry); });
 +    algorithm_->set_timing_callback([this](double timestamp, const char* stage, double duration) {
 +        sink_->report_timing({nanoseconds(timestamp), stage, duration});
 +    });
 +    spdlog::info("Small Point LIO standalone adapter initialized");
++    return {};
 +}
 +
 +void SmallPointLioAdapter::process(const slam_benchmark::SensorSample& sample) {
@@ -563,9 +697,9 @@ index 0000000..ab28935
 +                              Eigen::Vector3f(source.x, source.y, source.z)});
 +        }
 +        sink_->report_timing({sample.timestamp_ns, "lidar_preprocess", elapsed_ms(started)});
-+        started = std::chrono::steady_clock::now();
-+        algorithm_->on_point_cloud_callback(points);
-+        sink_->report_timing({sample.timestamp_ns, "downsampling", elapsed_ms(started)});
++        const double downsampling_duration = algorithm_->on_point_cloud_callback(points);
++        sink_->report_timing(
++            {sample.timestamp_ns, "downsampling", downsampling_duration});
 +    }
 +    algorithm_->handle_once();
 +}
@@ -586,7 +720,7 @@ index 0000000..ab28935
 +}
 diff --git a/standalone/small_point_lio_adapter.hpp b/standalone/small_point_lio_adapter.hpp
 new file mode 100644
-index 0000000..11e7b8d
+index 0000000..e3cb1fa
 --- /dev/null
 +++ b/standalone/small_point_lio_adapter.hpp
 @@ -0,0 +1,24 @@
@@ -601,7 +735,7 @@ index 0000000..11e7b8d
 +class SmallPointLioAdapter final : public slam_benchmark::SlamAlgorithm {
 +public:
 +    [[nodiscard]] std::string_view name() const noexcept override { return "small_point_lio"; }
-+    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
 +                    const std::filesystem::path& config_path,
 +                    slam_benchmark::ResultSink& sink) override;
 +    void process(const slam_benchmark::SensorSample& sample) override;

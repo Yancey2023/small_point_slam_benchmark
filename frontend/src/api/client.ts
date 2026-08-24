@@ -4,8 +4,12 @@ import type {
   CreateRunRequest,
   PerformanceResponse,
   RunSnapshot,
+  StaticReport,
   TrajectoryResponse,
 } from '../../shared/contracts'
+import { isStaticReport } from '@/runtime'
+
+let staticReportPromise: Promise<StaticReport> | null = null
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -17,27 +21,59 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return value
 }
 
-export function fetchCatalog(): Promise<CatalogResponse> {
-  return request('/api/catalog')
+function staticReportUrl(): string {
+  return new URL(`${import.meta.env.BASE_URL}report.json`, document.baseURI).toString()
 }
 
-export function fetchResults(): Promise<ResultsResponse> {
-  return request('/api/results')
+async function loadStaticReport(): Promise<StaticReport> {
+  staticReportPromise ??= request<StaticReport>(staticReportUrl()).then((report) => {
+    if (report.schemaVersion !== 1) {
+      throw new Error('静态报告版本不受支持，请重新生成网页数据')
+    }
+    return report
+  })
+  return staticReportPromise
+}
+
+function staticOnlyError(): Error {
+  return new Error('静态报告不支持启动或取消 benchmark')
+}
+
+export async function fetchCatalog(): Promise<CatalogResponse> {
+  return isStaticReport ? (await loadStaticReport()).catalog : request('/api/catalog')
+}
+
+export async function fetchResults(): Promise<ResultsResponse> {
+  return isStaticReport
+    ? { results: (await loadStaticReport()).results }
+    : request('/api/results')
 }
 
 export function createRun(payload: CreateRunRequest): Promise<RunSnapshot> {
+  if (isStaticReport) return Promise.reject(staticOnlyError())
   return request('/api/runs', { method: 'POST', body: JSON.stringify(payload) })
 }
 
 export function cancelRun(runId: string): Promise<RunSnapshot> {
+  if (isStaticReport) return Promise.reject(staticOnlyError())
   return request(`/api/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
 }
 
-export function fetchResultTrajectory(resultId: string): Promise<TrajectoryResponse> {
+export async function fetchResultTrajectory(resultId: string): Promise<TrajectoryResponse> {
+  if (isStaticReport) {
+    const result = (await loadStaticReport()).results.find((item) => item.id === resultId)
+    if (!result?.trajectory) throw new Error('静态报告中没有该轨迹')
+    return result.trajectory
+  }
   return request(`/api/results/${encodeURIComponent(resultId)}/trajectory`)
 }
 
-export function fetchResultPerformance(resultId: string): Promise<PerformanceResponse> {
+export async function fetchResultPerformance(resultId: string): Promise<PerformanceResponse> {
+  if (isStaticReport) {
+    const result = (await loadStaticReport()).results.find((item) => item.id === resultId)
+    if (!result?.performance) throw new Error('静态报告中没有该性能结果')
+    return result.performance
+  }
   return request(`/api/results/${encodeURIComponent(resultId)}/performance`)
 }
 
@@ -46,6 +82,7 @@ export function observeRun(
   onSnapshot: (snapshot: RunSnapshot) => void,
   onError: () => void,
 ): () => void {
+  if (isStaticReport) throw staticOnlyError()
   const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`)
   source.addEventListener('snapshot', (event) => {
     onSnapshot(JSON.parse((event as MessageEvent<string>).data) as RunSnapshot)

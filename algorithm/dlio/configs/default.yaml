@@ -1,0 +1,12 @@
+algorithm: dlio
+filter_size_scan_m: 0.2
+filter_size_map_m: 0.2
+map_voxel_size_m: 0.5
+max_iterations: 6
+deskew: true
+parallel_threads: 4
+correspondence_randomness: 20
+max_correspondence_distance_m: 1.0
+keyframe_distance_m: 0.1
+keyframe_rotation_deg: 1.0
+submap_keyframes: 25

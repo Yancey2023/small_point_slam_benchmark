@@ -1,0 +1,20 @@
+schema_version: 1
+name: LIGO
+description: Tightly coupled LiDAR-inertial-GNSS odometry for globally referenced localization and mapping.
+authors: [Dongjiao He]
+license: BSD-3-Clause
+repository:
+  name: LIGO.
+  url: https://github.com/Joanna-HE/LIGO..git
+  ref: 987b88cd9ee3183c6e62231008c8cb26cf1786d6
+dependencies:
+  - {name: GTSAM, url: https://github.com/borglab/gtsam.git}
+  - {name: gnss_comm, url: https://github.com/HKUST-Aerial-Robotics/gnss_comm.git}
+paper:
+  title: "LIGO: Tightly Coupled LiDAR-Inertial-GNSS Odometry based on a Hierarchy Fusion Framework for Global Localization with Real-time Mapping"
+  url: https://doi.org/10.1109/TRO.2024.3351332
+sensors: [lidar, imu, gnss]
+timing_stages: [lidar_preprocess, imu_preprocess, gnss_preprocess, undistortion, downsampling, state_propagation, map_search, filter_update, map_update]
+integration:
+  status: blocked
+  reason: The upstream tightly coupled estimator requires raw GNSS observations, ephemerides and receiver PVT beyond core GnssFix.

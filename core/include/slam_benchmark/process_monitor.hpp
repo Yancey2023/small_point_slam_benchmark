@@ -16,6 +16,9 @@ struct CpuUsage {
 class ProcessMonitor {
 public:
     ProcessMonitor();
+    // Cumulative user + kernel CPU time consumed by all threads in this process.
+    // Unlike wall time, concurrent work on multiple cores is accumulated.
+    [[nodiscard]] static double process_cpu_time_seconds() noexcept;
     [[nodiscard]] CpuUsage sample();
 
 private:

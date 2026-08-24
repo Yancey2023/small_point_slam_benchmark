@@ -14,6 +14,7 @@ const stateCopy: Record<string, string> = {
   queued: '排队中',
   running: '正在认真计算',
   completed: '全部完成',
+  skipped: '没有兼容任务',
   failed: '有任务失败',
   cancelled: '已取消',
 }
@@ -54,12 +55,15 @@ watch(
     <div class="job-list">
       <div v-for="job in run.jobs" :key="job.id" class="job-row">
         <span class="job-state" :class="job.status">
-          {{ job.status === 'completed' ? '✓' : job.status === 'failed' ? '!' : '•' }}
+          {{ job.status === 'completed' ? '✓' : job.status === 'skipped' ? '–' : job.status === 'failed' ? '!' : '•' }}
         </span>
         <span class="job-name">{{ job.datasetName }} · {{ job.algorithmName }}</span>
         <span class="job-progress">
           <template v-if="job.status === 'running' && job.expectedMessages">
             {{ job.processedMessages.toLocaleString() }} / {{ job.expectedMessages.toLocaleString() }}
+          </template>
+          <template v-else-if="job.status === 'skipped'">
+            {{ job.compatibilityReason ?? stateCopy[job.status] }}
           </template>
           <template v-else>{{ stateCopy[job.status] }}</template>
         </span>
@@ -103,6 +107,7 @@ watch(
 }
 
 .status-orbit.completed { border-color: #a7d5c6; animation: none; }
+.status-orbit.skipped { border-color: #d3bd8b; animation: none; }
 .status-orbit.failed { border-color: #e8a3a3; animation: none; }
 
 .orbit-core {
@@ -118,6 +123,7 @@ watch(
   animation: counter-spin 10s linear infinite;
 }
 .completed .orbit-core { color: #548d7c; background: #dcf5ec; animation: none; }
+.skipped .orbit-core { color: #8a7650; background: #f5ecd8; animation: none; }
 
 .orbit-dot { position: absolute; width: 11px; height: 11px; border-radius: 50%; }
 .dot-one { top: 4px; left: 20px; background: #8fb0bf; }
@@ -171,9 +177,16 @@ h2 { margin: 7px 0 3px; font-size: 22px; }
 }
 .job-state.running { color: #557789; background: #dfeaf0; }
 .job-state.completed { color: #568c7d; background: #dcf4ec; }
+.job-state.skipped { color: #8a7650; background: #f5ecd8; }
 .job-state.failed { color: #a85e62; background: #ffe1e1; }
 .job-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.job-progress { color: var(--ink-muted); }
+.job-progress {
+  max-width: 280px;
+  overflow: hidden;
+  color: var(--ink-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .logs { width: 100%; margin-top: 14px; color: var(--ink-muted); font-size: 11px; }
 .logs summary { padding: 7px 0; cursor: pointer; font-weight: 700; }

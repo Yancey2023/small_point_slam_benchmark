@@ -6,6 +6,10 @@ add_executable(dataset_manifest_test dataset_manifest_test.cpp)
 target_link_libraries(dataset_manifest_test PRIVATE slam_benchmark::core)
 add_test(NAME dataset_manifest_test COMMAND dataset_manifest_test)
 
+add_executable(calibration_test calibration_test.cpp)
+target_link_libraries(calibration_test PRIVATE slam_benchmark::core)
+add_test(NAME calibration_test COMMAND calibration_test)
+
 if(TARGET rosbag_io)
     add_executable(rosbag_dataset_reader_test rosbag_dataset_reader_test.cpp)
     target_link_libraries(rosbag_dataset_reader_test PRIVATE slam_benchmark::core rosbag_io)

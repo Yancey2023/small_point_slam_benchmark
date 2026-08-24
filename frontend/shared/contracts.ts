@@ -1,4 +1,4 @@
-export type RunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type RunStatus = 'queued' | 'running' | 'completed' | 'skipped' | 'failed' | 'cancelled'
 export type RunMode = 'full_speed' | 'realtime'
 
 export interface RunModeCatalogItem {
@@ -54,6 +54,7 @@ export interface RunJob {
   progress: number | null
   outputDirectory: string
   error: string | null
+  compatibilityReason: string | null
   startedAt: string | null
   completedAt: string | null
 }
@@ -111,10 +112,12 @@ export interface TrajectoryResponse {
 export interface PerformanceMetric {
   id: string
   label: string
+  description?: string
   value: number
   unit: 'ms' | '%' | 'MB' | 'count'
   group: string
   groupLabel: string
+  groupDescription?: string
   defaultSelected: boolean
   lowerIsBetter: boolean
   selectionId?: string
@@ -126,4 +129,16 @@ export interface PerformanceResponse {
   runModeLabel: string
   cpuDescription: string
   metrics: PerformanceMetric[]
+}
+
+export interface StaticBenchmarkResult extends BenchmarkResult {
+  trajectory?: TrajectoryResponse
+  performance?: PerformanceResponse
+}
+
+export interface StaticReport {
+  schemaVersion: 1
+  generatedAt: string
+  catalog: CatalogResponse
+  results: StaticBenchmarkResult[]
 }

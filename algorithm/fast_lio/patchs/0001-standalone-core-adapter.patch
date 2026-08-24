@@ -1,13 +1,18 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 5f91a33..afbff5d 100644
+index 5f91a33..1a0b5ab 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,89 +1,56 @@
+@@ -1,89 +1,47 @@
 -cmake_minimum_required(VERSION 2.8.3)
 -project(fast_lio)
--
++cmake_minimum_required(VERSION 3.24)
+ 
 -SET(CMAKE_BUILD_TYPE "Debug")
--
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
++find_package(OpenMP REQUIRED)
++find_package(Threads REQUIRED)
+ 
 -ADD_COMPILE_OPTIONS(-std=c++14 )
 -ADD_COMPILE_OPTIONS(-std=c++14 )
 -set( CMAKE_CXX_FLAGS "-std=c++14 -O3" )
@@ -38,22 +43,8 @@ index 5f91a33..afbff5d 100644
 -  endif()
 -else()
 -  add_definitions(-DMP_PROC_NUM=1)
-+cmake_minimum_required(VERSION 3.24)
-+
-+find_package(Eigen3 CONFIG REQUIRED)
-+find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
-+find_package(OpenMP REQUIRED)
-+find_package(Threads REQUIRED)
-+
-+include(ProcessorCount)
-+ProcessorCount(FAST_LIO_PROCESSOR_COUNT)
-+set(FAST_LIO_PARALLEL_THREADS 1)
-+if(FAST_LIO_PROCESSOR_COUNT GREATER 4)
-+    set(FAST_LIO_PARALLEL_THREADS 3)
-+elseif(FAST_LIO_PROCESSOR_COUNT GREATER 3)
-+    set(FAST_LIO_PARALLEL_THREADS 2)
- endif()
- 
+-endif()
+-
 -find_package(OpenMP QUIET)
 -set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 -set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   ${OpenMP_C_FLAGS}")
@@ -109,10 +100,10 @@ index 5f91a33..afbff5d 100644
 +    Threads::Threads
 +    ${PCL_LIBRARIES}
 +)
-+target_compile_definitions(fast_lio_algorithm PRIVATE
-+    MP_PROC_NUM=${FAST_LIO_PARALLEL_THREADS}
++target_compile_definitions(fast_lio_algorithm PUBLIC
++    MP_PROC_NUM=${SLAM_BENCHMARK_PARALLEL_THREADS}
  )
-+if(FAST_LIO_PARALLEL_THREADS GREATER 1)
++if(SLAM_BENCHMARK_PARALLEL_THREADS GREATER 1)
 +    target_compile_definitions(fast_lio_algorithm PRIVATE MP_EN)
 +endif()
  
@@ -267,10 +258,10 @@ index d4b302e..661a7fe 100644
  #define Multi_Thread_Rebuild_Point_Num 1500
 diff --git a/include/ikd-Tree/thread_compat.hpp b/include/ikd-Tree/thread_compat.hpp
 new file mode 100644
-index 0000000..8f13c15
+index 0000000..e4d003f
 --- /dev/null
 +++ b/include/ikd-Tree/thread_compat.hpp
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,54 @@
 +#pragma once
 +
 +#ifdef _WIN32
@@ -283,7 +274,11 @@ index 0000000..8f13c15
 +    std::mutex value;
 +};
 +
-+using pthread_t = std::thread;
++struct pthread_t {
++    std::thread value;
++
++    explicit operator bool() const noexcept { return value.joinable(); }
++};
 +
 +inline int pthread_mutex_init(pthread_mutex_t*, const void*) { return 0; }
 +inline int pthread_mutex_destroy(pthread_mutex_t*) { return 0; }
@@ -300,13 +295,13 @@ index 0000000..8f13c15
 +}
 +
 +inline int pthread_create(pthread_t* thread, const void*, void* (*entry)(void*), void* argument) {
-+    *thread = std::thread([entry, argument] { static_cast<void>(entry(argument)); });
++    thread->value = std::thread([entry, argument] { static_cast<void>(entry(argument)); });
 +    return 0;
 +}
 +
 +inline int pthread_join(pthread_t& thread, void**) {
-+    if (thread.joinable()) {
-+        thread.join();
++    if (thread.value.joinable()) {
++        thread.value.join();
 +    }
 +    return 0;
 +}
@@ -485,14 +480,16 @@ index 344d07f..97685b3 100644
      return;
 diff --git a/standalone/fast_lio_adapter.cpp b/standalone/fast_lio_adapter.cpp
 new file mode 100644
-index 0000000..48090a5
+index 0000000..3cd6b21
 --- /dev/null
 +++ b/standalone/fast_lio_adapter.cpp
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,153 @@
 +#include "fast_lio_adapter.hpp"
 +
++#include <slam_benchmark/calibration.hpp>
 +#include <spdlog/spdlog.h>
 +#include <yaml-cpp/yaml.h>
++#include <omp.h>
 +
 +#include <algorithm>
 +#include <chrono>
@@ -517,10 +514,13 @@ index 0000000..48090a5
 +
 +}  // namespace
 +
-+void FastLioAdapter::initialize(
++slam_benchmark::InitializationResult FastLioAdapter::initialize(
 +    std::span<const slam_benchmark::SensorDefinition> sensors,
 +    const std::filesystem::path& config_path,
 +    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true, .imu = true, .point_time = true});
++    if (!compatibility) return compatibility;
 +    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
 +                                         &slam_benchmark::SensorDefinition::type);
 +    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
@@ -530,6 +530,12 @@ index 0000000..48090a5
 +
 +    sink_ = &sink;
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
++    const int parallel_threads = parameter(root, "parallel_threads", MP_PROC_NUM);
++    if (parallel_threads <= 0) {
++        throw std::runtime_error("parallel_threads must be positive");
++    }
++    omp_set_dynamic(0);
++    omp_set_num_threads(parallel_threads);
 +    FastLioEngine::Options options;
 +    options.scan_voxel_size = parameter(root, "filter_size_scan_m", 0.5);
 +    options.map_voxel_size = parameter(root, "filter_size_map_m", 0.5);
@@ -543,7 +549,8 @@ index 0000000..48090a5
 +        parameter(root, "gyroscope_bias_noise", 0.0001));
 +    options.accelerometer_bias_covariance.setConstant(
 +        parameter(root, "accelerometer_bias_noise", 0.0001));
-+    const auto& transform = lidar->calibration.body_from_sensor;
++    const auto transform =
++        slam_benchmark::target_from_source(imu->calibration, lidar->calibration);
 +    options.lidar_rotation << transform[0], transform[1], transform[2], transform[4],
 +        transform[5], transform[6], transform[8], transform[9], transform[10];
 +    options.lidar_translation << transform[3], transform[7], transform[11];
@@ -554,7 +561,9 @@ index 0000000..48090a5
 +        sink_->report_timing({nanoseconds(timestamp), stage, duration});
 +    });
 +    engine_.initialize(options);
-+    spdlog::info("FAST-LIO standalone adapter initialized");
++    spdlog::info("FAST-LIO standalone adapter initialized with {} OpenMP compute threads",
++                 parallel_threads);
++    return {};
 +}
 +
 +void FastLioAdapter::process(const slam_benchmark::SensorSample& sample) {
@@ -630,7 +639,7 @@ index 0000000..48090a5
 +}
 diff --git a/standalone/fast_lio_adapter.hpp b/standalone/fast_lio_adapter.hpp
 new file mode 100644
-index 0000000..e49bbd8
+index 0000000..812f2d5
 --- /dev/null
 +++ b/standalone/fast_lio_adapter.hpp
 @@ -0,0 +1,27 @@
@@ -645,7 +654,7 @@ index 0000000..e49bbd8
 +class FastLioAdapter final : public slam_benchmark::SlamAlgorithm {
 +public:
 +    [[nodiscard]] std::string_view name() const noexcept override { return "fast_lio"; }
-+    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
 +                    const std::filesystem::path& config_path,
 +                    slam_benchmark::ResultSink& sink) override;
 +    void process(const slam_benchmark::SensorSample& sample) override;
@@ -663,10 +672,10 @@ index 0000000..e49bbd8
 +};
 diff --git a/standalone/fast_lio_engine.cpp b/standalone/fast_lio_engine.cpp
 new file mode 100644
-index 0000000..39690fc
+index 0000000..cac92ff
 --- /dev/null
 +++ b/standalone/fast_lio_engine.cpp
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,375 @@
 +#include "fast_lio_engine.hpp"
 +
 +#include "IMU_Processing.hpp"
@@ -913,7 +922,6 @@ index 0000000..39690fc
 +        selected_points_->clear();
 +        selected_normals_->clear();
 +#ifdef MP_EN
-+        omp_set_num_threads(MP_PROC_NUM);
 +#pragma omp parallel for
 +#endif
 +        for (std::size_t index = 0; index < down_body_->size(); ++index) {

@@ -1,0 +1,39 @@
+algorithm: ct_lio
+parallel_threads: 4
+filter_size_scan_m: 0.2
+filter_size_map_m: 0.2
+map_voxel_size_m: 0.5
+max_iterations: 6
+estimate_extrinsics: false
+delay_time: 0.15
+odometry:
+  surf_res: 0.2
+  log_print: false
+  max_num_iteration: 6
+  icpmodel: CT_POINT_TO_PLANE
+  size_voxel_map: 0.5
+  min_distance_points: 0.05
+  max_num_points_in_voxel: 20
+  max_distance: 500.0
+  weight_alpha: 0.9
+  weight_neighborhood: 0.1
+  max_dist_to_plane_icp: 0.3
+  init_num_frames: 20
+  voxel_neighborhood: 1
+  max_number_neighbors: 20
+  threshold_voxel_occupancy: 1
+  estimate_normal_from_neighborhood: true
+  min_number_neighbors: 20
+  power_planarity: 2.0
+  num_closest_neighbors: 1
+  sampling_rate: 1.0
+  ratio_of_nonground: 2
+  max_num_residuals: 2000
+  min_num_residuals: 300
+  motion_compensation: CONTINUOUS
+  beta_location_consistency: 1.0
+  beta_orientation_consistency: 1.0
+  beta_constant_velocity: 0.0
+  beta_small_velocity: 0.0
+  thres_translation_norm: 0.01
+  thres_orientation_norm: 0.1

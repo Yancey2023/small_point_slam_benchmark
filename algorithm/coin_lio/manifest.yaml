@@ -1,0 +1,17 @@
+schema_version: 1
+name: COIN-LIO
+description: Complementary intensity-augmented LiDAR-inertial odometry for geometrically degenerate environments.
+authors: [Patrick Pfreundschuh, Helen Oleynikova, Cesar Cadena, Roland Siegwart, Olov Andersson]
+license: BSD-3-Clause
+repository:
+  name: COIN-LIO
+  url: https://github.com/ethz-asl/COIN-LIO.git
+  ref: 76729cc4feb3649cbd79d28f82d9f62a2c82889b
+dependencies:
+  - {name: IKFoM, url: https://github.com/hku-mars/IKFoM.git}
+  - {name: OpenCV, url: https://github.com/opencv/opencv.git}
+paper:
+  title: "COIN-LIO: Complementary Intensity-Augmented LiDAR Inertial Odometry"
+  url: https://doi.org/10.1109/ICRA57147.2024.10610784
+sensors: [lidar, imu]
+timing_stages: [lidar_preprocess, imu_preprocess, undistortion, intensity_image, downsampling, map_search, photometric_registration, filter_update, intensity_feature, map_update]

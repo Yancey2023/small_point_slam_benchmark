@@ -68,6 +68,7 @@ SensorDefinition parse_sensor(const YAML::Node& node) {
     sensor.topic = node["topic"].as<std::string>();
     sensor.message_type = node["message_type"].as<std::string>("");
     sensor.point_time_field = node["point_time_field"].as<std::string>("time");
+    sensor.intensity_field = node["intensity_field"].as<std::string>("intensity");
 
     const auto calibration = node["calibration"];
     sensor.calibration.body_from_sensor = fixed_array<16>(

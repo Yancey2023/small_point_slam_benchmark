@@ -1,0 +1,2072 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index fdc52f9..19e4ed0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,102 +1,54 @@
+-cmake_minimum_required(VERSION 2.8.3)
+-project(coin_lio)
+-
+-SET(CMAKE_BUILD_TYPE "Release")
+-
+-ADD_COMPILE_OPTIONS(-std=c++14 )
+-set( CMAKE_CXX_FLAGS "-std=c++14 -O3" )
+-
+-add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
+-
+-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions" )
+-set(CMAKE_CXX_STANDARD 14)
+-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+-set(CMAKE_CXX_EXTENSIONS OFF)
+-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -pthread -std=c++0x -std=c++14 -fexceptions -fdiagnostics-color=always")
+-set(CMAKE_EXPORT_COMPILE_COMMANDS "1")
+-
+-message("Current CPU archtecture: ${CMAKE_SYSTEM_PROCESSOR}")
+-if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)" )
+-  include(ProcessorCount)
+-  ProcessorCount(N)
+-  message("Processer number:  ${N}")
+-  if(N GREATER 4)
+-    add_definitions(-DMP_EN)
+-    add_definitions(-DMP_PROC_NUM=3)
+-    message("core for MP: 3")
+-  elseif(N GREATER 3)
+-    add_definitions(-DMP_EN)
+-    add_definitions(-DMP_PROC_NUM=2)
+-    message("core for MP: 2")
+-  else()
+-    add_definitions(-DMP_PROC_NUM=1)
+-  endif()
+-else()
+-  add_definitions(-DMP_PROC_NUM=1)
+-endif()
+-
+-find_package(OpenMP QUIET)
+-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   ${OpenMP_C_FLAGS}")
+-
+-find_package(catkin REQUIRED COMPONENTS
+-  geometry_msgs
+-  nav_msgs
+-  sensor_msgs
+-  roscpp
+-  rospy
+-  std_msgs
+-  pcl_ros
+-  tf
+-  message_generation
+-  eigen_conversions
+-  cv_bridge
++cmake_minimum_required(VERSION 3.24)
++
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d video)
++find_package(OpenMP REQUIRED)
++find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
++find_package(Threads REQUIRED)
++
++add_library(coin_lio_algorithm STATIC
++    include/ikd-Tree/ikd_Tree.cpp
++    src/feature_manager.cpp
++    src/image_processing.cpp
++    src/imu_processing.cpp
++    src/projector.cpp
++    src/use_ikfom.cpp
++    standalone/coin_lio_engine.cpp
+ )
+-
+-find_package(Eigen3 REQUIRED)
+-find_package(PCL 1.8 REQUIRED)
+-find_package(OpenCV REQUIRED)
+-
+-message(Eigen: ${EIGEN3_INCLUDE_DIR})
+-
+-include_directories(
+-	${catkin_INCLUDE_DIRS} 
+-  ${EIGEN3_INCLUDE_DIR}
+-  ${PCL_INCLUDE_DIRS}
+-  ${PYTHON_INCLUDE_DIRS}
+-  ${OpenCV_INCLUDE_DIRS}
+-  include)
+-
+-add_library(${PROJECT_NAME}
+-  include/ikd-Tree/ikd_Tree.cpp
+-  src/preprocess.cpp
+-  src/image_processing.cpp
+-  src/imu_processing.cpp
+-  src/feature_manager.cpp
+-  src/timing.cpp
+-  src/use_ikfom.cpp
+-  src/projector.cpp
++target_include_directories(coin_lio_algorithm PUBLIC
++    include
++    standalone
++    ${OpenCV_INCLUDE_DIRS}
++    ${PCL_INCLUDE_DIRS}
+ )
+-
+-add_message_files(
+-  FILES
+-  Pose6D.msg
++target_link_libraries(coin_lio_algorithm PUBLIC
++    Eigen3::Eigen
++    OpenMP::OpenMP_CXX
++    Threads::Threads
++    ${OpenCV_LIBS}
++    ${PCL_LIBRARIES}
+ )
+-
+-generate_messages(
+- DEPENDENCIES
+- geometry_msgs
++target_compile_definitions(coin_lio_algorithm PUBLIC
++    MP_PROC_NUM=${SLAM_BENCHMARK_PARALLEL_THREADS}
+ )
++if(SLAM_BENCHMARK_PARALLEL_THREADS GREATER 1)
++    target_compile_definitions(coin_lio_algorithm PRIVATE MP_EN)
++endif()
+ 
+-catkin_package(
+-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp std_msgs message_runtime
+-  DEPENDS EIGEN3 PCL
+-  INCLUDE_DIRS
++add_executable(coin_lio_benchmark
++    standalone/main.cpp
++    standalone/coin_lio_adapter.cpp
++)
++target_link_libraries(coin_lio_benchmark PRIVATE
++    coin_lio_algorithm
++    slam_benchmark::core
++    yaml-cpp::yaml-cpp
+ )
+ 
+-add_executable(coin_lio_mapping src/laserMapping.cpp)
+-target_link_libraries(coin_lio_mapping ${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
+-target_include_directories(${PROJECT_NAME} PRIVATE ${PYTHON_INCLUDE_DIRS})
+-
+-add_executable(coin_lio_calibration src/calibration.cpp)
+-target_link_libraries(coin_lio_calibration ${PROJECT_NAME} ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBRARIES})
+\ No newline at end of file
++if(MSVC)
++    target_compile_options(coin_lio_algorithm PRIVATE /W3 /utf-8)
++    target_compile_options(coin_lio_benchmark PRIVATE /W4 /utf-8)
++else()
++    target_compile_options(coin_lio_algorithm PRIVATE -Wall -Wextra)
++    target_compile_options(coin_lio_benchmark PRIVATE -Wall -Wextra -Wpedantic)
++endif()
+diff --git a/include/common_lib.h b/include/common_lib.h
+index 036b2f0..14f8827 100644
+--- a/include/common_lib.h
++++ b/include/common_lib.h
+@@ -1,16 +1,14 @@
+ #ifndef COIN_LIO_COMMON_LIB_H_
+ #define COIN_LIO_COMMON_LIB_H_
+-#include <coin_lio/Pose6D.h>
+ #include <deque>
++#include <array>
++#include <memory>
+ #include <Eigen/Eigen>
+-#include <eigen_conversions/eigen_msg.h>
+ #include <opencv2/core/core.hpp>
+ #include <opencv2/core/eigen.hpp>
+ #include <pcl/point_types.h>
+ #include <pcl/point_cloud.h>
+ #include <so3_math.h>
+-#include <sensor_msgs/Imu.h>
+-#include <std_msgs/Header.h>
+ 
+ using namespace std;
+ using namespace Eigen;
+@@ -34,7 +32,15 @@ using namespace Eigen;
+ #define STD_VEC_FROM_EIGEN(mat)  vector<decltype(mat)::Scalar> (mat.data(), mat.data() + mat.rows() * mat.cols())
+ #define DEBUG_FILE_DIR(name)     (string(string(ROOT_DIR) + "Log/"+ name))
+ 
+-typedef coin_lio::Pose6D Pose6D;
++struct Pose6D {
++    double offset_time{};
++    std::array<double, 3> acc{};
++    std::array<double, 3> gyr{};
++    std::array<double, 3> vel{};
++    std::array<double, 3> pos{};
++    std::array<double, 9> rot{};
++};
++
+ typedef pcl::PointXYZINormal PointType;
+ typedef pcl::PointCloud<PointType> PointCloudXYZI;
+ typedef vector<PointType, Eigen::aligned_allocator<PointType>>  PointVector;
+@@ -46,6 +52,12 @@ typedef Matrix4d M4D;
+ typedef Vector3f V3F;
+ typedef Matrix3f M3F;
+ 
++struct ImuData {
++    double timestamp{};
++    V3D angular_velocity = V3D::Zero();
++    V3D linear_acceleration = V3D::Zero();
++};
++
+ #define MD(a,b)  Matrix<double, (a), (b)>
+ #define VD(a)    Matrix<double, (a), 1>
+ #define MF(a,b)  Matrix<float, (a), (b)>
+@@ -67,7 +79,7 @@ struct MeasureGroup     // Lidar data and imu dates for the curent process
+     double lidar_beg_time;
+     double lidar_end_time;
+     PointCloudXYZI::Ptr lidar;
+-    deque<sensor_msgs::Imu::ConstPtr> imu;
++    deque<std::shared_ptr<const ImuData>> imu;
+ };
+ 
+ struct StatesGroup
+@@ -159,7 +171,7 @@ struct StatesGroup
+ };
+ 
+ struct LidarFrame {
+-    std_msgs::Header header;
++    double timestamp{};
+     cv::Mat img_intensity;
+     cv::Mat img_photo_u8;
+     cv::Mat img_range;
+@@ -302,4 +314,4 @@ double getSubPixelValue(const cv::Mat& img, double x, double y)
+         (1 - xx) * yy * img.ptr<T>(y_upper)[x_lower] + xx * yy * img.ptr<T>(y_upper)[x_upper]);
+ }
+ 
+-#endif // COIN_LIO_COMMON_LIB_H_
+\ No newline at end of file
++#endif // COIN_LIO_COMMON_LIB_H_
+diff --git a/include/feature_manager.h b/include/feature_manager.h
+index 4768702..1593913 100644
+--- a/include/feature_manager.h
++++ b/include/feature_manager.h
+@@ -10,10 +10,6 @@
+ #include <opencv2/opencv.hpp>
+ #include <opencv2/core/eigen.hpp>
+ #include <opencv2/calib3d.hpp>
+-#include <ros/ros.h>
+-#include <sensor_msgs/Image.h>
+-#include <cv_bridge/cv_bridge.h>
+-#include <visualization_msgs/MarkerArray.h>
+ #include "projector.h"
+ 
+ 
+@@ -30,27 +26,39 @@ struct Feature {
+ 
+ class FeatureManager {
+  public:
+-    FeatureManager(ros::NodeHandle& nh, std::shared_ptr<Projector> projector);
++    struct Options {
++        int margin = 10;
++        double min_range = 0.7;
++        double max_range = 30.0;
++        double minimum_gradient = 16.5;
++        double ncc_threshold = 0.7075;
++        double range_threshold = 0.2;
++        int suppression_radius = 10;
++        int patch_size = 5;
++        int feature_count = 60;
++        int maximum_lifetime = 25;
++        std::string selection_mode{"comp"};
++    };
++
++    FeatureManager(const Options& options, std::shared_ptr<Projector> projector);
+     
+     void updateFeatures(const LidarFrame& frame, const std::vector<V3D>& V, const M4D& T_GL);
+ 
+     const std::vector<Feature>& features() const { return features_; }
+ 
+-    const int patchSize() const { return patch_size_; }
++    int patchSize() const { return patch_size_; }
+ 
+-    const double minRange() const { return min_range_; }
++    double minRange() const { return min_range_; }
+ 
+-    const double maxRange() const { return max_range_; }
++    double maxRange() const { return max_range_; }
+ 
+-    const int margin() const { return marg_size_; }
++    int margin() const { return marg_size_; }
+ 
+-    const int nRemoved() const { return n_removed_last_; }
++    int nRemoved() const { return n_removed_last_; }
+ 
+-    const int nAdded() const { return n_added_last_; }
++    int nAdded() const { return n_added_last_; }
+ 
+  private:
+-    void loadParameters(ros::NodeHandle& n);
+-    
+     void detectFeatures(const LidarFrame& frame, const std::vector<V3D>& V, const M4D& T_GL);
+     
+     void detectFeaturesComp( const LidarFrame& frame, const std::vector<V3D>& V, const int n_features, 
+@@ -70,7 +78,6 @@ class FeatureManager {
+ 
+     std::vector<string> feature_modes = {"comp", "strongest", "random"};
+     std::shared_ptr<Projector> projector_;
+-    ros::Publisher moment_pub;
+     std::vector<Feature> features_;
+     Eigen::MatrixXi patch_idx_;
+     cv::Mat img_prev_;
+@@ -88,12 +95,10 @@ class FeatureManager {
+     int num_features_;
+     int max_lifetime_;
+     int marg_size_;
+-    int n_removed_last_;
+-    int n_added_last_;
++    int n_removed_last_{};
++    int n_added_last_{};
+     string mode_;
+-    bool debug_;
+-
+     bool IsFov(const cv::Point2f& pt) const;
+  };
+ 
+- #endif // COIN_LIO_FEATURE_MANAGER_H_
+\ No newline at end of file
++ #endif // COIN_LIO_FEATURE_MANAGER_H_
+diff --git a/include/ikd-Tree/ikd_Tree.h b/include/ikd-Tree/ikd_Tree.h
+index d4b302e..661a7fe 100644
+--- a/include/ikd-Tree/ikd_Tree.h
++++ b/include/ikd-Tree/ikd_Tree.h
+@@ -1,15 +1,15 @@
+ #pragma once
+ #include <stdio.h>
+ #include <queue>
+-#include <pthread.h>
+ #include <chrono>
+ #include <time.h>
+-#include <unistd.h>
+ #include <math.h>
+ #include <algorithm>
+ #include <memory.h>
+ #include <pcl/point_types.h>
+ 
++#include "thread_compat.hpp"
++
+ #define EPSS 1e-6
+ #define Minimal_Unbalanced_Tree_Size 10
+ #define Multi_Thread_Rebuild_Point_Num 1500
+diff --git a/include/ikd-Tree/thread_compat.hpp b/include/ikd-Tree/thread_compat.hpp
+new file mode 100644
+index 0000000..e4d003f
+--- /dev/null
++++ b/include/ikd-Tree/thread_compat.hpp
+@@ -0,0 +1,54 @@
++#pragma once
++
++#ifdef _WIN32
++
++#include <chrono>
++#include <mutex>
++#include <thread>
++
++struct pthread_mutex_t {
++    std::mutex value;
++};
++
++struct pthread_t {
++    std::thread value;
++
++    explicit operator bool() const noexcept { return value.joinable(); }
++};
++
++inline int pthread_mutex_init(pthread_mutex_t*, const void*) { return 0; }
++inline int pthread_mutex_destroy(pthread_mutex_t*) { return 0; }
++inline int pthread_mutex_lock(pthread_mutex_t* mutex) {
++    mutex->value.lock();
++    return 0;
++}
++inline int pthread_mutex_trylock(pthread_mutex_t* mutex) {
++    return mutex->value.try_lock() ? 0 : 1;
++}
++inline int pthread_mutex_unlock(pthread_mutex_t* mutex) {
++    mutex->value.unlock();
++    return 0;
++}
++
++inline int pthread_create(pthread_t* thread, const void*, void* (*entry)(void*), void* argument) {
++    thread->value = std::thread([entry, argument] { static_cast<void>(entry(argument)); });
++    return 0;
++}
++
++inline int pthread_join(pthread_t& thread, void**) {
++    if (thread.value.joinable()) {
++        thread.value.join();
++    }
++    return 0;
++}
++
++inline void usleep(unsigned int microseconds) {
++    std::this_thread::sleep_for(std::chrono::microseconds(microseconds));
++}
++
++#else
++
++#include <pthread.h>
++#include <unistd.h>
++
++#endif
+diff --git a/include/image_processing.h b/include/image_processing.h
+index 4a35c34..d15f899 100644
+--- a/include/image_processing.h
++++ b/include/image_processing.h
+@@ -6,19 +6,31 @@
+ 
+ #include <common_lib.h>
+ #include <opencv2/opencv.hpp>
+-#include "ros/ros.h"
+ 
+ #include "feature_manager.h"
+ #include "projector.h"
+ 
+ class ImageProcessor {
+   public:
+-    ImageProcessor(ros::NodeHandle nh, std::shared_ptr<Projector> projector , std::shared_ptr<FeatureManager> manager);
++    struct Options {
++        bool reflectivity{};
++        bool remove_lines{};
++        bool brightness_filter{true};
++        bool blur{true};
++        double intensity_scale{0.25};
++        int erosion_margin{2};
++        std::vector<int> window{41, 7};
++        std::vector<int> masks;
++        std::vector<double> highpass;
++        std::vector<double> lowpass;
++    };
++
++    ImageProcessor(const Options& options, std::shared_ptr<Projector> projector,
++                   std::shared_ptr<FeatureManager> manager);
+ 
+     void createImages(LidarFrame& frame);
+ 
+   private:
+-    void loadParameters(ros::NodeHandle nh);
+     void removeLines(cv::Mat& img);
+     void filterBrightness(cv::Mat& img);
+     void createMask(const cv::Mat& img, cv::Mat& mask);
+@@ -42,4 +54,4 @@ class ImageProcessor {
+     int erosion_margin_;
+ };
+ 
+-#endif  // COIN_LIO_IMAGE_PROCESSOR_H_
+\ No newline at end of file
++#endif  // COIN_LIO_IMAGE_PROCESSOR_H_
+diff --git a/include/imu_processing.h b/include/imu_processing.h
+index 36fb429..3692830 100644
+--- a/include/imu_processing.h
++++ b/include/imu_processing.h
+@@ -3,7 +3,6 @@
+ #include <omp.h>
+ #include <common_lib.h>
+ #include <IKFoM_toolkit/esekfom/esekfom.hpp>
+-#include <sensor_msgs/Imu.h>
+ #include <unordered_map>
+ 
+ #include "use_ikfom.h"
+@@ -22,7 +21,6 @@ class ImuProcess
+   ~ImuProcess() {}
+ 
+   void Reset();
+-  void Reset(double start_timestamp, const sensor_msgs::ImuConstPtr &lastimu);
+   void set_extrinsic(const V3D &transl, const M3D &rot);
+   void set_extrinsic(const V3D &transl);
+   void set_extrinsic(const MD(4,4) &T);
+@@ -48,7 +46,7 @@ class ImuProcess
+     PointCloudXYZI &pcl_in_out, std::vector<M4D>& vec_T_Li_Lk, std::vector<int>& vec_idx);
+ 
+   PointCloudXYZI::Ptr cur_pcl_un_;
+-  sensor_msgs::ImuConstPtr last_imu_;
++  std::shared_ptr<const ImuData> last_imu_;
+   vector<Pose6D> IMUpose;
+   vector<M3D>    v_rot_pcl_;
+   M3D Lidar_R_wrt_IMU;
+diff --git a/include/projector.h b/include/projector.h
+index a614c0c..b8f2535 100644
+--- a/include/projector.h
++++ b/include/projector.h
+@@ -5,11 +5,20 @@
+ #define COIN_LIO_PROJECTOR_H_
+ 
+ #include <common_lib.h>
+-#include "ros/ros.h"
++
++struct ProjectorOptions {
++    std::size_t rows{};
++    std::size_t cols{};
++    double beam_offset_m{};
++    int column_shift{};
++    std::vector<int> pixel_shift_by_row;
++    std::vector<double> elevation_angles_deg;
++    bool destagger{};
++};
+ 
+ class Projector {
+   public:
+-    Projector(ros::NodeHandle nh);
++    explicit Projector(ProjectorOptions options);
+ 
+     void createImages(LidarFrame& frame) const;
+     void projectionJacobian(const V3D& p, Eigen::MatrixXd& du_dp) const;
+@@ -23,7 +32,6 @@ class Projector {
+ 
+ 
+   private:
+-    void loadParameters(ros::NodeHandle nh);
+     size_t vectorIndexFromRowCol(const size_t row, const size_t col) const;
+     double beam_offset_m_;
+     int u_shift_;
+@@ -37,4 +45,4 @@ class Projector {
+     bool destagger_;
+ };
+ 
+-#endif  // COIN_LIO_PROJECTOR_H_
+\ No newline at end of file
++#endif  // COIN_LIO_PROJECTOR_H_
+diff --git a/src/feature_manager.cpp b/src/feature_manager.cpp
+index b9c1f73..8b12f7b 100644
+--- a/src/feature_manager.cpp
++++ b/src/feature_manager.cpp
+@@ -3,8 +3,27 @@
+ 
+ #include "feature_manager.h"
+ 
+-FeatureManager::FeatureManager(ros::NodeHandle& nh, std::shared_ptr<Projector> projector) : projector_(projector) {
+-    loadParameters(nh);
++#include <stdexcept>
++
++FeatureManager::FeatureManager(const Options& options, std::shared_ptr<Projector> projector)
++    : projector_(std::move(projector)),
++      min_range_(options.min_range),
++      max_range_(options.max_range),
++      thr_gradmin_(options.minimum_gradient),
++      ncc_threshold_(options.ncc_threshold),
++      range_threshold_(options.range_threshold),
++      suppression_radius_(options.suppression_radius),
++      patch_size_(options.patch_size),
++      num_features_(options.feature_count),
++      max_lifetime_(options.maximum_lifetime),
++      marg_size_(options.margin),
++      mode_(options.selection_mode) {
++    if (std::find(feature_modes.begin(), feature_modes.end(), mode_) == feature_modes.end()) {
++        throw std::invalid_argument("invalid COIN-LIO feature selection mode");
++    }
++    if (patch_size_ < 1 || patch_size_ % 2 == 0) {
++        throw std::invalid_argument("COIN-LIO feature patch size must be positive and odd");
++    }
+ 
+     rows_ = projector_->rows();
+     cols_ = projector_->cols();
+@@ -26,32 +45,6 @@ FeatureManager::FeatureManager(ros::NodeHandle& nh, std::shared_ptr<Projector> p
+         }
+     }
+ 
+-    if (debug_) {
+-        moment_pub = nh.advertise<sensor_msgs::Image>("moment_image", 2000);
+-    }
+-}
+-
+-void FeatureManager::loadParameters(ros::NodeHandle& nh) {
+-    nh.param<bool>("publish/debug", debug_, false);
+-    nh.param<int>("image/margin", marg_size_, 10);
+-    nh.param<double>("image/min_range", min_range_, 0.3);
+-    nh.param<double>("image/max_range", max_range_, 20);
+-    nh.param<double>("image/grad_min", thr_gradmin_, 20);
+-    nh.param<double>("image/ncc_threshold", ncc_threshold_, 0.3);
+-    nh.param<double>("image/range_threshold", range_threshold_, 0.2);
+-    nh.param<int>("image/suppression_radius", suppression_radius_, 10);
+-    nh.param<int>("image/patch_size", patch_size_, 5);
+-    nh.param<int>("image/num_features", num_features_, 65);
+-    nh.param<int>("image/max_lifetime", max_lifetime_, 30);
+-    nh.param<string>("image/selection_mode", mode_, "comp");
+-    if (std::find(feature_modes.begin(), feature_modes.end(), mode_) == feature_modes.end()) {
+-        ROS_ERROR("Invalid mode, setting to complementary");
+-        mode_ = "comp";
+-    }
+-    if (patch_size_ % 2 == 0) {
+-        ROS_ERROR("Patch size must be odd, setting to 5");
+-        patch_size_ = 5;
+-    }
+ }
+ 
+ void FeatureManager::updateFeatures(const LidarFrame& frame, const std::vector<V3D>& V, const M4D& T_GL) {
+@@ -82,8 +75,7 @@ void FeatureManager::detectFeatures(const LidarFrame& frame, const std::vector<V
+         detectFeaturesRandom(frame, n_features, features_uv, features_p);
+     }
+     else {
+-        ROS_ERROR("Invalid mode");
+-        return;
++        throw std::logic_error("invalid COIN-LIO feature selection mode");
+     }
+ 
+     features_.reserve(num_features_);
+@@ -127,7 +119,6 @@ void FeatureManager::detectFeaturesComp(const LidarFrame& frame, const std::vect
+     // Mask out pixels close to existing features and image borders
+     cv::Mat valid_mask = frame.img_mask & mask_;
+     #ifdef MP_EN
+-        omp_set_num_threads(MP_PROC_NUM);
+         #pragma omp parallel for
+     #endif
+     for (size_t v = 0; v < frame.img_mask.rows; v++) {
+@@ -170,7 +161,6 @@ void FeatureManager::detectFeaturesComp(const LidarFrame& frame, const std::vect
+     }
+ 
+     #ifdef MP_EN
+-        omp_set_num_threads(MP_PROC_NUM);
+         #pragma omp parallel for
+     #endif
+     for (size_t i = 0; i < candidates.size(); i++) {
+@@ -226,9 +216,6 @@ void FeatureManager::detectFeaturesComp(const LidarFrame& frame, const std::vect
+                         } );
+     }
+ 
+-    cv::Mat moment_col;
+-    cv::cvtColor(frame.img_photo_u8, moment_col, CV_GRAY2RGB);
+-
+     // Select best features for each direction
+     std::vector<int> sorted_indices;
+ 
+@@ -242,14 +229,6 @@ void FeatureManager::detectFeaturesComp(const LidarFrame& frame, const std::vect
+                 continue;
+             }
+             sorted_indices.push_back(i);
+-            // Colorize feature candidates based on score
+-            float score = scores_vec[vec_idx][idx].first;
+-            cv::Mat hsv(1, 1, CV_8UC3, cv::Scalar(score*60, 255, 255));
+-            cv::Mat bgr;
+-            cv::cvtColor(hsv, bgr, CV_HSV2BGR);
+-            cv::Scalar color = cv::Scalar((int)bgr.at<cv::Vec3b>(0, 0)[0],(int)bgr.at<cv::Vec3b>(0, 0)[1],
+-                (int)bgr.at<cv::Vec3b>(0, 0)[2]);
+-            cv::circle(moment_col, candidates[i], 4, color, 2);
+         }
+     }
+ 
+@@ -267,11 +246,6 @@ void FeatureManager::detectFeaturesComp(const LidarFrame& frame, const std::vect
+         }
+     }
+ 
+-    if (debug_) {
+-        sensor_msgs::ImagePtr moment_img =
+-        cv_bridge::CvImage(frame.header, "bgr8", moment_col).toImageMsg();
+-        moment_pub.publish(moment_img);
+-    }
+ }
+ 
+ 
+@@ -287,7 +261,6 @@ void FeatureManager::detectFeaturesStrong(const LidarFrame& frame, const int n_f
+     // Mask out pixels close to existing features and image borders
+     cv::Mat valid_mask = frame.img_mask & mask_;
+     #ifdef MP_EN
+-        omp_set_num_threads(MP_PROC_NUM);
+         #pragma omp parallel for
+     #endif
+     for (int v = 0; v < frame.img_mask.rows; v++) {
+@@ -490,4 +463,3 @@ void FeatureManager::updateMask() {
+         cv::circle(mask_, draw_u, suppression_radius_, 0, -1);
+     }
+ }
+-
+diff --git a/src/image_processing.cpp b/src/image_processing.cpp
+index 839328a..1a044a4 100644
+--- a/src/image_processing.cpp
++++ b/src/image_processing.cpp
+@@ -4,19 +4,20 @@
+ #include "image_processing.h"
+ 
+ #include <stdexcept>
+-#include "timing.h"
+-
+-ImageProcessor::ImageProcessor(ros::NodeHandle nh, std::shared_ptr<Projector> projector , 
+-    std::shared_ptr<FeatureManager> manager) : projector_(projector) {
+-    try {
+-        loadParameters(nh);
+-    } catch (const std::runtime_error& e) {
+-        ROS_ERROR_STREAM(e.what());
+-        exit(1);
+-    }
+ 
+-    rows_ = projector->rows();
+-    cols_ = projector->cols();
++ImageProcessor::ImageProcessor(const Options& options,
++    std::shared_ptr<Projector> projector,
++    std::shared_ptr<FeatureManager> manager)
++    : projector_(std::move(projector)),
++      reflectivity_(options.reflectivity),
++      remove_lines_(options.remove_lines),
++      brightness_filter_(options.brightness_filter),
++      blur_(options.blur),
++      intensity_scale_(options.intensity_scale),
++      erosion_margin_(options.erosion_margin) {
++
++    rows_ = projector_->rows();
++    cols_ = projector_->cols();
+     min_range_ = manager->minRange();
+     max_range_ = manager->maxRange();
+     
+@@ -27,55 +28,31 @@ ImageProcessor::ImageProcessor(ros::NodeHandle nh, std::shared_ptr<Projector> pr
+     kernel_dy_.at<float>(0, 0) = -0.5;
+     kernel_dy_.at<float>(2, 0) = 0.5;
+ 
+-    int k_size = manager->patchSize() + erosion_margin_;
+-    kernel_erosion_ = cv::Mat::ones(k_size, k_size, CV_32FC1);
+-};
+-
+-void ImageProcessor::loadParameters(ros::NodeHandle nh) {
+-    nh.param<bool>("image/reflectivity", reflectivity_, false);
+-    nh.param<bool>("image/line_removal", remove_lines_, true);
+-    nh.param<bool>("image/brightness_filter", brightness_filter_, true);
+-    nh.param<bool>("image/blur", blur_, true);
+-    nh.param<double>("image/intensity_scale", intensity_scale_, 0.25);
+-    nh.param<int>("image/erosion_margin", erosion_margin_, 2);
+-    std::vector<int> window;
+-    nh.getParam("image/window", window);
+-    if (window.size() != 2) {
+-        throw std::runtime_error("Invalid window size");
+-        return;
++    if (options.window.size() != 2 || options.masks.size() % 4 != 0) {
++        throw std::invalid_argument("invalid COIN-LIO image window or masks");
+     }
+-
+-    std::vector<int> masks;
+-    nh.getParam("image/masks", masks);
+-    if (masks.size() % 4 != 0) {
+-        throw std::runtime_error("Invalid masks, number of elements must be a multiple of 4");
+-        return;
++    window_size_ = cv::Size(options.window[0], options.window[1]);
++    for (std::size_t i = 0; i < options.masks.size() / 4; ++i) {
++        masks_.emplace_back(options.masks[i * 4], options.masks[i * 4 + 1],
++                            options.masks[i * 4 + 2], options.masks[i * 4 + 3]);
+     }
+-
+-    for (int i = 0; i < masks.size()/4; i++) {
+-        masks_.push_back(cv::Rect(masks[i*4], masks[i*4 +1], masks[i*4 +2],masks[i*4 +3]));
++    high_pass_fir_ = cv::Mat(options.highpass).clone();
++    low_pass_fir_ = cv::Mat(options.lowpass).clone();
++    if (remove_lines_ && (high_pass_fir_.empty() || low_pass_fir_.empty())) {
++        throw std::invalid_argument("COIN-LIO line removal requires FIR coefficients");
+     }
+ 
+-    window_size_ = cv::Size(window[0], window[1]);
+-    std::vector<double> hpf;
+-    nh.getParam("image/highpass", hpf);
+-    high_pass_fir_ = cv::Mat(hpf).clone();
+-    std::vector<double> lpf;
+-    nh.getParam("image/lowpass", lpf);
+-    low_pass_fir_ = cv::Mat(lpf).clone();
+-}
++    int k_size = manager->patchSize() + erosion_margin_;
++    kernel_erosion_ = cv::Mat::ones(k_size, k_size, CV_32FC1);
++};
+ 
+ void ImageProcessor::createImages(LidarFrame& frame) {
+-    timing::Timer projection_timer("pre/projection");
+     projector_->createImages(frame);
+-    projection_timer.Stop();
+ 
+     if (!reflectivity_) {
+         frame.img_intensity *= intensity_scale_;
+     }
+ 
+-    timing::Timer img_process_timer("pre/image_process");
+-
+     if (remove_lines_) {
+         removeLines(frame.img_intensity);
+     }  
+@@ -104,7 +81,6 @@ void ImageProcessor::createImages(LidarFrame& frame) {
+ 
+     // Assign filtered intensity values to points
+     #ifdef MP_EN
+-        omp_set_num_threads(MP_PROC_NUM);
+         #pragma omp parallel for
+     #endif
+     for (int v = 0; v < rows_; v++) {
+@@ -115,7 +91,6 @@ void ImageProcessor::createImages(LidarFrame& frame) {
+         }
+     }   
+ 
+-    img_process_timer.Stop();
+ }
+ 
+ void ImageProcessor::removeLines(cv::Mat& img) {
+@@ -148,7 +123,6 @@ void ImageProcessor::createMask(const cv::Mat& range_img, cv::Mat& mask) {
+     }
+ 
+     #ifdef MP_EN
+-        omp_set_num_threads(MP_PROC_NUM);
+         #pragma omp parallel for
+     #endif
+     // Mask out points outside of range range
+@@ -164,4 +138,4 @@ void ImageProcessor::createMask(const cv::Mat& range_img, cv::Mat& mask) {
+     cv::Mat img_eroded;
+     cv::erode(mask, img_eroded, kernel_erosion_);
+     mask = img_eroded;
+-}
+\ No newline at end of file
++}
+diff --git a/src/imu_processing.cpp b/src/imu_processing.cpp
+index c4d1101..d460da9 100644
+--- a/src/imu_processing.cpp
++++ b/src/imu_processing.cpp
+@@ -1,5 +1,5 @@
+ #include "imu_processing.h"
+-#include <ros/ros.h>
++#include <cassert>
+ #include "use_ikfom.h"
+ 
+ ImuProcess::ImuProcess()
+@@ -16,7 +16,7 @@ ImuProcess::ImuProcess()
+   angvel_last     = Zero3d;
+   Lidar_T_wrt_IMU = Zero3d;
+   Lidar_R_wrt_IMU = Eye3d;
+-  last_imu_.reset(new sensor_msgs::Imu());
++  last_imu_ = std::make_shared<ImuData>();
+ }
+ 
+ void ImuProcess::Reset()
+@@ -28,7 +28,7 @@ void ImuProcess::Reset()
+   start_timestamp_  = -1;
+   init_iter_num     = 1;
+   IMUpose.clear();
+-  last_imu_.reset(new sensor_msgs::Imu());
++  last_imu_ = std::make_shared<ImuData>();
+   cur_pcl_un_.reset(new PointCloudXYZI());
+ }
+ 
+@@ -84,8 +84,8 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom,
+     b_first_frame_ = false;
+     const auto &imu_acc = meas.imu.front()->linear_acceleration;
+     const auto &gyr_acc = meas.imu.front()->angular_velocity;
+-    mean_acc << imu_acc.x, imu_acc.y, imu_acc.z;
+-    mean_gyr << gyr_acc.x, gyr_acc.y, gyr_acc.z;
++    mean_acc = imu_acc;
++    mean_gyr = gyr_acc;
+     first_lidar_time = meas.lidar_beg_time;
+   }
+ 
+@@ -93,8 +93,8 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom,
+   {
+     const auto &imu_acc = imu->linear_acceleration;
+     const auto &gyr_acc = imu->angular_velocity;
+-    cur_acc << imu_acc.x, imu_acc.y, imu_acc.z;
+-    cur_gyr << gyr_acc.x, gyr_acc.y, gyr_acc.z;
++    cur_acc = imu_acc;
++    cur_gyr = gyr_acc;
+ 
+     mean_acc      += (cur_acc - mean_acc) / N;
+     mean_gyr      += (cur_gyr - mean_gyr) / N;
+@@ -131,7 +131,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
+   /*** add the imu of the last frame-tail to the of current frame-head ***/
+   auto v_imu = meas.imu;
+   v_imu.push_front(last_imu_);
+-  const double &imu_end_time = v_imu.back()->header.stamp.toSec();
++  const double imu_end_time = v_imu.back()->timestamp;
+   const double &pcl_beg_time = meas.lidar_beg_time;
+   const double &pcl_end_time = meas.lidar_end_time;
+ 
+@@ -172,24 +172,20 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
+     auto &&head = *(it_imu);
+     auto &&tail = *(it_imu + 1);
+ 
+-    if (tail->header.stamp.toSec() < last_lidar_end_time_)    continue;
++    if (tail->timestamp < last_lidar_end_time_)    continue;
+ 
+-    angvel_avr<<0.5 * (head->angular_velocity.x + tail->angular_velocity.x),
+-                0.5 * (head->angular_velocity.y + tail->angular_velocity.y),
+-                0.5 * (head->angular_velocity.z + tail->angular_velocity.z);
+-    acc_avr   <<0.5 * (head->linear_acceleration.x + tail->linear_acceleration.x),
+-                0.5 * (head->linear_acceleration.y + tail->linear_acceleration.y),
+-                0.5 * (head->linear_acceleration.z + tail->linear_acceleration.z);
++    angvel_avr = 0.5 * (head->angular_velocity + tail->angular_velocity);
++    acc_avr = 0.5 * (head->linear_acceleration + tail->linear_acceleration);
+ 
+     acc_avr     = acc_avr * G_m_s2 / mean_acc.norm(); // - state_inout.ba;
+ 
+-    if(head->header.stamp.toSec() < last_lidar_end_time_)
++    if(head->timestamp < last_lidar_end_time_)
+     {
+-      dt = tail->header.stamp.toSec() - last_lidar_end_time_;
++      dt = tail->timestamp - last_lidar_end_time_;
+     }
+     else
+     {
+-      dt = tail->header.stamp.toSec() - head->header.stamp.toSec();
++      dt = tail->timestamp - head->timestamp;
+     }
+ 
+     in.acc = acc_avr;
+@@ -208,7 +204,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
+     {
+       acc_s_last[i] += imu_state.grav[i];
+     }
+-    double &&offs_t = tail->header.stamp.toSec() - pcl_beg_time;
++    double &&offs_t = tail->timestamp - pcl_beg_time;
+     IMUpose.push_back(set_pose6d(offs_t, acc_s_last, angvel_last, imu_state.vel, imu_state.pos, 
+       imu_state.rot.toRotationMatrix()));
+   }
+@@ -279,7 +275,6 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
+ 
+   /*** undistort the lidar points using the respective T_LK_Li ***/
+   #ifdef MP_EN
+-    omp_set_num_threads(MP_PROC_NUM);
+     #pragma omp parallel for
+   #endif
+   for (size_t idx = 0u; idx < timestamps.size(); idx++) {
+@@ -299,7 +294,7 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom,
+   PointCloudXYZI::Ptr cur_pcl_un_, std::vector<M4D>& vec_T_Li_Lk, std::vector<int>& vec_idx)
+ {
+   if(meas.imu.empty()) {return;};
+-  ROS_ASSERT(meas.lidar != nullptr);
++  assert(meas.lidar != nullptr);
+ 
+   if (imu_need_init_)
+   {
+@@ -318,11 +313,10 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom,
+ 
+       cov_acc = cov_acc_scale;
+       cov_gyr = cov_gyr_scale;
+-      ROS_INFO("IMU Initial Done");
+     }
+     cur_pcl_un_->points.clear();
+     return;
+   }
+ 
+   UndistortPcl(meas, kf_state, *cur_pcl_un_, vec_T_Li_Lk, vec_idx);
+-}
+\ No newline at end of file
++}
+diff --git a/src/projector.cpp b/src/projector.cpp
+index 3f4990c..06ce65b 100644
+--- a/src/projector.cpp
++++ b/src/projector.cpp
+@@ -6,12 +6,17 @@
+ 
+ #define DUPLICATE_POINTS 10
+ 
+-Projector::Projector(ros::NodeHandle nh) {
+-    try {
+-        loadParameters(nh);
+-    } catch (const std::runtime_error& e) {
+-        ROS_ERROR_STREAM(e.what());
+-        exit(1);
++Projector::Projector(ProjectorOptions options)
++    : beam_offset_m_(options.beam_offset_m),
++      u_shift_(options.column_shift),
++      rows_(options.rows),
++      cols_(options.cols),
++      offset_lut_(std::move(options.pixel_shift_by_row)),
++      elevation_angles_(std::move(options.elevation_angles_deg)),
++      destagger_(options.destagger) {
++    if (rows_ < 2 || cols_ < 2 || offset_lut_.size() != rows_ ||
++        elevation_angles_.size() != rows_) {
++        throw std::invalid_argument("invalid COIN-LIO projector calibration");
+     }
+ 
+     for (auto& angle : elevation_angles_) {
+@@ -28,9 +33,6 @@ Projector::Projector(ros::NodeHandle nh) {
+           0, fy, cy,
+           0, 0, 1;
+ 
+-    // mm to m
+-    beam_offset_m_ *= 1e-3;
+-        
+     // bookkeeping for lookup from idx to row and column
+     idx_to_v_ = std::vector<int>(rows_*cols_, 0);
+     idx_to_u_ = std::vector<int>(rows_*cols_, 0);
+@@ -49,53 +51,6 @@ Projector::Projector(ros::NodeHandle nh) {
+     }
+ };
+ 
+-void Projector::loadParameters(ros::NodeHandle nh) {
+-    float rows;
+-    if (!(nh.getParam("/data_format/pixels_per_column", rows) || 
+-          nh.getParam("/lidar_data_format/pixels_per_column", rows))) {
+-        throw std::runtime_error("Missing rows parameter");
+-        return;
+-    }
+-    rows_ = static_cast<size_t>(rows);
+-
+-    float cols;
+-    if (!(nh.getParam("/data_format/columns_per_frame", cols) ||
+-          nh.getParam("/lidar_data_format/columns_per_frame", cols))) {
+-        throw std::runtime_error("Missing cols parameter");
+-        return;
+-    }
+-    cols_ = static_cast<size_t>(cols);
+-
+-    if (!(nh.getParam("/lidar_origin_to_beam_origin_mm", beam_offset_m_) || 
+-          nh.getParam("/beam_intrinsics/lidar_origin_to_beam_origin_mm", beam_offset_m_))) {
+-        throw std::runtime_error("Missing beam_offset_m parameter");
+-        return;
+-    }
+-
+-    if (!(nh.getParam("/data_format/pixel_shift_by_row", offset_lut_) || 
+-          nh.getParam("/lidar_data_format/pixel_shift_by_row", offset_lut_))) {
+-        throw std::runtime_error("Missing offset parameter");
+-        return;
+-    }
+-
+-    if (!(nh.getParam("/beam_altitude_angles", elevation_angles_) || 
+-          nh.getParam("/beam_intrinsics/beam_altitude_angles", elevation_angles_))) {
+-        throw std::runtime_error("Missing alt parameter");
+-        return;
+-    }
+-
+-    float u_shift;
+-    if (!nh.getParam("image/u_shift", u_shift)) {
+-        throw std::runtime_error("Missing column shift parameter");
+-        return;
+-    }
+-    u_shift_ = static_cast<int>(u_shift);
+-    
+-    // true: destagger the pointcloud data 
+-    // https://static.ouster.dev/sdk-docs/reference/lidar-scan.html#staggering-and-destaggering
+-    nh.param<bool>("image/destagger", destagger_, true);
+-}
+-
+ size_t Projector::vectorIndexFromRowCol(const size_t row, const size_t col) const {
+     return (row * cols_ + col) * DUPLICATE_POINTS;
+ }
+@@ -110,10 +65,9 @@ void Projector::createImages(LidarFrame& frame) const {
+     std::vector<int> idx_to_uk(frame.points_corrected->points.size(), -1);
+ 
+     // Create a projected image from the undistorted point cloud, dubbed "undistortion map" in the paper
+-    #ifdef MP_EN
+-    omp_set_num_threads(MP_PROC_NUM);
+-    #pragma omp parallel for
+-    #endif
++#ifdef MP_EN
++#pragma omp parallel for
++#endif
+     for (size_t j = 0; j < frame.points_corrected->points.size(); ++j) {
+         const V3D p_Lk = frame.points_corrected->points[j].getVector3fMap().cast<double>();
+         V2D px_k;
+@@ -121,17 +75,18 @@ void Projector::createImages(LidarFrame& frame) const {
+         idx_to_uk[j] = std::round(px_k(0));
+         idx_to_vk[j] = std::round(px_k(1));
+     }
+-
+-
+-    #ifdef MP_EN
+-    omp_set_num_threads(MP_PROC_NUM);
+-    #pragma omp parallel for
+-    #endif
+     for (size_t j = 0; j < frame.points_corrected->points.size(); ++j) {
+         // Use lookup for dense image
+-        int v_i = idx_to_v_[frame.points_corrected->points[j].normal_x];
+-        int u_i = idx_to_u_[frame.points_corrected->points[j].normal_x];
+-        const float p_norm = frame.points_corrected->points[j].getVector3fMap().norm();
++        const int dense_index =
++            static_cast<int>(std::lround(frame.points_corrected->points[j].normal_x));
++        int v_i = idx_to_vk[j];
++        int u_i = idx_to_uk[j];
++        if (dense_index >= 0 &&
++            dense_index < static_cast<int>(idx_to_v_.size())) {
++            v_i = idx_to_v_[dense_index];
++            u_i = idx_to_u_[dense_index];
++        }
++        if (v_i < 0 || u_i < 0) continue;
+         frame.img_range.ptr<float>(v_i)[u_i] = frame.points_corrected->points[j].normal_y;
+         frame.img_intensity.ptr<float>(v_i)[u_i] = frame.points_corrected->points[j].intensity;
+         
+@@ -279,4 +234,4 @@ bool Projector::projectUndistortedPoint(const LidarFrame& frame,const V3D& p_L_k
+     }
+ 
+     return true;
+-}
+\ No newline at end of file
++}
+diff --git a/standalone/coin_lio_adapter.cpp b/standalone/coin_lio_adapter.cpp
+new file mode 100644
+index 0000000..f8db5da
+--- /dev/null
++++ b/standalone/coin_lio_adapter.cpp
+@@ -0,0 +1,237 @@
++#include "coin_lio_adapter.hpp"
++
++#include <slam_benchmark/calibration.hpp>
++#include <spdlog/spdlog.h>
++#include <yaml-cpp/yaml.h>
++#include <omp.h>
++
++#include <algorithm>
++#include <chrono>
++#include <cmath>
++#include <ranges>
++#include <stdexcept>
++
++namespace {
++
++template <typename T>
++T parameter(const YAML::Node& root, const char* key, T fallback) {
++    return root[key] ? root[key].as<T>() : fallback;
++}
++
++std::vector<double> doubles(const YAML::Node& root, const char* key) {
++    return root[key] ? root[key].as<std::vector<double>>() : std::vector<double>{};
++}
++
++std::vector<int> integers(const YAML::Node& root, const char* key,
++                          std::vector<int> fallback = {}) {
++    return root[key] ? root[key].as<std::vector<int>>() : std::move(fallback);
++}
++
++double milliseconds_since(const std::chrono::steady_clock::time_point start) {
++    return std::chrono::duration<double, std::milli>(
++               std::chrono::steady_clock::now() - start)
++        .count();
++}
++
++}  // namespace
++
++slam_benchmark::InitializationResult CoinLioAdapter::initialize(
++    std::span<const slam_benchmark::SensorDefinition> sensors,
++    const std::filesystem::path& config_path,
++    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true, .imu = true, .point_time = true,
++                  .intensity = true});
++    if (!compatibility) return compatibility;
++    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
++                                         &slam_benchmark::SensorDefinition::type);
++    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
++                                       &slam_benchmark::SensorDefinition::type);
++    if (lidar == sensors.end() || imu == sensors.end())
++        throw std::runtime_error("COIN-LIO requires one LiDAR and one IMU");
++
++    sink_ = &sink;
++    const YAML::Node root = YAML::LoadFile(config_path.string());
++    const int parallel_threads = parameter(root, "parallel_threads", MP_PROC_NUM);
++    if (parallel_threads <= 0) {
++        throw std::runtime_error("parallel_threads must be positive");
++    }
++    omp_set_dynamic(0);
++    omp_set_num_threads(parallel_threads);
++    CoinLioEngine::Options options;
++    options.scan_voxel_size = parameter(root, "filter_size_scan_m", 0.2);
++    options.map_voxel_size = parameter(root, "filter_size_map_m", 0.2);
++    options.cube_side_length = parameter(root, "cube_side_length_m", 1000.0);
++    options.detection_range = parameter(root, "detection_range_m", 150.0F);
++    options.point_filter_stride = parameter(root, "point_filter_stride", 4);
++    options.max_iterations = parameter(root, "max_iterations", 5);
++    options.minimum_geometric_contributions =
++        parameter(root, "minimum_geometric_contributions", 25);
++    options.estimate_extrinsics = parameter(root, "estimate_extrinsics", false);
++    options.geometric_noise = parameter(root, "geometric_noise", 0.001);
++    options.photometric_scale = parameter(root, "photometric_scale", 0.00095);
++    options.gyroscope_covariance.setConstant(parameter(root, "gyroscope_noise", 0.1));
++    options.accelerometer_covariance.setConstant(
++        parameter(root, "accelerometer_noise", 0.1));
++    options.gyroscope_bias_covariance.setConstant(
++        parameter(root, "gyroscope_bias_noise", 0.0001));
++    options.accelerometer_bias_covariance.setConstant(
++        parameter(root, "accelerometer_bias_noise", 0.0001));
++
++    const auto transform =
++        slam_benchmark::target_from_source(imu->calibration, lidar->calibration);
++    options.lidar_rotation << transform[0], transform[1], transform[2],
++        transform[4], transform[5], transform[6], transform[8], transform[9],
++        transform[10];
++    options.lidar_translation << transform[3], transform[7], transform[11];
++
++    const YAML::Node projection = root["intensity_projection"];
++    options.projector.rows = parameter(projection, "rows", std::size_t{64});
++    options.projector.cols = parameter(projection, "columns", std::size_t{1024});
++    if (options.projector.rows < 2)
++        throw std::invalid_argument(
++            "COIN-LIO intensity_projection.rows must be at least 2");
++    options.projector.beam_offset_m = parameter(projection, "beam_offset_m", 0.0);
++    options.projector.column_shift = parameter(projection, "column_shift", 0);
++    options.projector.destagger = parameter(projection, "destagger", false);
++    options.projector.pixel_shift_by_row = integers(
++        projection, "pixel_shift_by_row",
++        std::vector<int>(options.projector.rows, 0));
++    options.projector.elevation_angles_deg = doubles(projection, "elevation_angles_deg");
++    if (options.projector.elevation_angles_deg.empty()) {
++        const double upper = parameter(projection, "elevation_upper_deg", 45.0);
++        const double lower = parameter(projection, "elevation_lower_deg", -45.0);
++        options.projector.elevation_angles_deg.resize(options.projector.rows);
++        for (std::size_t row = 0; row < options.projector.rows; ++row) {
++            const double ratio = static_cast<double>(row) /
++                                 static_cast<double>(options.projector.rows - 1);
++            options.projector.elevation_angles_deg[row] = upper + ratio * (lower - upper);
++        }
++    }
++
++    const YAML::Node image = root["intensity_image"];
++    options.image.reflectivity = parameter(image, "reflectivity", false);
++    options.image.remove_lines = parameter(image, "remove_lines", false);
++    options.image.brightness_filter = parameter(image, "brightness_filter", true);
++    options.image.blur = parameter(image, "blur", true);
++    options.image.intensity_scale = parameter(image, "intensity_scale", 0.25);
++    options.image.erosion_margin = parameter(image, "erosion_margin", 2);
++    options.image.window = integers(image, "window", {41, 7});
++    options.image.masks = integers(image, "masks");
++    options.image.highpass = doubles(image, "highpass");
++    options.image.lowpass = doubles(image, "lowpass");
++
++    const YAML::Node features = root["intensity_features"];
++    options.features.margin = parameter(features, "margin", 10);
++    options.features.min_range = parameter(features, "min_range_m", 0.7);
++    options.features.max_range = parameter(features, "max_range_m", 30.0);
++    options.features.minimum_gradient = parameter(features, "minimum_gradient", 16.5);
++    options.features.ncc_threshold = parameter(features, "ncc_threshold", 0.7075);
++    options.features.range_threshold = parameter(features, "range_threshold_m", 0.2);
++    options.features.suppression_radius = parameter(features, "suppression_radius", 10);
++    options.features.patch_size = parameter(features, "patch_size", 5);
++    options.features.feature_count = parameter(features, "feature_count", 60);
++    options.features.maximum_lifetime = parameter(features, "maximum_lifetime", 25);
++    options.features.selection_mode =
++        parameter(features, "selection_mode", std::string("comp"));
++
++    engine_.set_pose_callback(
++        [this](double timestamp, const state_ikfom& state) { accept_pose(timestamp, state); });
++    engine_.set_timing_callback([this](double timestamp, const char* stage, double duration) {
++        sink_->report_timing(
++            {time_origin_ns_ + static_cast<slam_benchmark::TimestampNs>(
++                                   std::llround(timestamp * 1e9)),
++             stage, duration});
++    });
++    engine_.initialize(options);
++    spdlog::info("COIN-LIO using {} OpenMP compute threads", parallel_threads);
++    spdlog::info("COIN-LIO standalone adapter initialized");
++    return {};
++}
++
++void CoinLioAdapter::process(const slam_benchmark::SensorSample& sample) {
++    if (!have_time_origin_) {
++        time_origin_ns_ = sample.timestamp_ns;
++        have_time_origin_ = true;
++    }
++    const double timestamp =
++        static_cast<double>(sample.timestamp_ns - time_origin_ns_) * 1e-9;
++
++    if (const auto* source = std::get_if<slam_benchmark::ImuSample>(&sample.payload)) {
++        const auto started = std::chrono::steady_clock::now();
++        auto value = std::make_shared<ImuData>();
++        value->timestamp = timestamp;
++        value->angular_velocity << source->angular_velocity_rad_s[0],
++            source->angular_velocity_rad_s[1], source->angular_velocity_rad_s[2];
++        value->linear_acceleration << source->linear_acceleration_m_s2[0],
++            source->linear_acceleration_m_s2[1], source->linear_acceleration_m_s2[2];
++        imu_queue_.push_back(std::move(value));
++        sink_->report_timing(
++            {sample.timestamp_ns, "imu_preprocess", milliseconds_since(started)});
++    } else if (const auto* source =
++                   std::get_if<slam_benchmark::PointCloud>(&sample.payload)) {
++        if (source->points.size() != source->point_time_offset_ns.size())
++            throw std::runtime_error("point/time array size mismatch");
++        const auto started = std::chrono::steady_clock::now();
++        MeasureGroup measures;
++        measures.lidar_beg_time = timestamp;
++        measures.lidar_end_time = timestamp;
++        measures.lidar->reserve(source->points.size());
++        for (std::size_t index = 0; index < source->points.size(); ++index) {
++            const auto& input = source->points[index];
++            if (!std::isfinite(input.x) || !std::isfinite(input.y) ||
++                !std::isfinite(input.z) || !std::isfinite(input.intensity))
++                continue;
++            PointType point;
++            point.x = input.x;
++            point.y = input.y;
++            point.z = input.z;
++            point.intensity = input.intensity;
++            point.normal_x = -1.0F;
++            point.normal_y = std::sqrt(input.x * input.x + input.y * input.y +
++                                       input.z * input.z);
++            point.normal_z = 0.0F;
++            const double offset_ms =
++                static_cast<double>(source->point_time_offset_ns[index]) * 1e-6;
++            point.curvature = static_cast<float>(offset_ms);
++            measures.lidar_end_time =
++                std::max(measures.lidar_end_time, timestamp + offset_ms * 1e-3);
++            measures.lidar->push_back(point);
++        }
++        lidar_queue_.push_back(std::move(measures));
++        sink_->report_timing(
++            {sample.timestamp_ns, "lidar_preprocess", milliseconds_since(started)});
++    }
++    process_ready_scans();
++}
++
++void CoinLioAdapter::process_ready_scans() {
++    while (!lidar_queue_.empty() && !imu_queue_.empty() &&
++           imu_queue_.back()->timestamp >= lidar_queue_.front().lidar_end_time) {
++        auto measures = std::move(lidar_queue_.front());
++        lidar_queue_.pop_front();
++        while (!imu_queue_.empty() &&
++               imu_queue_.front()->timestamp <= measures.lidar_end_time) {
++            measures.imu.push_back(imu_queue_.front());
++            imu_queue_.pop_front();
++        }
++        if (!measures.imu.empty()) engine_.process(measures);
++    }
++}
++
++void CoinLioAdapter::accept_pose(double timestamp, const state_ikfom& state) {
++    const auto coefficients = state.rot.coeffs();
++    slam_benchmark::Pose pose;
++    pose.timestamp_ns = time_origin_ns_ + static_cast<slam_benchmark::TimestampNs>(
++                                             std::llround(timestamp * 1e9));
++    pose.translation_m = {state.pos[0], state.pos[1], state.pos[2]};
++    pose.rotation_xyzw = {coefficients[0], coefficients[1], coefficients[2],
++                          coefficients[3]};
++    trajectory_.push_back(pose);
++    sink_->report_realtime_pose(pose);
++}
++
++void CoinLioAdapter::finalize() {
++    process_ready_scans();
++    sink_->report_final_trajectory(trajectory_);
++}
+diff --git a/standalone/coin_lio_adapter.hpp b/standalone/coin_lio_adapter.hpp
+new file mode 100644
+index 0000000..750d0e1
+--- /dev/null
++++ b/standalone/coin_lio_adapter.hpp
+@@ -0,0 +1,29 @@
++#pragma once
++
++#include "coin_lio_engine.hpp"
++
++#include <slam_benchmark/algorithm.hpp>
++
++#include <deque>
++
++class CoinLioAdapter final : public slam_benchmark::SlamAlgorithm {
++public:
++    [[nodiscard]] std::string_view name() const noexcept override { return "coin_lio"; }
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++                    const std::filesystem::path& config_path,
++                    slam_benchmark::ResultSink& sink) override;
++    void process(const slam_benchmark::SensorSample& sample) override;
++    void finalize() override;
++
++private:
++    void process_ready_scans();
++    void accept_pose(double timestamp, const state_ikfom& state);
++
++    slam_benchmark::ResultSink* sink_{};
++    CoinLioEngine engine_;
++    std::deque<std::shared_ptr<const ImuData>> imu_queue_;
++    std::deque<MeasureGroup> lidar_queue_;
++    slam_benchmark::Trajectory trajectory_;
++    slam_benchmark::TimestampNs time_origin_ns_{};
++    bool have_time_origin_{};
++};
+diff --git a/standalone/coin_lio_engine.cpp b/standalone/coin_lio_engine.cpp
+new file mode 100644
+index 0000000..889e417
+--- /dev/null
++++ b/standalone/coin_lio_engine.cpp
+@@ -0,0 +1,641 @@
++#include "coin_lio_engine.hpp"
++
++#include "ikd-Tree/ikd_Tree.h"
++#include "imu_processing.h"
++
++#include <pcl/filters/voxel_grid.h>
++
++#include <algorithm>
++#include <chrono>
++#include <cmath>
++#include <cstdint>
++#include <stdexcept>
++#include <utility>
++
++namespace {
++
++constexpr double kInitializationTime = 0.1;
++constexpr float kMoveThreshold = 1.5F;
++
++double elapsed_ms(const std::chrono::steady_clock::time_point start) {
++    return std::chrono::duration<double, std::milli>(
++               std::chrono::steady_clock::now() - start)
++        .count();
++}
++
++Eigen::Matrix3d geometric_eigenvectors(const Eigen::MatrixXd& jacobian) {
++    const Eigen::Matrix3d information = jacobian.transpose() * jacobian;
++    return Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d>(information).eigenvectors();
++}
++
++Eigen::Vector3d geometric_contributions(const Eigen::MatrixXd& jacobian,
++                                        const Eigen::Matrix3d& directions) {
++    Eigen::Vector3d result = Eigen::Vector3d::Zero();
++    for (Eigen::Index row = 0; row < jacobian.rows(); ++row) {
++        Eigen::Vector3d normal = jacobian.row(row).transpose();
++        if (normal.norm() == 0.0) continue;
++        normal.normalize();
++        for (int axis = 0; axis < 3; ++axis) {
++            const double contribution = std::abs(normal.dot(directions.col(axis)));
++            if (contribution > 0.5) result[axis] += contribution;
++        }
++    }
++    return result;
++}
++
++}  // namespace
++
++class CoinLioEngine::Impl {
++public:
++    Impl()
++        : undistorted_(new PointCloudXYZI()),
++          skipped_(new PointCloudXYZI()),
++          down_body_(new PointCloudXYZI()),
++          down_world_(new PointCloudXYZI()),
++          normals_(new PointCloudXYZI()),
++          selected_points_(new PointCloudXYZI()),
++          selected_normals_(new PointCloudXYZI()) {}
++
++    ~Impl() {
++        if (active_ == this) active_ = nullptr;
++    }
++
++    void initialize(const Options& options) {
++        options_ = options;
++        if (options_.point_filter_stride < 1)
++            throw std::invalid_argument("COIN-LIO point_filter_stride must be positive");
++        scan_filter_.setLeafSize(options_.scan_voxel_size, options_.scan_voxel_size,
++                                 options_.scan_voxel_size);
++        projector_ = std::make_shared<Projector>(options_.projector);
++        feature_manager_ =
++            std::make_shared<FeatureManager>(options_.features, projector_);
++        image_processor_ = std::make_shared<ImageProcessor>(
++            options_.image, projector_, feature_manager_);
++
++        imu_.set_extrinsic(options_.lidar_translation, options_.lidar_rotation);
++        imu_.set_gyr_cov(options_.gyroscope_covariance);
++        imu_.set_acc_cov(options_.accelerometer_covariance);
++        imu_.set_gyr_bias_cov(options_.gyroscope_bias_covariance);
++        imu_.set_acc_bias_cov(options_.accelerometer_bias_covariance);
++        lidar_from_imu_.setIdentity();
++        lidar_from_imu_.block<3, 3>(0, 0) = options_.lidar_rotation.transpose();
++        lidar_from_imu_.block<3, 1>(0, 3) =
++            -options_.lidar_rotation.transpose() * options_.lidar_translation;
++
++        double epsilon[23];
++        std::fill(std::begin(epsilon), std::end(epsilon), 0.001);
++        if (active_ != nullptr && active_ != this)
++            throw std::runtime_error("COIN-LIO supports one engine instance per process");
++        active_ = this;
++        filter_.init_dyn_share(get_f, df_dx, df_dw, &Impl::measurement_trampoline,
++                               options_.max_iterations, epsilon);
++        initialized_ = true;
++    }
++
++    void process(const MeasureGroup& measures) {
++        if (!initialized_) throw std::logic_error("COIN-LIO engine is not initialized");
++        if (measures.lidar == nullptr || measures.imu.empty()) return;
++        if (first_scan_) {
++            first_lidar_time_ = measures.lidar_beg_time;
++            imu_.first_lidar_time = first_lidar_time_;
++            first_scan_ = false;
++            return;
++        }
++
++        std::vector<M4D> transforms;
++        std::vector<int> transform_indices(measures.lidar->size(), 0);
++        undistorted_ = measures.lidar;
++        auto started = std::chrono::steady_clock::now();
++        imu_.Process(measures, filter_, undistorted_, transforms, transform_indices);
++        report(measures.lidar_end_time, "undistortion", elapsed_ms(started));
++        if (undistorted_ == nullptr || undistorted_->empty() || transforms.empty()) return;
++
++        state_ = filter_.get_x();
++        lidar_position_ = state_.pos + state_.rot * state_.offset_T_L_I;
++        current_frame_.timestamp = measures.lidar_end_time;
++        current_frame_.points_corrected = undistorted_;
++        current_frame_.T_Li_Lk_vec = std::move(transforms);
++        current_frame_.vec_idx = std::move(transform_indices);
++
++        started = std::chrono::steady_clock::now();
++        image_processor_->createImages(current_frame_);
++        report(measures.lidar_end_time, "intensity_image", elapsed_ms(started));
++
++        ekf_initialized_ = measures.lidar_beg_time - first_lidar_time_ >=
++                           kInitializationTime;
++        crop_local_map();
++
++        started = std::chrono::steady_clock::now();
++        skipped_->clear();
++        skipped_->reserve(undistorted_->size() /
++                          static_cast<std::size_t>(options_.point_filter_stride) + 1);
++        for (std::size_t index = 0; index < undistorted_->size();
++             index += static_cast<std::size_t>(options_.point_filter_stride))
++            skipped_->push_back(undistorted_->points[index]);
++        scan_filter_.setInputCloud(skipped_);
++        scan_filter_.filter(*down_body_);
++        report(measures.lidar_end_time, "downsampling", elapsed_ms(started));
++        const std::size_t point_count = down_body_->size();
++        if (point_count <= 5) return;
++
++        down_world_->resize(point_count);
++        if (tree_.Root_Node == nullptr) {
++            tree_.set_downsample_param(options_.map_voxel_size);
++            for (std::size_t index = 0; index < point_count; ++index)
++                point_body_to_world(down_body_->points[index], down_world_->points[index]);
++            tree_.Build(down_world_->points);
++            update_features(measures.lidar_end_time);
++            emit_pose(measures.lidar_end_time);
++            return;
++        }
++
++        normals_->resize(point_count);
++        nearest_points_.resize(point_count);
++        selected_.assign(point_count, true);
++        map_search_duration_ms_ = 0.0;
++        photometric_duration_ms_ = 0.0;
++        started = std::chrono::steady_clock::now();
++        double solve_time = 0.0;
++        filter_.update_iterated_dyn_share_modified(options_.geometric_noise, solve_time);
++        const double total_update_ms = elapsed_ms(started);
++        report(measures.lidar_end_time, "map_search", map_search_duration_ms_);
++        report(measures.lidar_end_time, "photometric_registration",
++               photometric_duration_ms_);
++        report(measures.lidar_end_time, "filter_update",
++               std::max(0.0, total_update_ms - map_search_duration_ms_ -
++                                 photometric_duration_ms_));
++        state_ = filter_.get_x();
++        lidar_position_ = state_.pos + state_.rot * state_.offset_T_L_I;
++
++        update_features(measures.lidar_end_time);
++        started = std::chrono::steady_clock::now();
++        update_map();
++        report(measures.lidar_end_time, "map_update", elapsed_ms(started));
++        emit_pose(measures.lidar_end_time);
++    }
++
++    void report(double timestamp, const char* stage, double duration_ms) const {
++        if (timing_callback_) timing_callback_(timestamp, stage, duration_ms);
++    }
++
++    void emit_pose(double timestamp) const {
++        if (pose_callback_) pose_callback_(timestamp, state_);
++    }
++
++    void point_body_to_world(const PointType& input, PointType& output) const {
++        const V3D point(input.x, input.y, input.z);
++        const V3D transformed =
++            state_.rot * (state_.offset_R_L_I * point + state_.offset_T_L_I) +
++            state_.pos;
++        output.x = transformed.x();
++        output.y = transformed.y();
++        output.z = transformed.z();
++        output.intensity = input.intensity;
++    }
++
++    void crop_local_map() {
++        if (!local_map_initialized_) {
++            for (int axis = 0; axis < 3; ++axis) {
++                local_map_.vertex_min[axis] = static_cast<float>(
++                    lidar_position_[axis] - options_.cube_side_length / 2.0);
++                local_map_.vertex_max[axis] = static_cast<float>(
++                    lidar_position_[axis] + options_.cube_side_length / 2.0);
++            }
++            local_map_initialized_ = true;
++            return;
++        }
++
++        float edge_distance[3][2];
++        bool move = false;
++        for (int axis = 0; axis < 3; ++axis) {
++            edge_distance[axis][0] =
++                std::abs(static_cast<float>(lidar_position_[axis]) -
++                         local_map_.vertex_min[axis]);
++            edge_distance[axis][1] =
++                std::abs(static_cast<float>(lidar_position_[axis]) -
++                         local_map_.vertex_max[axis]);
++            move = move || edge_distance[axis][0] <=
++                               kMoveThreshold * options_.detection_range ||
++                   edge_distance[axis][1] <=
++                       kMoveThreshold * options_.detection_range;
++        }
++        if (!move) return;
++
++        BoxPointType next = local_map_;
++        std::vector<BoxPointType> removed_boxes;
++        const float distance = std::max(
++            static_cast<float>((options_.cube_side_length -
++                                2.0 * kMoveThreshold * options_.detection_range) *
++                               0.45),
++            options_.detection_range * (kMoveThreshold - 1.0F));
++        for (int axis = 0; axis < 3; ++axis) {
++            BoxPointType removed = local_map_;
++            if (edge_distance[axis][0] <=
++                kMoveThreshold * options_.detection_range) {
++                next.vertex_min[axis] -= distance;
++                next.vertex_max[axis] -= distance;
++                removed.vertex_min[axis] = local_map_.vertex_max[axis] - distance;
++                removed_boxes.push_back(removed);
++            } else if (edge_distance[axis][1] <=
++                       kMoveThreshold * options_.detection_range) {
++                next.vertex_min[axis] += distance;
++                next.vertex_max[axis] += distance;
++                removed.vertex_max[axis] = local_map_.vertex_min[axis] + distance;
++                removed_boxes.push_back(removed);
++            }
++        }
++        local_map_ = next;
++        PointVector discarded;
++        tree_.acquire_removed_points(discarded);
++        if (!removed_boxes.empty()) tree_.Delete_Point_Boxes(removed_boxes);
++    }
++
++    void update_map() {
++        PointVector downsampled;
++        PointVector direct;
++        downsampled.reserve(down_body_->size());
++        direct.reserve(down_body_->size());
++        for (std::size_t index = 0; index < down_body_->size(); ++index) {
++            point_body_to_world(down_body_->points[index], down_world_->points[index]);
++            if (nearest_points_[index].empty() || !ekf_initialized_) {
++                downsampled.push_back(down_world_->points[index]);
++                continue;
++            }
++            const auto& nearby = nearest_points_[index];
++            PointType midpoint;
++            midpoint.x = std::floor(down_world_->points[index].x /
++                                    options_.map_voxel_size) *
++                             options_.map_voxel_size +
++                         0.5 * options_.map_voxel_size;
++            midpoint.y = std::floor(down_world_->points[index].y /
++                                    options_.map_voxel_size) *
++                             options_.map_voxel_size +
++                         0.5 * options_.map_voxel_size;
++            midpoint.z = std::floor(down_world_->points[index].z /
++                                    options_.map_voxel_size) *
++                             options_.map_voxel_size +
++                         0.5 * options_.map_voxel_size;
++            const float distance = calc_dist(down_world_->points[index], midpoint);
++            if (std::abs(nearby[0].x - midpoint.x) >
++                    0.5 * options_.map_voxel_size &&
++                std::abs(nearby[0].y - midpoint.y) >
++                    0.5 * options_.map_voxel_size &&
++                std::abs(nearby[0].z - midpoint.z) >
++                    0.5 * options_.map_voxel_size) {
++                direct.push_back(down_world_->points[index]);
++                continue;
++            }
++            bool add = true;
++            for (std::size_t neighbor = 0;
++                 neighbor < std::min<std::size_t>(NUM_MATCH_POINTS, nearby.size());
++                 ++neighbor) {
++                if (calc_dist(nearby[neighbor], midpoint) < distance) {
++                    add = false;
++                    break;
++                }
++            }
++            if (add) downsampled.push_back(down_world_->points[index]);
++        }
++        tree_.Add_Points(downsampled, true);
++        tree_.Add_Points(direct, false);
++    }
++
++    void update_features(double timestamp) {
++        const auto started = std::chrono::steady_clock::now();
++        std::vector<V3D> weak_directions;
++        if (geometric_jacobian_.rows() > 3) {
++            const Eigen::Matrix3d directions =
++                geometric_eigenvectors(geometric_jacobian_);
++            const Eigen::Vector3d contributions =
++                geometric_contributions(geometric_jacobian_, directions);
++            for (int index = 0; index < 3; ++index) {
++                if (contributions[index] <
++                    options_.minimum_geometric_contributions)
++                    weak_directions.push_back(directions.col(index));
++            }
++        }
++
++        M4D world_from_imu = M4D::Identity();
++        world_from_imu.block<3, 3>(0, 0) = state_.rot.toRotationMatrix();
++        world_from_imu.block<3, 1>(0, 3) = state_.pos;
++        M4D imu_from_lidar = M4D::Identity();
++        imu_from_lidar.block<3, 3>(0, 0) =
++            state_.offset_R_L_I.toRotationMatrix();
++        imu_from_lidar.block<3, 1>(0, 3) = state_.offset_T_L_I;
++        const M4D world_from_lidar = world_from_imu * imu_from_lidar;
++        for (auto& direction : weak_directions)
++            direction = world_from_lidar.block<3, 3>(0, 0).transpose() * direction;
++        if (weak_directions.empty()) {
++            weak_directions = {V3D::UnitX(), V3D::UnitY(), V3D::UnitZ()};
++        }
++        feature_manager_->updateFeatures(current_frame_, weak_directions,
++                                         world_from_lidar);
++        report(timestamp, "intensity_feature", elapsed_ms(started));
++    }
++
++    static void measurement_trampoline(
++        state_ikfom& state, esekfom::dyn_share_datastruct<double>& data) {
++        if (active_ == nullptr) {
++            data.valid = false;
++            return;
++        }
++        active_->combined_measurement(state, data);
++    }
++
++    void geometric_measurement(
++        state_ikfom& state, esekfom::dyn_share_datastruct<double>& data) {
++        const auto started = std::chrono::steady_clock::now();
++        selected_points_->clear();
++        selected_normals_->clear();
++#ifdef MP_EN
++#pragma omp parallel for
++#endif
++        for (std::size_t index = 0; index < down_body_->size(); ++index) {
++            PointType& body = down_body_->points[index];
++            PointType& world = down_world_->points[index];
++            const V3D point(body.x, body.y, body.z);
++            const V3D transformed =
++                state.rot * (state.offset_R_L_I * point + state.offset_T_L_I) +
++                state.pos;
++            world.x = transformed.x();
++            world.y = transformed.y();
++            world.z = transformed.z();
++            world.intensity = body.intensity;
++
++            std::vector<float> squared_distance(NUM_MATCH_POINTS);
++            auto& nearby = nearest_points_[index];
++            if (data.converge) {
++                tree_.Nearest_Search(world, NUM_MATCH_POINTS, nearby,
++                                     squared_distance);
++                selected_[index] = nearby.size() >= NUM_MATCH_POINTS &&
++                                   squared_distance.back() <= 5.0F;
++            }
++            if (!selected_[index]) continue;
++
++            VF(4) plane;
++            selected_[index] = false;
++            if (!esti_plane(plane, nearby, 0.1F)) continue;
++            const float residual = plane[0] * world.x + plane[1] * world.y +
++                                   plane[2] * world.z + plane[3];
++            const float score = 1.0F -
++                                0.9F * std::abs(residual) /
++                                    std::sqrt(std::max(1e-6, point.norm()));
++            if (score <= 0.9F) continue;
++            selected_[index] = true;
++            normals_->points[index].x = plane[0];
++            normals_->points[index].y = plane[1];
++            normals_->points[index].z = plane[2];
++            normals_->points[index].intensity = residual;
++        }
++
++        for (std::size_t index = 0; index < down_body_->size(); ++index) {
++            if (!selected_[index]) continue;
++            selected_points_->push_back(down_body_->points[index]);
++            selected_normals_->push_back(normals_->points[index]);
++        }
++        if (selected_points_->empty()) {
++            data.valid = false;
++            data.h_x.resize(0, 12);
++            data.h.resize(0);
++            map_search_duration_ms_ += elapsed_ms(started);
++            return;
++        }
++
++        data.h_x = Eigen::MatrixXd::Zero(selected_points_->size(), 12);
++        data.h.resize(selected_points_->size());
++        for (std::size_t index = 0; index < selected_points_->size(); ++index) {
++            const PointType& laser = selected_points_->points[index];
++            const V3D body(laser.x, laser.y, laser.z);
++            M3D body_cross;
++            body_cross << SKEW_SYM_MATRIX(body);
++            const V3D point = state.offset_R_L_I * body + state.offset_T_L_I;
++            M3D point_cross;
++            point_cross << SKEW_SYM_MATRIX(point);
++            const PointType& normal = selected_normals_->points[index];
++            const V3D normal_vector(normal.x, normal.y, normal.z);
++            const V3D rotated_normal(state.rot.conjugate() * normal_vector);
++            const V3D rotation_jacobian(point_cross * rotated_normal);
++            if (options_.estimate_extrinsics) {
++                const V3D extrinsic_jacobian(
++                    body_cross * state.offset_R_L_I.conjugate() * rotated_normal);
++                data.h_x.block<1, 12>(index, 0)
++                    << normal.x, normal.y, normal.z,
++                    VEC_FROM_ARRAY(rotation_jacobian),
++                    VEC_FROM_ARRAY(extrinsic_jacobian),
++                    VEC_FROM_ARRAY(rotated_normal);
++            } else {
++                data.h_x.block<1, 12>(index, 0)
++                    << normal.x, normal.y, normal.z,
++                    VEC_FROM_ARRAY(rotation_jacobian), 0.0, 0.0, 0.0, 0.0,
++                    0.0, 0.0;
++            }
++            data.h[index] = -normal.intensity;
++        }
++        geometric_jacobian_ = data.h_x.leftCols(3);
++        map_search_duration_ms_ += elapsed_ms(started);
++    }
++
++    void photometric_measurement(
++        state_ikfom& state, esekfom::dyn_share_datastruct<double>& data) {
++        const auto started = std::chrono::steady_clock::now();
++        const auto& features = feature_manager_->features();
++        if (features.empty()) {
++            data.valid = false;
++            data.h_x.resize(0, 12);
++            data.h.resize(0);
++            photometric_duration_ms_ += elapsed_ms(started);
++            return;
++        }
++
++        cv::Mat& image = current_frame_.img_intensity;
++        const int margin = feature_manager_->margin();
++        const int patch_size = feature_manager_->patchSize();
++        const int patch_pixels = patch_size * patch_size;
++        const int row_count = static_cast<int>(features.size()) * patch_pixels;
++        Eigen::MatrixXd jacobians = Eigen::MatrixXd::Zero(row_count, 12);
++        Eigen::VectorXd residuals = Eigen::VectorXd::Zero(row_count);
++        // vector<bool> packs adjacent flags into the same machine word, so
++        // independent feature workers could still race on that shared word.
++        std::vector<std::uint8_t> selected(row_count, 0);
++
++        M4D world_from_imu = M4D::Identity();
++        world_from_imu.block<3, 3>(0, 0) = state.rot.toRotationMatrix();
++        world_from_imu.block<3, 1>(0, 3) = state.pos;
++        const M3D imu_from_world_rotation =
++            world_from_imu.block<3, 3>(0, 0).transpose();
++        const M4D world_from_lidar = world_from_imu * lidar_from_imu_.inverse();
++        const M4D lidar_from_world = world_from_lidar.inverse();
++
++#ifdef MP_EN
++#pragma omp parallel for
++#endif
++        for (std::size_t feature_index = 0; feature_index < features.size();
++             ++feature_index) {
++            bool visible = true;
++            for (int pixel = 0; pixel < patch_pixels; ++pixel) {
++                const V3D& world_point = features[feature_index].p[pixel];
++                const V3D lidar_end_point =
++                    lidar_from_world.block<3, 3>(0, 0) * world_point +
++                    lidar_from_world.block<3, 1>(0, 3);
++                V3D lidar_point;
++                V2D uv;
++                int distortion_index = -1;
++                if (!projector_->projectUndistortedPoint(
++                        current_frame_, lidar_end_point, lidar_point, uv,
++                        distortion_index, true) ||
++                    distortion_index < 0 || uv.x() <= margin ||
++                    uv.x() >= image.cols - margin || uv.y() <= margin ||
++                    uv.y() >= image.rows - margin ||
++                    current_frame_.img_mask.ptr<uchar>(static_cast<int>(uv.y()))
++                                                   [static_cast<int>(uv.x())] == 0) {
++                    visible = false;
++                    break;
++                }
++                const int transform_index =
++                    current_frame_.vec_idx[distortion_index];
++                const M4D& lidar_at_point_from_lidar_end =
++                    current_frame_.T_Li_Lk_vec[transform_index];
++                if (lidar_point.norm() < feature_manager_->minRange() ||
++                    lidar_point.norm() > feature_manager_->maxRange()) {
++                    visible = false;
++                    break;
++                }
++
++                Eigen::Matrix<double, 1, 2> intensity_gradient;
++                intensity_gradient <<
++                    0.5 * (getSubPixelValue<float>(image, uv.x() + 1, uv.y()) -
++                           getSubPixelValue<float>(image, uv.x() - 1, uv.y())),
++                    0.5 * (getSubPixelValue<float>(image, uv.x(), uv.y() + 1) -
++                           getSubPixelValue<float>(image, uv.x(), uv.y() - 1));
++                Eigen::MatrixXd projection_jacobian;
++                projector_->projectionJacobian(lidar_point, projection_jacobian);
++                const M3D lidar_at_point_from_imu =
++                    lidar_at_point_from_lidar_end.block<3, 3>(0, 0) *
++                    lidar_from_imu_.block<3, 3>(0, 0);
++                const V3D point_in_imu =
++                    imu_from_world_rotation *
++                    (world_point - world_from_imu.block<3, 1>(0, 3));
++                M3D point_cross;
++                point_cross << SKEW_SYM_MATRIX(point_in_imu);
++                Eigen::Matrix<double, 3, 6> point_jacobian;
++                point_jacobian <<
++                    lidar_at_point_from_imu * imu_from_world_rotation,
++                    -lidar_at_point_from_imu * point_cross;
++
++                const int row = static_cast<int>(feature_index) * patch_pixels +
++                                pixel;
++                jacobians.block<1, 6>(row, 0) =
++                    intensity_gradient * projection_jacobian * point_jacobian;
++                residuals[row] =
++                    getSubPixelValue<float>(image, uv.x(), uv.y()) -
++                    features[feature_index].intensities[pixel];
++                selected[row] = 1;
++            }
++            if (!visible) {
++                const int first = static_cast<int>(feature_index) * patch_pixels;
++                std::fill(selected.begin() + first,
++                          selected.begin() + first + patch_pixels,
++                          std::uint8_t{0});
++            }
++        }
++
++        int output_row = 0;
++        for (int row = 0; row < row_count; ++row)
++            if (selected[row]) ++output_row;
++        data.h_x = Eigen::MatrixXd::Zero(output_row, 12);
++        data.h.resize(output_row);
++        output_row = 0;
++        for (int row = 0; row < row_count; ++row) {
++            if (!selected[row]) continue;
++            data.h_x.row(output_row) = jacobians.row(row);
++            data.h[output_row] = residuals[row];
++            ++output_row;
++        }
++        data.valid = output_row > 0;
++        photometric_duration_ms_ += elapsed_ms(started);
++    }
++
++    void combined_measurement(
++        state_ikfom& state, esekfom::dyn_share_datastruct<double>& data) {
++        esekfom::dyn_share_datastruct<double> photometric;
++        photometric_measurement(state, photometric);
++        esekfom::dyn_share_datastruct<double> geometric = data;
++        geometric_measurement(state, geometric);
++        const Eigen::Index photo_rows = photometric.h.rows();
++        const Eigen::Index geometry_rows = geometric.h.rows();
++        const Eigen::Index total_rows = photo_rows + geometry_rows;
++        if (total_rows == 0) {
++            data.valid = false;
++            data.h_x.resize(0, 12);
++            data.h.resize(0);
++            return;
++        }
++        data.h_x = Eigen::MatrixXd::Zero(total_rows, 12);
++        data.h = Eigen::VectorXd::Zero(total_rows);
++        if (photo_rows > 0) {
++            data.h_x.topRows(photo_rows) =
++                photometric.h_x * options_.photometric_scale;
++            data.h.head(photo_rows) =
++                photometric.h * options_.photometric_scale;
++        }
++        if (geometry_rows > 0) {
++            data.h_x.bottomRows(geometry_rows) = geometric.h_x;
++            data.h.tail(geometry_rows) = geometric.h;
++        }
++        data.valid = true;
++    }
++
++    Options options_;
++    ImuProcess imu_;
++    esekfom::esekf<state_ikfom, 12, input_ikfom> filter_;
++    state_ikfom state_;
++    KD_TREE<PointType> tree_;
++    pcl::VoxelGrid<PointType> scan_filter_;
++    PointCloudXYZI::Ptr undistorted_;
++    PointCloudXYZI::Ptr skipped_;
++    PointCloudXYZI::Ptr down_body_;
++    PointCloudXYZI::Ptr down_world_;
++    PointCloudXYZI::Ptr normals_;
++    PointCloudXYZI::Ptr selected_points_;
++    PointCloudXYZI::Ptr selected_normals_;
++    std::vector<PointVector> nearest_points_;
++    std::vector<std::uint8_t> selected_;
++    std::shared_ptr<Projector> projector_;
++    std::shared_ptr<FeatureManager> feature_manager_;
++    std::shared_ptr<ImageProcessor> image_processor_;
++    LidarFrame current_frame_;
++    M4D lidar_from_imu_ = M4D::Identity();
++    Eigen::MatrixXd geometric_jacobian_;
++    BoxPointType local_map_{};
++    vect3 lidar_position_;
++    PoseCallback pose_callback_;
++    TimingCallback timing_callback_;
++    double first_lidar_time_{};
++    double map_search_duration_ms_{};
++    double photometric_duration_ms_{};
++    bool initialized_{};
++    bool first_scan_{true};
++    bool ekf_initialized_{};
++    bool local_map_initialized_{};
++
++    static Impl* active_;
++};
++
++CoinLioEngine::Impl* CoinLioEngine::Impl::active_ = nullptr;
++
++CoinLioEngine::CoinLioEngine() : impl_(std::make_unique<Impl>()) {}
++CoinLioEngine::~CoinLioEngine() = default;
++
++void CoinLioEngine::initialize(const Options& options) { impl_->initialize(options); }
++
++void CoinLioEngine::set_pose_callback(PoseCallback callback) {
++    impl_->pose_callback_ = std::move(callback);
++}
++
++void CoinLioEngine::set_timing_callback(TimingCallback callback) {
++    impl_->timing_callback_ = std::move(callback);
++}
++
++void CoinLioEngine::process(const MeasureGroup& measures) {
++    impl_->process(measures);
++}
+diff --git a/standalone/coin_lio_engine.hpp b/standalone/coin_lio_engine.hpp
+new file mode 100644
+index 0000000..4ebd4d1
+--- /dev/null
++++ b/standalone/coin_lio_engine.hpp
+@@ -0,0 +1,54 @@
++#pragma once
++
++#include "common_lib.h"
++#include "feature_manager.h"
++#include "image_processing.h"
++#include "projector.h"
++#include "use_ikfom.h"
++
++#include <Eigen/Core>
++
++#include <functional>
++#include <memory>
++
++class CoinLioEngine {
++public:
++    struct Options {
++        double scan_voxel_size = 0.2;
++        double map_voxel_size = 0.2;
++        double cube_side_length = 1000.0;
++        float detection_range = 150.0F;
++        int point_filter_stride = 4;
++        int max_iterations = 5;
++        int minimum_geometric_contributions = 25;
++        bool estimate_extrinsics = false;
++        double geometric_noise = 0.001;
++        double photometric_scale = 0.00095;
++        Eigen::Vector3d lidar_translation = Eigen::Vector3d::Zero();
++        Eigen::Matrix3d lidar_rotation = Eigen::Matrix3d::Identity();
++        Eigen::Vector3d gyroscope_covariance = Eigen::Vector3d::Constant(0.1);
++        Eigen::Vector3d accelerometer_covariance = Eigen::Vector3d::Constant(0.1);
++        Eigen::Vector3d gyroscope_bias_covariance = Eigen::Vector3d::Constant(0.0001);
++        Eigen::Vector3d accelerometer_bias_covariance = Eigen::Vector3d::Constant(0.0001);
++        ProjectorOptions projector;
++        FeatureManager::Options features;
++        ImageProcessor::Options image;
++    };
++
++    using PoseCallback = std::function<void(double, const state_ikfom&)>;
++    using TimingCallback = std::function<void(double, const char*, double)>;
++
++    CoinLioEngine();
++    ~CoinLioEngine();
++    CoinLioEngine(const CoinLioEngine&) = delete;
++    CoinLioEngine& operator=(const CoinLioEngine&) = delete;
++
++    void initialize(const Options& options);
++    void set_pose_callback(PoseCallback callback);
++    void set_timing_callback(TimingCallback callback);
++    void process(const MeasureGroup& measures);
++
++private:
++    class Impl;
++    std::unique_ptr<Impl> impl_;
++};
+diff --git a/standalone/main.cpp b/standalone/main.cpp
+new file mode 100644
+index 0000000..efa8e7d
+--- /dev/null
++++ b/standalone/main.cpp
+@@ -0,0 +1,8 @@
++#include "coin_lio_adapter.hpp"
++
++#include <slam_benchmark/application.hpp>
++
++int main(int argc, char** argv) {
++    CoinLioAdapter algorithm;
++    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
++}

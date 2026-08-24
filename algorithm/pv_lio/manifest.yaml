@@ -1,0 +1,15 @@
+schema_version: 1
+name: PV-LIO
+description: Probabilistic voxel-map LiDAR-inertial odometry with uncertainty-aware matching and online extrinsic calibration.
+authors: [Viktor Tsoi]
+license: GPL-2.0
+repository:
+  name: PV-LIO
+  url: https://github.com/HViktorTsoi/PV-LIO.git
+  ref: 494c27f62f7333d6cc32c26dccaa8d8a971c2c2d
+dependencies:
+  - {name: IKFoM, url: https://github.com/hku-mars/IKFoM.git}
+  - {name: VoxelMap, url: https://github.com/hku-mars/VoxelMap.git}
+paper: {}
+sensors: [lidar, imu]
+timing_stages: [lidar_preprocess, imu_preprocess, undistortion, downsampling, state_propagation, map_search, filter_update, map_update]

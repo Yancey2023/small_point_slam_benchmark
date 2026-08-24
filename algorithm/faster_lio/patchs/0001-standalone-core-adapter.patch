@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 51725ea..3a17f76 100644
+index 51725ea..6179a26 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,33 +1,39 @@
+@@ -1,33 +1,42 @@
 -cmake_minimum_required(VERSION 3.5)
 -project(faster_lio)
 -
@@ -63,6 +63,9 @@ index 51725ea..3a17f76 100644
 +    yaml-cpp::yaml-cpp
 +    spdlog::spdlog
 +)
++target_compile_definitions(faster_lio_benchmark PRIVATE
++    SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
++)
 +
 +if(MSVC)
 +    target_compile_options(faster_lio_algorithm PRIVATE /W3 /utf-8)
@@ -100,12 +103,13 @@ index 38e6a99..024abc2 100644
  
 diff --git a/standalone/faster_lio_adapter.cpp b/standalone/faster_lio_adapter.cpp
 new file mode 100644
-index 0000000..64b5661
+index 0000000..1845f26
 --- /dev/null
 +++ b/standalone/faster_lio_adapter.cpp
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,152 @@
 +#include "faster_lio_adapter.hpp"
 +
++#include <slam_benchmark/calibration.hpp>
 +#include <spdlog/spdlog.h>
 +#include <yaml-cpp/yaml.h>
 +
@@ -114,6 +118,10 @@ index 0000000..64b5661
 +#include <cmath>
 +#include <ranges>
 +#include <stdexcept>
++
++#ifndef SLAM_BENCHMARK_PARALLEL_THREADS
++#define SLAM_BENCHMARK_PARALLEL_THREADS 4
++#endif
 +
 +namespace {
 +double seconds(slam_benchmark::TimestampNs value) {
@@ -130,10 +138,13 @@ index 0000000..64b5661
 +}
 +}  // namespace
 +
-+void FasterLioAdapter::initialize(
++slam_benchmark::InitializationResult FasterLioAdapter::initialize(
 +    std::span<const slam_benchmark::SensorDefinition> sensors,
 +    const std::filesystem::path& config_path,
 +    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true, .imu = true, .point_time = true});
++    if (!compatibility) return compatibility;
 +    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
 +                                         &slam_benchmark::SensorDefinition::type);
 +    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
@@ -142,6 +153,14 @@ index 0000000..64b5661
 +        throw std::runtime_error("Faster-LIO requires one LiDAR and one IMU");
 +
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
++    const int parallel_threads = parameter(
++        root, "parallel_threads", SLAM_BENCHMARK_PARALLEL_THREADS);
++    if (parallel_threads <= 0) {
++        throw std::runtime_error("parallel_threads must be positive");
++    }
++    tbb_control_ = std::make_unique<tbb::global_control>(
++        tbb::global_control::max_allowed_parallelism,
++        static_cast<std::size_t>(parallel_threads));
 +    faster_lio::standalone::FasterLioEngine::Options options;
 +    options.scan_voxel_size = parameter(root, "filter_size_scan_m", 0.5);
 +    options.map_voxel_size = parameter(root, "filter_size_map_m", 0.5);
@@ -155,7 +174,8 @@ index 0000000..64b5661
 +        parameter(root, "gyroscope_bias_noise", 0.0001));
 +    options.accelerometer_bias_covariance.setConstant(
 +        parameter(root, "accelerometer_bias_noise", 0.0001));
-+    const auto& transform = lidar->calibration.body_from_sensor;
++    const auto transform =
++        slam_benchmark::target_from_source(imu->calibration, lidar->calibration);
 +    options.lidar_rotation << transform[0], transform[1], transform[2], transform[4],
 +        transform[5], transform[6], transform[8], transform[9], transform[10];
 +    options.lidar_translation << transform[3], transform[7], transform[11];
@@ -167,7 +187,9 @@ index 0000000..64b5661
 +        sink_->report_timing({nanoseconds(timestamp), stage, duration});
 +    });
 +    engine_.initialize(options);
-+    spdlog::info("Faster-LIO standalone adapter initialized");
++    spdlog::info("Faster-LIO standalone adapter initialized with {} compute threads",
++                 parallel_threads);
++    return {};
 +}
 +
 +void FasterLioAdapter::process(const slam_benchmark::SensorSample& sample) {
@@ -239,22 +261,24 @@ index 0000000..64b5661
 +}
 diff --git a/standalone/faster_lio_adapter.hpp b/standalone/faster_lio_adapter.hpp
 new file mode 100644
-index 0000000..9d3bb23
+index 0000000..fd6353d
 --- /dev/null
 +++ b/standalone/faster_lio_adapter.hpp
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,30 @@
 +#pragma once
 +
 +#include "faster_lio_engine.hpp"
 +
 +#include <slam_benchmark/algorithm.hpp>
++#include <tbb/global_control.h>
 +
 +#include <deque>
++#include <memory>
 +
 +class FasterLioAdapter final : public slam_benchmark::SlamAlgorithm {
 +public:
 +    [[nodiscard]] std::string_view name() const noexcept override { return "faster_lio"; }
-+    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
 +                    const std::filesystem::path& config_path,
 +                    slam_benchmark::ResultSink& sink) override;
 +    void process(const slam_benchmark::SensorSample& sample) override;
@@ -265,6 +289,7 @@ index 0000000..9d3bb23
 +    void accept_pose(double timestamp, const faster_lio::standalone::PoseState& state);
 +
 +    slam_benchmark::ResultSink* sink_{};
++    std::unique_ptr<tbb::global_control> tbb_control_;
 +    faster_lio::standalone::FasterLioEngine engine_;
 +    std::deque<faster_lio::standalone::ImuMeasurement> imu_queue_;
 +    std::deque<faster_lio::standalone::Scan> lidar_queue_;
@@ -272,10 +297,10 @@ index 0000000..9d3bb23
 +};
 diff --git a/standalone/faster_lio_engine.cpp b/standalone/faster_lio_engine.cpp
 new file mode 100644
-index 0000000..3906740
+index 0000000..f0dfe53
 --- /dev/null
 +++ b/standalone/faster_lio_engine.cpp
-@@ -0,0 +1,416 @@
+@@ -0,0 +1,420 @@
 +#include "faster_lio_engine.hpp"
 +
 +#include "ivox3d/ivox3d.h"
@@ -568,7 +593,11 @@ index 0000000..3906740
 +        data.h.resize(matched_points.size());
 +        const Eigen::Matrix3d offset_rotation = state.offset_R_L_I.toRotationMatrix();
 +        const Eigen::Matrix3d rotation_transpose = state.rot.toRotationMatrix().transpose();
-+        for (std::size_t index = 0; index < matched_points.size(); ++index) {
++        std::vector<std::size_t> jacobian_indices(matched_points.size());
++        std::iota(jacobian_indices.begin(), jacobian_indices.end(), std::size_t{0});
++        std::for_each(std::execution::par_unseq,
++                      jacobian_indices.begin(), jacobian_indices.end(),
++                      [&](const std::size_t index) {
 +            const Eigen::Vector3d body = matched_points[index].head<3>().cast<double>();
 +            const Eigen::Vector3d point = offset_rotation * body + state.offset_T_L_I;
 +            const Eigen::Vector3d normal = matched_planes[index].head<3>().cast<double>();
@@ -583,7 +612,7 @@ index 0000000..3906740
 +                    0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
 +            }
 +            data.h(index) = -matched_points[index].w();
-+        }
++        });
 +    }
 +
 +    static void point_body_to_world(const state_ikfom& state, const PointType& input,

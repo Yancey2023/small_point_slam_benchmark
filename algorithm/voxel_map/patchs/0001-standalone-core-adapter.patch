@@ -1,13 +1,17 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 27267a2..a53c4be 100644
+index 27267a2..8a8dea9 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,92 +1,50 @@
+@@ -1,92 +1,41 @@
 -cmake_minimum_required(VERSION 2.8.3)
 -project(voxel_map)
--
++cmake_minimum_required(VERSION 3.24)
+ 
 -SET(CMAKE_BUILD_TYPE "Release")
--
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
++find_package(OpenMP REQUIRED)
+ 
 -ADD_COMPILE_OPTIONS(-std=c++14 )
 -ADD_COMPILE_OPTIONS(-std=c++14 )
 -set( CMAKE_CXX_FLAGS "-std=c++14 -O3" )
@@ -39,21 +43,8 @@ index 27267a2..a53c4be 100644
 -  endif()
 -else()
 -  add_definitions(-DMP_PROC_NUM=1)
-+cmake_minimum_required(VERSION 3.24)
-+
-+find_package(Eigen3 CONFIG REQUIRED)
-+find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
-+find_package(OpenMP REQUIRED)
-+
-+include(ProcessorCount)
-+ProcessorCount(VOXEL_MAP_PROCESSOR_COUNT)
-+set(VOXEL_MAP_PARALLEL_THREADS 1)
-+if(VOXEL_MAP_PROCESSOR_COUNT GREATER 5)
-+    set(VOXEL_MAP_PARALLEL_THREADS 4)
-+elseif(VOXEL_MAP_PROCESSOR_COUNT GREATER 3)
-+    math(EXPR VOXEL_MAP_PARALLEL_THREADS "${VOXEL_MAP_PROCESSOR_COUNT} - 2")
- endif()
- 
+-endif()
+-
 -
 -find_package(catkin REQUIRED COMPONENTS
 -  geometry_msgs
@@ -105,9 +96,9 @@ index 27267a2..a53c4be 100644
 - DEPENDENCIES
 - geometry_msgs
 +target_compile_definitions(voxel_map_algorithm PRIVATE
-+    MP_PROC_NUM=${VOXEL_MAP_PARALLEL_THREADS}
++    MP_PROC_NUM=${SLAM_BENCHMARK_PARALLEL_THREADS}
  )
-+if(VOXEL_MAP_PARALLEL_THREADS GREATER 1)
++if(SLAM_BENCHMARK_PARALLEL_THREADS GREATER 1)
 +    target_compile_definitions(voxel_map_algorithm PRIVATE MP_EN)
 +endif()
  
@@ -211,7 +202,7 @@ index 0976e1a..4d0cade 100644
 \ No newline at end of file
 +#endif
 diff --git a/include/voxel_map_util.hpp b/include/voxel_map_util.hpp
-index 4ff9a0f..dc87b85 100644
+index 4ff9a0f..f1815f7 100644
 --- a/include/voxel_map_util.hpp
 +++ b/include/voxel_map_util.hpp
 @@ -5,21 +5,18 @@
@@ -238,7 +229,15 @@ index 4ff9a0f..dc87b85 100644
  // a point to plane matching structure
  typedef struct ptpl {
    Eigen::Vector3d point;
-@@ -945,6 +942,7 @@ void BuildResidualListNormal(
+@@ -809,7 +806,6 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
+     useful_ptpl[i] = false;
+   }
+ #ifdef MP_EN
+-  omp_set_num_threads(MP_PROC_NUM);
+ #pragma omp parallel for
+ #endif
+   for (int i = 0; i < index.size(); i++) {
+@@ -945,6 +941,7 @@ void BuildResidualListNormal(
    }
  }
  
@@ -246,7 +245,7 @@ index 4ff9a0f..dc87b85 100644
  void CalcVectQuation(const Eigen::Vector3d &x_vec, const Eigen::Vector3d &y_vec,
                       const Eigen::Vector3d &z_vec,
                       geometry_msgs::Quaternion &q) {
-@@ -1219,6 +1217,8 @@ void pubPlaneMap(const std::unordered_map<VOXEL_LOC, OctoTree *> &feat_map,
+@@ -1219,6 +1216,8 @@ void pubPlaneMap(const std::unordered_map<VOXEL_LOC, OctoTree *> &feat_map,
    //      << "total size: " << feat_map.size() << endl;
  }
  
@@ -255,7 +254,7 @@ index 4ff9a0f..dc87b85 100644
  void calcBodyCov(Eigen::Vector3d &pb, const float range_inc,
                   const float degree_inc, Eigen::Matrix3d &cov) {
    float range = sqrt(pb[0] * pb[0] + pb[1] * pb[1] + pb[2] * pb[2]);
-@@ -1244,4 +1244,4 @@ void calcBodyCov(Eigen::Vector3d &pb, const float range_inc,
+@@ -1244,4 +1243,4 @@ void calcBodyCov(Eigen::Vector3d &pb, const float range_inc,
          A * direction_var * A.transpose();
  };
  
@@ -278,14 +277,15 @@ index 0000000..4b81fec
 +}
 diff --git a/standalone/voxel_map_adapter.cpp b/standalone/voxel_map_adapter.cpp
 new file mode 100644
-index 0000000..e0e2880
+index 0000000..d879c65
 --- /dev/null
 +++ b/standalone/voxel_map_adapter.cpp
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,129 @@
 +#include "voxel_map_adapter.hpp"
 +
 +#include <spdlog/spdlog.h>
 +#include <yaml-cpp/yaml.h>
++#include <omp.h>
 +
 +#include <chrono>
 +#include <cmath>
@@ -310,10 +310,13 @@ index 0000000..e0e2880
 +
 +}  // namespace
 +
-+void VoxelMapAdapter::initialize(
++slam_benchmark::InitializationResult VoxelMapAdapter::initialize(
 +    std::span<const slam_benchmark::SensorDefinition> sensors,
 +    const std::filesystem::path& config_path,
 +    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true});
++    if (!compatibility) return compatibility;
 +    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
 +                                         &slam_benchmark::SensorDefinition::type);
 +    if (lidar == sensors.end()) throw std::runtime_error("VoxelMap requires a LiDAR");
@@ -325,6 +328,12 @@ index 0000000..e0e2880
 +            body_from_lidar_(row, column) = transform[row * 4 + column];
 +
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
++    const int parallel_threads = required_parameter<int>(root, "parallel_threads");
++    if (parallel_threads <= 0) {
++        throw std::runtime_error("parallel_threads must be positive");
++    }
++    omp_set_dynamic(0);
++    omp_set_num_threads(parallel_threads);
 +    VoxelMapEngine::Options options;
 +    options.scan_filter_size_m = required_parameter<double>(root, "filter_size_scan_m");
 +    options.map_voxel_size_m = required_parameter<double>(root, "map_voxel_size_m");
@@ -350,10 +359,12 @@ index 0000000..e0e2880
 +        sink_->report_timing({nanoseconds(timestamp), stage, duration});
 +    });
 +    engine_.initialize(options);
-+    spdlog::info("VoxelMap parameters: scan filter={} m, map voxel={} m, iterations={}",
++    spdlog::info("VoxelMap parameters: scan filter={} m, map voxel={} m, "
++                 "iterations={}, compute threads={}",
 +                 options.scan_filter_size_m, options.map_voxel_size_m,
-+                 options.max_iterations);
++                 options.max_iterations, parallel_threads);
 +    spdlog::info("VoxelMap standalone adapter initialized");
++    return {};
 +}
 +
 +void VoxelMapAdapter::process(const slam_benchmark::SensorSample& sample) {
@@ -401,7 +412,7 @@ index 0000000..e0e2880
 +}
 diff --git a/standalone/voxel_map_adapter.hpp b/standalone/voxel_map_adapter.hpp
 new file mode 100644
-index 0000000..b59ce55
+index 0000000..1ff33a5
 --- /dev/null
 +++ b/standalone/voxel_map_adapter.hpp
 @@ -0,0 +1,24 @@
@@ -414,7 +425,7 @@ index 0000000..b59ce55
 +class VoxelMapAdapter final : public slam_benchmark::SlamAlgorithm {
 +public:
 +    [[nodiscard]] std::string_view name() const noexcept override { return "voxel_map"; }
-+    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
 +                    const std::filesystem::path& config_path,
 +                    slam_benchmark::ResultSink& sink) override;
 +    void process(const slam_benchmark::SensorSample& sample) override;

@@ -60,7 +60,9 @@ public:
           cpu_csv(options.output_directory / "cpu.csv",
                   "elapsed_ms,core_percent,normalized_percent,resident_memory_mb"),
           summary_csv(options.output_directory / "summary.csv",
-                      "message_count,wall_time_ms,algorithm_process_time_ms,mean_cpu_normalized_percent,mean_memory_mb,peak_memory_mb,run_mode") {}
+                      "message_count,wall_time_ms,algorithm_process_time_ms,"
+                      "algorithm_cpu_time_ms,mean_cpu_normalized_percent,mean_memory_mb,"
+                      "peak_memory_mb,run_mode,status,reason") {}
 
     BenchmarkOptions options;
     CsvWriter message_csv;
@@ -80,8 +82,27 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
                                       DatasetReader& reader,
                                       const BagDefinition& bag,
                                       const std::filesystem::path& algorithm_config) {
-    ProcessMonitor monitor;
     BenchmarkSummary summary;
+    const auto write_unsupported = [this](const InitializationResult& result) {
+        std::ostringstream row;
+        row << "0,0,0,0,0,0,0," << to_string(impl_->options.run_mode)
+            << ",unsupported," << csv_escape(result.reason);
+        impl_->summary_csv.row(row.str());
+    };
+    spdlog::info("checking whether {} can run on {}", algorithm.name(), bag.name);
+    std::vector<SensorDefinition> inspected_sensors;
+    try {
+        inspected_sensors = reader.inspect(bag);
+    } catch (const std::exception& error) {
+        summary.initialization = InitializationResult::unsupported(
+            std::string("无法检查数据集：") + error.what());
+        write_unsupported(summary.initialization);
+        spdlog::warn("skipping {} on {}: {}", algorithm.name(), bag.name,
+                     summary.initialization.reason);
+        return summary;
+    }
+
+    ProcessMonitor monitor;
     double cpu_sum = 0.0;
     double memory_sum = 0.0;
     double peak_memory_mb = 0.0;
@@ -91,9 +112,23 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
     std::optional<TimestampNs> first_message_timestamp;
     std::chrono::steady_clock::time_point replay_start;
 
+    auto available_sensors = inspected_sensors;
+    std::erase_if(available_sensors,
+                  [](const SensorDefinition& sensor) { return !sensor.available; });
+    spdlog::info("initializing {} on {}", algorithm.name(), bag.name);
+    summary.initialization =
+        algorithm.initialize(available_sensors, algorithm_config, *this);
+    if (!summary.initialization) {
+        write_unsupported(summary.initialization);
+        spdlog::warn("skipping {} on {}: {}", algorithm.name(), bag.name,
+                     summary.initialization.reason);
+        return summary;
+    }
+
+    BagDefinition inspected_bag = bag;
+    inspected_bag.sensors = std::move(available_sensors);
     spdlog::info("running {} on {}", algorithm.name(), bag.name);
-    algorithm.initialize(bag.sensors, algorithm_config, *this);
-    reader.read(bag, [&](SensorSample&& sample) {
+    reader.read(inspected_bag, [&](SensorSample&& sample) {
         if (impl_->options.run_mode == RunMode::Realtime) {
             if (!first_message_timestamp) {
                 first_message_timestamp = sample.timestamp_ns;
@@ -111,12 +146,16 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
                                std::to_string(sample.timestamp_ns) + ',' +
                                std::to_string(payload_items(sample.payload)));
 
+        const double process_cpu_start = ProcessMonitor::process_cpu_time_seconds();
         const auto process_start = std::chrono::steady_clock::now();
         algorithm.process(sample);
         const auto process_end = std::chrono::steady_clock::now();
+        const double process_cpu_end = ProcessMonitor::process_cpu_time_seconds();
         const double duration_ms =
             std::chrono::duration<double, std::milli>(process_end - process_start).count();
         summary.algorithm_process_time_ms += duration_ms;
+        summary.algorithm_cpu_time_ms +=
+            1000.0 * std::max(0.0, process_cpu_end - process_cpu_start);
         ++summary.message_count;
         report_timing({sample.timestamp_ns, "total", duration_ms});
 
@@ -160,9 +199,10 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
 
     std::ostringstream row;
     row << std::setprecision(10) << summary.message_count << ',' << summary.wall_time_ms << ','
-        << summary.algorithm_process_time_ms << ',' << summary.mean_cpu_normalized_percent << ','
-        << summary.mean_memory_mb << ',' << summary.peak_memory_mb << ','
-        << to_string(impl_->options.run_mode);
+        << summary.algorithm_process_time_ms << ',' << summary.algorithm_cpu_time_ms << ','
+        << summary.mean_cpu_normalized_percent << ',' << summary.mean_memory_mb << ','
+        << summary.peak_memory_mb << ','
+        << to_string(impl_->options.run_mode) << ",completed,";
     impl_->summary_csv.row(row.str());
     spdlog::info("finished {} messages in {:.3f} ms", summary.message_count,
                  summary.wall_time_ms);

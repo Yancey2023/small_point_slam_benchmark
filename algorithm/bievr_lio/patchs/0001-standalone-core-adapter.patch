@@ -1,0 +1,248 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+new file mode 100644
+index 0000000..7bef574
+--- /dev/null
++++ b/CMakeLists.txt
+@@ -0,0 +1,25 @@
++cmake_minimum_required(VERSION 3.24)
++
++set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build BIEVR-LIO as a static library" FORCE)
++add_subdirectory(BIEVR)
++
++add_executable(bievr_lio_benchmark
++  standalone/bievr_lio_adapter.cpp
++  standalone/main.cpp
++)
++target_include_directories(bievr_lio_benchmark PRIVATE standalone)
++target_compile_definitions(bievr_lio_benchmark PRIVATE
++  SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
++)
++target_link_libraries(bievr_lio_benchmark PRIVATE
++  bievr_lio
++  slam_benchmark::core
++  yaml-cpp::yaml-cpp
++  spdlog::spdlog
++)
++
++if(MSVC)
++  target_compile_options(bievr_lio_benchmark PRIVATE /W4 /utf-8)
++else()
++  target_compile_options(bievr_lio_benchmark PRIVATE -Wall -Wextra -Wpedantic)
++endif()
+diff --git a/standalone/bievr_lio_adapter.cpp b/standalone/bievr_lio_adapter.cpp
+new file mode 100644
+index 0000000..74c2242
+--- /dev/null
++++ b/standalone/bievr_lio_adapter.cpp
+@@ -0,0 +1,161 @@
++#include "bievr_lio_adapter.hpp"
++
++#include <bievr_lio/timing.h>
++#include <slam_benchmark/calibration.hpp>
++#include <spdlog/spdlog.h>
++#include <yaml-cpp/yaml.h>
++
++#include <algorithm>
++#include <chrono>
++#include <ranges>
++#include <stdexcept>
++
++#ifndef SLAM_BENCHMARK_PARALLEL_THREADS
++#define SLAM_BENCHMARK_PARALLEL_THREADS 4
++#endif
++
++namespace {
++template <typename T>
++T parameter(const YAML::Node& root, const char* key, T fallback) {
++    return root[key] ? root[key].as<T>() : fallback;
++}
++
++bievr::Transform sensor_transform(const slam_benchmark::TransformMatrix& value) {
++    bievr::Rotation rotation;
++    rotation << value[0], value[1], value[2], value[4], value[5], value[6],
++        value[8], value[9], value[10];
++    return {rotation, bievr::Point(value[3], value[7], value[11])};
++}
++
++constexpr std::pair<const char*, const char*> kTimingStages[] = {
++    {"01_filter", "lidar_preprocess"},
++    {"02_preint", "state_propagation"},
++    {"03_undistortion", "undistortion"},
++    {"04_sampling", "downsampling"},
++    {"05_registration", "registration"},
++    {"06_map", "map_update"},
++    {"07_imu_opt", "filter_update"},
++};
++}  // namespace
++
++slam_benchmark::InitializationResult BievrLioAdapter::initialize(
++    std::span<const slam_benchmark::SensorDefinition> sensors,
++    const std::filesystem::path& config_path,
++    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true, .imu = true, .point_time = true});
++    if (!compatibility) return compatibility;
++    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
++                                         &slam_benchmark::SensorDefinition::type);
++    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
++                                       &slam_benchmark::SensorDefinition::type);
++    if (lidar == sensors.end() || imu == sensors.end()) {
++        throw std::runtime_error("BIEVR-LIO requires one LiDAR and one IMU");
++    }
++
++    const YAML::Node root = YAML::LoadFile(config_path.string());
++    const int parallel_threads = parameter(
++        root, "parallel_threads", SLAM_BENCHMARK_PARALLEL_THREADS);
++    if (parallel_threads <= 0) {
++        throw std::runtime_error("parallel_threads must be positive");
++    }
++    tbb_control_ = std::make_unique<tbb::global_control>(
++        tbb::global_control::max_allowed_parallelism,
++        static_cast<std::size_t>(parallel_threads));
++    bievr::Pipeline::Config config;
++    config.preprocess.downsample_resolution = parameter(root, "filter_size_scan_m", 0.2);
++    config.map.voxel_size = parameter(root, "map_voxel_size_m", 0.5);
++    config.registration.max_iterations = parameter(root, "max_iterations", 6);
++    config.T_I_L = sensor_transform(
++        slam_benchmark::target_from_source(imu->calibration, lidar->calibration));
++    config.print_timing = false;
++    config.publish_all_clouds = false;
++    config.print_dashboard = false;
++
++    sink_ = &sink;
++    pipeline_ = std::make_shared<bievr::Pipeline>(config);
++    pipeline_->registerPublisher<bievr::Odometry>(
++        [this](const bievr::Odometry& value, const bievr::Header& header,
++               const std::string&, const std::string&) { accept_odometry(value, header); });
++    pipeline_->registerPublisher<bievr::IntensityPointcloud>(
++        [](const auto&, const auto&, const auto&, const auto&) {});
++    pipeline_->registerPublisher<bievr::Pointcloud>(
++        [](const auto&, const auto&, const auto&, const auto&) {});
++    pipeline_->registerPublisher<bievr::V3>(
++        [](const auto&, const auto&, const auto&, const auto&) {});
++    synchronizer_ = std::make_unique<bievr::Synchronizer>(pipeline_);
++    timing::Timing::Reset();
++    spdlog::info("BIEVR-LIO standalone adapter initialized with {} compute threads",
++                 parallel_threads);
++    return {};
++}
++
++void BievrLioAdapter::process(const slam_benchmark::SensorSample& sample) {
++    if (const auto* imu = std::get_if<slam_benchmark::ImuSample>(&sample.payload)) {
++        const auto started = std::chrono::steady_clock::now();
++        bievr::ImuMeasurement measurement;
++        measurement.stamp = sample.timestamp_ns;
++        measurement.acc << imu->linear_acceleration_m_s2[0],
++            imu->linear_acceleration_m_s2[1], imu->linear_acceleration_m_s2[2];
++        measurement.gyro << imu->angular_velocity_rad_s[0],
++            imu->angular_velocity_rad_s[1], imu->angular_velocity_rad_s[2];
++        synchronizer_->addImu(measurement);
++        const double elapsed = std::chrono::duration<double, std::milli>(
++            std::chrono::steady_clock::now() - started).count();
++        sink_->report_timing({sample.timestamp_ns, "imu_preprocess", elapsed});
++    } else if (const auto* source = std::get_if<slam_benchmark::PointCloud>(&sample.payload)) {
++        if (source->points.size() != source->point_time_offset_ns.size()) {
++            throw std::runtime_error("point/time array size mismatch");
++        }
++        const auto started = std::chrono::steady_clock::now();
++        bievr::StampedIntensityPointcloud cloud;
++        cloud.stamp = sample.timestamp_ns;
++        cloud.end_stamp = sample.timestamp_ns;
++        cloud.resize(source->points.size());
++        for (std::size_t index = 0; index < source->points.size(); ++index) {
++            const auto& point = source->points[index];
++            const auto offset = source->point_time_offset_ns[index];
++            cloud[index] << point.x, point.y, point.z,
++                static_cast<double>(offset) * 1e-9, point.intensity;
++            if (offset > 0) {
++                cloud.end_stamp = std::max(
++                    cloud.end_stamp, sample.timestamp_ns + static_cast<std::uint64_t>(offset));
++            }
++        }
++        synchronizer_->addPointcloud(cloud);
++        const double elapsed = std::chrono::duration<double, std::milli>(
++            std::chrono::steady_clock::now() - started).count();
++        sink_->report_timing({sample.timestamp_ns, "lidar_preprocess", elapsed});
++    }
++    report_new_stage_timings(sample.timestamp_ns);
++}
++
++void BievrLioAdapter::report_new_stage_timings(slam_benchmark::TimestampNs timestamp) {
++    for (const auto& [native_stage, common_stage] : kTimingStages) {
++        const auto& timers = timing::Timing::GetTimers();
++        const auto found = timers.find(native_stage);
++        if (found == timers.end()) continue;
++        const double total_seconds = timing::Timing::GetTotalSeconds(found->second);
++        const double previous = timing_totals_[native_stage];
++        if (total_seconds > previous) {
++            sink_->report_timing({timestamp, common_stage, (total_seconds - previous) * 1000.0});
++            timing_totals_[native_stage] = total_seconds;
++        }
++    }
++}
++
++void BievrLioAdapter::accept_odometry(
++    const bievr::Odometry& odometry, const bievr::Header& header) {
++    const auto quaternion = odometry.pose.quaternion();
++    slam_benchmark::Pose pose;
++    pose.timestamp_ns = header.stamp;
++    pose.translation_m = {odometry.pose.translation().x(), odometry.pose.translation().y(),
++                          odometry.pose.translation().z()};
++    pose.rotation_xyzw = {quaternion.x(), quaternion.y(), quaternion.z(), quaternion.w()};
++    trajectory_.push_back(pose);
++    sink_->report_realtime_pose(pose);
++}
++
++void BievrLioAdapter::finalize() {
++    sink_->report_final_trajectory(trajectory_);
++}
+diff --git a/standalone/bievr_lio_adapter.hpp b/standalone/bievr_lio_adapter.hpp
+new file mode 100644
+index 0000000..ef11f3c
+--- /dev/null
++++ b/standalone/bievr_lio_adapter.hpp
+@@ -0,0 +1,30 @@
++#pragma once
++
++#include <bievr_lio/pipeline.h>
++#include <bievr_lio/synchronizer.h>
++#include <slam_benchmark/algorithm.hpp>
++#include <tbb/global_control.h>
++
++#include <map>
++#include <memory>
++
++class BievrLioAdapter final : public slam_benchmark::SlamAlgorithm {
++public:
++    [[nodiscard]] std::string_view name() const noexcept override { return "bievr_lio"; }
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++                    const std::filesystem::path& config_path,
++                    slam_benchmark::ResultSink& sink) override;
++    void process(const slam_benchmark::SensorSample& sample) override;
++    void finalize() override;
++
++private:
++    void report_new_stage_timings(slam_benchmark::TimestampNs timestamp);
++    void accept_odometry(const bievr::Odometry& odometry, const bievr::Header& header);
++
++    slam_benchmark::ResultSink* sink_{};
++    std::unique_ptr<tbb::global_control> tbb_control_;
++    std::shared_ptr<bievr::Pipeline> pipeline_;
++    std::unique_ptr<bievr::Synchronizer> synchronizer_;
++    std::map<std::string, double> timing_totals_;
++    slam_benchmark::Trajectory trajectory_;
++};
+diff --git a/standalone/main.cpp b/standalone/main.cpp
+new file mode 100644
+index 0000000..b66cb4a
+--- /dev/null
++++ b/standalone/main.cpp
+@@ -0,0 +1,8 @@
++#include "bievr_lio_adapter.hpp"
++
++#include <slam_benchmark/application.hpp>
++
++int main(int argc, char** argv) {
++    BievrLioAdapter algorithm;
++    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
++}

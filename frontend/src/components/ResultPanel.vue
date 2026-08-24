@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 
 import type { BenchmarkResult, TrajectoryResponse } from '../../shared/contracts'
 import { fetchResultTrajectory } from '@/api/client'
+import HelpTip from '@/components/HelpTip.vue'
 import TrajectoryPlot from '@/components/TrajectoryPlot.vue'
 import { algorithmColor } from '@/presentation'
 
@@ -131,7 +132,14 @@ function meters(value: number): string {
   <section class="results-card" aria-labelledby="result-title">
     <div class="results-heading">
       <div>
-        <h2 id="result-title">轨迹对比</h2>
+        <div class="heading-title">
+          <h2 id="result-title">轨迹对比</h2>
+          <HelpTip
+            text="切换 XY、XZ、YZ 可以从不同方向查看路线。轨迹长度只表示移动距离，不代表算法精度。"
+            label="查看轨迹对比说明"
+            align="start"
+          />
+        </div>
         <p>数据集单选、算法多选，并可切换 XY、XZ、YZ 投影</p>
       </div>
       <div class="endpoint-legend">
@@ -144,17 +152,13 @@ function meters(value: number): string {
       <aside class="result-filters">
         <fieldset>
           <legend>数据集（单选）</legend>
-          <button
-            v-for="dataset in datasetOptions"
-            :key="dataset.id"
-            type="button"
-            :aria-pressed="selectedDatasetId === dataset.id"
-            :class="{ active: selectedDatasetId === dataset.id }"
-            @click="selectedDatasetId = dataset.id"
-          >
-            <span class="checkmark">{{ selectedDatasetId === dataset.id ? '●' : '' }}</span>
-            <span>{{ dataset.label }}</span>
-          </button>
+          <div class="dataset-select-wrap">
+            <select v-model="selectedDatasetId" class="dataset-select" aria-label="选择轨迹数据集">
+              <option v-for="dataset in datasetOptions" :key="dataset.id" :value="dataset.id">
+                {{ dataset.label }}
+              </option>
+            </select>
+          </div>
         </fieldset>
 
         <fieldset>
@@ -215,6 +219,7 @@ function meters(value: number): string {
 }
 .results-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
 h2 { margin: 0 0 3px; font-size: 23px; }
+.heading-title { display: flex; align-items: center; gap: 7px; }
 .results-heading p { margin: 0; color: var(--ink-muted); font-size: 13px; }
 .endpoint-legend { display: flex; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 11px; }
 .endpoint-legend span { width: 9px; height: 9px; border: 2px solid #6f8791; border-radius: 50%; }
@@ -225,6 +230,23 @@ h2 { margin: 0 0 3px; font-size: 23px; }
 fieldset { display: grid; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
 legend { display: flex; width: calc(100% - 10px); align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; color: #68797f; font-size: 11px; font-weight: 900; letter-spacing: .08em; }
 legend button { flex: none; padding: 4px 7px; border: 0; border-radius: 7px; color: #60777f; background: #e8efec; cursor: pointer; font-size: 9px; font-weight: 800; letter-spacing: 0; white-space: nowrap; }
+.dataset-select-wrap { position: relative; }
+.dataset-select-wrap::after { position: absolute; top: 50%; right: 12px; color: #60777f; content: '⌄'; font-size: 15px; pointer-events: none; transform: translateY(-58%); }
+.dataset-select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 34px 10px 12px;
+  border: 1px solid #cbd7d5;
+  border-radius: 14px;
+  color: var(--ink);
+  background: #f4f7f5;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  appearance: none;
+}
+.dataset-select:focus-visible { outline: 2px solid #87a0aa; outline-offset: 2px; }
 .result-filters fieldset > button {
   display: grid;
   grid-template-columns: 21px minmax(0, 1fr);
@@ -247,7 +269,6 @@ legend button { flex: none; padding: 4px 7px; border: 0; border-radius: 7px; col
 .result-filters fieldset > button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .checkmark { display: grid; width: 20px; height: 20px; place-items: center; border: 1.5px solid #b8c4c5; border-radius: 7px; color: #fff; font-size: 11px; }
 .active .checkmark { border-color: #607c89; background: #607c89; }
-.result-filters fieldset:first-child .checkmark { border-radius: 50%; font-size: 8px; }
 .tab-dot { width: 9px; height: 9px; border-radius: 50%; }
 
 .visualization { min-width: 0; }

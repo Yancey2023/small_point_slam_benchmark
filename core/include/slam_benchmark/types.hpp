@@ -44,7 +44,13 @@ struct SensorDefinition {
     std::string topic;
     std::string message_type;
     SensorCalibration calibration;
+    // Filled by DatasetReader::inspect before algorithm initialization.
+    bool available{true};
+    std::string availability_reason;
+    bool provides_point_time{true};
+    bool provides_intensity{true};
     std::string point_time_field{"time"};
+    std::string intensity_field{"intensity"};
     double point_time_to_nanoseconds{1.0};
     double distance_to_meters{1.0};
     double angular_velocity_to_rad_per_second{1.0};
@@ -55,6 +61,7 @@ struct PointXYZIR {
     float x{};
     float y{};
     float z{};
+    // Raw sensor intensity/reflectivity. Dataset readers must populate it.
     float intensity{};
     std::uint16_t ring{};
 };
@@ -116,4 +123,3 @@ struct TimingSample {
 };
 
 }  // namespace slam_benchmark
-

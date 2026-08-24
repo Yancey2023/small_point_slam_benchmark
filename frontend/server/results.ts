@@ -34,6 +34,18 @@ async function resultRunMode(summaryPath: string): Promise<ReturnType<typeof run
   }
 }
 
+async function resultStatus(summaryPath: string): Promise<string> {
+  try {
+    const [header = '', values = ''] = (await readFile(summaryPath, 'utf8')).split(/\r?\n/)
+    const columns = header.split(',')
+    const row = values.split(',')
+    const index = columns.indexOf('status')
+    return index < 0 ? 'completed' : (row[index] ?? '')
+  } catch {
+    return 'completed'
+  }
+}
+
 export function relativeResultDirectory(
   datasets: Iterable<DatasetCatalogItem>,
   dataset: DatasetCatalogItem,
@@ -80,6 +92,9 @@ export async function discoverResults(
       ])
       const hasPerformance = performanceFiles.every(Boolean)
       if (!hasTrajectory && !hasPerformance) continue
+      if (await resultStatus(path.join(absoluteOutputDirectory, 'summary.csv')) === 'unsupported') {
+        continue
+      }
       const availableFiles = [
         ...(hasTrajectory ? [trajectoryPath] : []),
         ...performancePaths.filter((_, index) => performanceFiles[index]),

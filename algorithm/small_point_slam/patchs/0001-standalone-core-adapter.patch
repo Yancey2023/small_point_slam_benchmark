@@ -1,5 +1,5 @@
 diff --git a/src/localization/observation/point_cloud.cpp b/src/localization/observation/point_cloud.cpp
-index e237c3b..62e9567 100644
+index e237c3b..d38697b 100644
 --- a/src/localization/observation/point_cloud.cpp
 +++ b/src/localization/observation/point_cloud.cpp
 @@ -25,7 +25,9 @@ namespace small_point_slam::observation {
@@ -22,13 +22,26 @@ index e237c3b..62e9567 100644
                  dense_points_.push_back(point);
              }
              if (i % parameters_->point_filter_num != 0 || point.timestamp < last_filter_timestamp_) {
-@@ -64,9 +66,11 @@ namespace small_point_slam::observation {
+@@ -53,6 +55,9 @@ namespace small_point_slam::observation {
+             }
+         }
+ 
++#ifdef USE_PERFORMANCE_STATS
++        performance_stats_->start_timer(PerfTimer::PreprocessVoxelDownsample);
++#endif
+         if (parameters_->space_downsample) {
+             if (parameters_->space_downsample_center_based) {
+                 downsampler_.voxelgrid_sampling_center_based(
+@@ -64,9 +69,14 @@ namespace small_point_slam::observation {
          } else {
              processed_pointcloud_ = std::move(filtered_points_);
          }
 -        std::ranges::sort(dense_points_, [](const auto &left, const auto &right) {
 -            return left.timestamp < right.timestamp;
 -        });
++#ifdef USE_PERFORMANCE_STATS
++        performance_stats_->end_timer(PerfTimer::PreprocessVoxelDownsample);
++#endif
 +        if (dense_output_enabled_) {
 +            std::ranges::sort(dense_points_, [](const auto &left, const auto &right) {
 +                return left.timestamp < right.timestamp;
@@ -37,7 +50,7 @@ index e237c3b..62e9567 100644
          std::ranges::sort(processed_pointcloud_, [](const auto &left, const auto &right) {
              return left.timestamp < right.timestamp;
          });
-@@ -112,6 +116,16 @@ namespace small_point_slam::observation {
+@@ -112,6 +122,16 @@ namespace small_point_slam::observation {
  #endif
      }
  
@@ -218,10 +231,10 @@ index b37d5ee..a94d530 100644
  // 使用枚举的宏
 diff --git a/standalone/CMakeLists.txt b/standalone/CMakeLists.txt
 new file mode 100644
-index 0000000..f459da8
+index 0000000..4826c60
 --- /dev/null
 +++ b/standalone/CMakeLists.txt
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,65 @@
 +cmake_minimum_required(VERSION 3.24)
 +
 +find_package(Eigen3 CONFIG REQUIRED)
@@ -275,6 +288,9 @@ index 0000000..f459da8
 +target_link_libraries(small_point_slam_benchmark PRIVATE
 +    small_point_slam_algorithm
 +    slam_benchmark::core
++)
++target_compile_definitions(small_point_slam_benchmark PRIVATE
++    SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
 +)
 +
 +if(MSVC)
@@ -393,10 +409,10 @@ index 0000000..8c06fb1
 +}
 diff --git a/standalone/small_point_slam_adapter.cpp b/standalone/small_point_slam_adapter.cpp
 new file mode 100644
-index 0000000..1b8b332
+index 0000000..b48b961
 --- /dev/null
 +++ b/standalone/small_point_slam_adapter.cpp
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,146 @@
 +#include "small_point_slam_adapter.hpp"
 +
 +#include <spdlog/spdlog.h>
@@ -406,6 +422,10 @@ index 0000000..1b8b332
 +#include <cmath>
 +#include <ranges>
 +#include <stdexcept>
++
++#ifndef SLAM_BENCHMARK_PARALLEL_THREADS
++#define SLAM_BENCHMARK_PARALLEL_THREADS 4
++#endif
 +
 +namespace {
 +double seconds(slam_benchmark::TimestampNs timestamp) {
@@ -437,10 +457,13 @@ index 0000000..1b8b332
 +}
 +}  // namespace
 +
-+void SmallPointSlamAdapter::initialize(
++slam_benchmark::InitializationResult SmallPointSlamAdapter::initialize(
 +    std::span<const slam_benchmark::SensorDefinition> sensors,
 +    const std::filesystem::path& config_path,
 +    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true, .imu = true, .point_time = true});
++    if (!compatibility) return compatibility;
 +    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
 +                                         &slam_benchmark::SensorDefinition::type);
 +    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
@@ -452,8 +475,18 @@ index 0000000..1b8b332
 +    sink_ = &sink;
 +    lidar_id_ = lidar->id;
 +    imu_id_ = imu->id;
++    const YAML::Node root = YAML::LoadFile(config_path.string());
++    const int parallel_threads = root["parallel_threads"]
++        ? root["parallel_threads"].as<int>()
++        : SLAM_BENCHMARK_PARALLEL_THREADS;
++    if (parallel_threads <= 0) {
++        throw std::runtime_error("parallel_threads must be positive");
++    }
++    tbb_control_ = std::make_unique<tbb::global_control>(
++        tbb::global_control::max_allowed_parallelism,
++        static_cast<std::size_t>(parallel_threads));
 +    engine_ = std::make_unique<small_point_slam::standalone::SmallPointSlamEngine>(
-+        YAML::LoadFile(config_path.string()), rotation(lidar->calibration),
++        root, rotation(lidar->calibration),
 +        translation(lidar->calibration), rotation(imu->calibration));
 +    engine_->set_pose_callback(
 +        [this](double timestamp, const small_point_slam::State& state) {
@@ -463,7 +496,9 @@ index 0000000..1b8b332
 +                                        double duration_ms) {
 +        sink_->report_timing({nanoseconds(timestamp), stage, duration_ms});
 +    });
-+    spdlog::info("Small Point SLAM standalone adapter initialized");
++    spdlog::info("Small Point SLAM standalone adapter initialized with at most {} compute threads",
++                 parallel_threads);
++    return {};
 +}
 +
 +void SmallPointSlamAdapter::process(const slam_benchmark::SensorSample& sample) {
@@ -526,15 +561,16 @@ index 0000000..1b8b332
 +}
 diff --git a/standalone/small_point_slam_adapter.hpp b/standalone/small_point_slam_adapter.hpp
 new file mode 100644
-index 0000000..e2f759b
+index 0000000..1516aed
 --- /dev/null
 +++ b/standalone/small_point_slam_adapter.hpp
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,30 @@
 +#pragma once
 +
 +#include "small_point_slam_engine.hpp"
 +
 +#include <slam_benchmark/algorithm.hpp>
++#include <tbb/global_control.h>
 +
 +#include <memory>
 +
@@ -543,7 +579,7 @@ index 0000000..e2f759b
 +    [[nodiscard]] std::string_view name() const noexcept override {
 +        return "small_point_slam";
 +    }
-+    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
 +                    const std::filesystem::path& config_path,
 +                    slam_benchmark::ResultSink& sink) override;
 +    void process(const slam_benchmark::SensorSample& sample) override;
@@ -555,15 +591,16 @@ index 0000000..e2f759b
 +    slam_benchmark::ResultSink* sink_{};
 +    slam_benchmark::SensorId lidar_id_{};
 +    slam_benchmark::SensorId imu_id_{};
++    std::unique_ptr<tbb::global_control> tbb_control_;
 +    std::unique_ptr<small_point_slam::standalone::SmallPointSlamEngine> engine_;
 +    slam_benchmark::Trajectory trajectory_;
 +};
 diff --git a/standalone/small_point_slam_engine.cpp b/standalone/small_point_slam_engine.cpp
 new file mode 100644
-index 0000000..42e5f8d
+index 0000000..461e34b
 --- /dev/null
 +++ b/standalone/small_point_slam_engine.cpp
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,200 @@
 +#include "small_point_slam_engine.hpp"
 +
 +#include <algorithm>
@@ -732,7 +769,8 @@ index 0000000..42e5f8d
 +        return value * 1e-6;
 +    };
 +
-+    const double downsampling = delta(PerfTimer::DataPreprocessing);
++    delta(PerfTimer::DataPreprocessing);
++    const double downsampling = delta(PerfTimer::PreprocessVoxelDownsample);
 +    const double state_propagation = delta(PerfTimer::FilterPrediction);
 +    const double imu_update = delta(PerfTimer::ImuUpdate);
 +    const double point_update = delta(PerfTimer::PointCloudUpdate);

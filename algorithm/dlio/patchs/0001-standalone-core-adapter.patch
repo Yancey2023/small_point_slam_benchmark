@@ -1,0 +1,844 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 91e47a0..c552c55 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,119 +1,43 @@
+-###########################################################
+-#                                                         #
+-# Copyright (c)                                           #
+-#                                                         #
+-# The Verifiable & Control-Theoretic Robotics (VECTR) Lab #
+-# University of California, Los Angeles                   #
+-#                                                         #
+-# Authors: Kenny J. Chen, Ryan Nemiroff, Brett T. Lopez   #
+-# Contact: {kennyjchen, ryguyn, btlopez}@ucla.edu         #
+-#                                                         #
+-###########################################################
++cmake_minimum_required(VERSION 3.24)
+ 
+-cmake_minimum_required(VERSION 3.12.4)
+-project(direct_lidar_inertial_odometry)
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(PCL 1.10 REQUIRED COMPONENTS common filters registration)
++find_package(OpenMP REQUIRED)
+ 
+-add_compile_options(-std=c++17)
+-set(CMAKE_BUILD_TYPE "Release")
+-
+-find_package( PCL REQUIRED )
+-include_directories(${PCL_INCLUDE_DIRS})
+-add_definitions(${PCL_DEFINITIONS})
+-link_directories(${PCL_LIBRARY_DIRS})
+-
+-find_package( Eigen3 REQUIRED )
+-include_directories(${EIGEN3_INCLUDE_DIR})
+-
+-include(FindOpenMP)
+-if(OPENMP_FOUND)
+-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
+-else(OPENMP_FOUND)
+-  message("ERROR: OpenMP could not be found.")
+-endif(OPENMP_FOUND)
+-
+-set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
+-set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+-find_package(Threads REQUIRED)
+-
+-find_package(catkin REQUIRED COMPONENTS
+-  roscpp
+-  std_msgs
+-  sensor_msgs
+-  geometry_msgs
+-  nav_msgs
+-  pcl_ros
+-  message_generation
++add_library(dlio_algorithm STATIC
++    standalone/dlio_engine.cpp
++    src/nano_gicp/lsq_registration.cc
++    src/nano_gicp/nano_gicp.cc
++    src/nano_gicp/nanoflann.cc
+ )
+-
+-add_service_files(
+-  DIRECTORY srv
+-  FILES
+-  save_pcd.srv
++target_include_directories(dlio_algorithm PUBLIC
++    include
++    ${CMAKE_CURRENT_SOURCE_DIR}
++    ${PCL_INCLUDE_DIRS}
+ )
+-
+-generate_messages(
+-  DEPENDENCIES
+-  sensor_msgs
+-  std_msgs
+-  geometry_msgs
++target_link_libraries(dlio_algorithm PUBLIC
++    Eigen3::Eigen
++    OpenMP::OpenMP_CXX
++    ${PCL_LIBRARIES}
+ )
+-
+-catkin_package(
+-  CATKIN_DEPENDS
+-    roscpp
+-    std_msgs
+-    sensor_msgs
+-    geometry_msgs
+-    pcl_ros
+-  INCLUDE_DIRS
+-    include
+-  LIBRARIES
+-    ${PROJECT_NAME}
+-    nano_gicp
+-    nanoflann
++target_compile_definitions(dlio_algorithm PUBLIC
++    SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
+ )
+ 
+-include_directories(include)
+-include_directories(SYSTEM ${catkin_INCLUDE_DIRS})
+-
+-# Not all machines have <cpuid.h> available
+-set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+-file(WRITE ${CMAKE_BINARY_DIR}/test_cpuid.cpp "#include <cpuid.h>")
+-try_compile(HAS_CPUID ${CMAKE_BINARY_DIR} ${CMAKE_BINARY_DIR}/test_cpuid.cpp)
+-file(REMOVE ${CMAKE_BINARY_DIR}/test_cpuid.cpp)
+-if(HAS_CPUID)
+-  add_compile_definitions(HAS_CPUID)
+-endif()
+-
+-# NanoFLANN
+-add_library(nanoflann STATIC
+-  src/nano_gicp/nanoflann.cc
++add_executable(dlio_benchmark
++    standalone/main.cpp
++    standalone/dlio_adapter.cpp
+ )
+-target_link_libraries(nanoflann ${PCL_LIBRARIES})
+-
+-# NanoGICP
+-add_library(nano_gicp STATIC
+-  src/nano_gicp/lsq_registration.cc
+-  src/nano_gicp/nano_gicp.cc
++target_link_libraries(dlio_benchmark PRIVATE
++    dlio_algorithm
++    slam_benchmark::core
++    yaml-cpp::yaml-cpp
+ )
+-target_link_libraries(nano_gicp ${PCL_LIBRARIES} ${OpenMP_LIBS} nanoflann)
+-
+-# Odometry Node
+-add_executable(dlio_odom_node src/dlio/odom_node.cc src/dlio/odom.cc)
+-add_dependencies(dlio_odom_node ${catkin_EXPORTED_TARGETS} ${PROJECT_NAME}_generate_messages_cpp)
+-target_compile_options(dlio_odom_node PRIVATE ${OpenMP_FLAGS})
+-target_link_libraries(dlio_odom_node ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenMP_LIBS} Threads::Threads nano_gicp)
+ 
+-# Mapping Node
+-add_executable (dlio_map_node src/dlio/map_node.cc src/dlio/map.cc)
+-add_dependencies(dlio_map_node ${catkin_EXPORTED_TARGETS} ${PROJECT_NAME}_generate_messages_cpp)
+-target_compile_options(dlio_map_node PRIVATE ${OpenMP_FLAGS})
+-target_link_libraries(dlio_map_node ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenMP_LIBS} Threads::Threads)
+-
+-# Binaries
+-install( TARGETS dlio_odom_node dlio_map_node
+-         DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION} )
+-install( DIRECTORY cfg launch
+-         DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION} )
++if(MSVC)
++    target_compile_options(dlio_algorithm PRIVATE /W3 /utf-8)
++    target_compile_options(dlio_benchmark PRIVATE /W4 /utf-8)
++else()
++    target_compile_options(dlio_algorithm PRIVATE -Wall -Wextra)
++    target_compile_options(dlio_benchmark PRIVATE -Wall -Wextra -Wpedantic)
++endif()
+diff --git a/src/nano_gicp/lsq_registration.cc b/src/nano_gicp/lsq_registration.cc
+index 271cb03..fff8ced 100644
+--- a/src/nano_gicp/lsq_registration.cc
++++ b/src/nano_gicp/lsq_registration.cc
+@@ -42,7 +42,7 @@
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  *************************************************************************/
+ 
+-#include "dlio/dlio.h"
++#include "standalone/dlio_point.hpp"
+ #include "nano_gicp/lsq_registration.h"
+ 
+ template class nano_gicp::LsqRegistration<PointType, PointType>;
+diff --git a/src/nano_gicp/nano_gicp.cc b/src/nano_gicp/nano_gicp.cc
+index 906e3c3..b6850b3 100644
+--- a/src/nano_gicp/nano_gicp.cc
++++ b/src/nano_gicp/nano_gicp.cc
+@@ -42,7 +42,7 @@
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  *************************************************************************/
+ 
+-#include "dlio/dlio.h"
++#include "standalone/dlio_point.hpp"
+ #include "nano_gicp/nano_gicp.h"
+ 
+ template class nano_gicp::NanoGICP<PointType, PointType>;
+diff --git a/src/nano_gicp/nanoflann.cc b/src/nano_gicp/nanoflann.cc
+index bf25a4a..43e93d7 100644
+--- a/src/nano_gicp/nanoflann.cc
++++ b/src/nano_gicp/nanoflann.cc
+@@ -42,7 +42,7 @@
+  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  *************************************************************************/
+ 
+-#include "dlio/dlio.h"
++#include "standalone/dlio_point.hpp"
+ #include "nano_gicp/nanoflann_adaptor.h"
+ 
+ template class nanoflann::KdTreeFLANN<PointType>;
+diff --git a/standalone/dlio_adapter.cpp b/standalone/dlio_adapter.cpp
+new file mode 100644
+index 0000000..0f37cfc
+--- /dev/null
++++ b/standalone/dlio_adapter.cpp
+@@ -0,0 +1,175 @@
++#include "dlio_adapter.hpp"
++
++#include <slam_benchmark/calibration.hpp>
++#include <spdlog/spdlog.h>
++#include <yaml-cpp/yaml.h>
++
++#include <chrono>
++#include <cmath>
++#include <ranges>
++#include <stdexcept>
++
++namespace {
++
++double seconds(slam_benchmark::TimestampNs value) {
++    return static_cast<double>(value) * 1e-9;
++}
++
++slam_benchmark::TimestampNs nanoseconds(double value) {
++    return static_cast<slam_benchmark::TimestampNs>(std::llround(value * 1e9));
++}
++
++template <typename T>
++T parameter(const YAML::Node& root, const char* key, T fallback) {
++    return root[key] ? root[key].as<T>() : fallback;
++}
++
++}  // namespace
++
++slam_benchmark::InitializationResult DlioAdapter::initialize(
++    std::span<const slam_benchmark::SensorDefinition> sensors,
++    const std::filesystem::path& config_path,
++    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true, .imu = true, .point_time = true});
++    if (!compatibility) return compatibility;
++    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
++                                         &slam_benchmark::SensorDefinition::type);
++    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
++                                       &slam_benchmark::SensorDefinition::type);
++    if (lidar == sensors.end() || imu == sensors.end())
++        throw std::runtime_error("DLIO requires one LiDAR and one IMU");
++    sink_ = &sink;
++    lidar_id_ = lidar->id;
++    imu_id_ = imu->id;
++    const auto imu_from_lidar =
++        slam_benchmark::target_from_source(imu->calibration, lidar->calibration);
++    for (int row = 0; row < 4; ++row)
++        for (int column = 0; column < 4; ++column)
++            imu_from_lidar_(row, column) =
++                imu_from_lidar[row * 4 + column];
++
++    const YAML::Node root = YAML::LoadFile(config_path.string());
++    DlioEngine::Options options;
++    options.scan_filter_size_m =
++        parameter(root, "filter_size_scan_m", options.scan_filter_size_m);
++    options.map_filter_size_m =
++        parameter(root, "filter_size_map_m", options.map_filter_size_m);
++    options.max_iterations =
++        parameter(root, "max_iterations", options.max_iterations);
++    options.threads = parameter(root, "parallel_threads", options.threads);
++    options.correspondence_randomness =
++        parameter(root, "correspondence_randomness",
++                  options.correspondence_randomness);
++    options.max_correspondence_distance_m =
++        parameter(root, "max_correspondence_distance_m",
++                  options.max_correspondence_distance_m);
++    options.keyframe_distance_m =
++        parameter(root, "keyframe_distance_m", options.keyframe_distance_m);
++    options.keyframe_rotation_deg =
++        parameter(root, "keyframe_rotation_deg", options.keyframe_rotation_deg);
++    options.submap_keyframes =
++        parameter(root, "submap_keyframes", options.submap_keyframes);
++    options.deskew = parameter(root, "deskew", options.deskew);
++    if (options.scan_filter_size_m <= 0.0 || options.map_filter_size_m <= 0.0 ||
++        options.max_iterations <= 0 || options.threads <= 0)
++        throw std::runtime_error("DLIO parameters must be positive");
++
++    engine_.set_pose_callback([this](double timestamp,
++                                     const Eigen::Isometry3d& pose) {
++        accept_pose(timestamp, pose);
++    });
++    engine_.set_timing_callback(
++        [this](double timestamp, const char* stage, double duration) {
++            sink_->report_timing({nanoseconds(timestamp), stage, duration});
++        });
++    engine_.initialize(options);
++    spdlog::info("DLIO parameters: scan filter={} m, map filter={} m, threads={}",
++                 options.scan_filter_size_m, options.map_filter_size_m,
++                 options.threads);
++    return {};
++}
++
++void DlioAdapter::process(const slam_benchmark::SensorSample& sample) {
++    if (const auto* imu = std::get_if<slam_benchmark::ImuSample>(&sample.payload)) {
++        if (sample.sensor_id != imu_id_) return;
++        DlioImuSample converted;
++        converted.timestamp = seconds(sample.timestamp_ns);
++        converted.angular_velocity << imu->angular_velocity_rad_s[0],
++            imu->angular_velocity_rad_s[1], imu->angular_velocity_rad_s[2];
++        converted.linear_acceleration << imu->linear_acceleration_m_s2[0],
++            imu->linear_acceleration_m_s2[1], imu->linear_acceleration_m_s2[2];
++        imu_queue_.push_back(std::move(converted));
++        drain();
++        return;
++    }
++    const auto* cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload);
++    if (!cloud || sample.sensor_id != lidar_id_) return;
++    if (cloud->points.size() != cloud->point_time_offset_ns.size())
++        throw std::runtime_error("point/time array size mismatch");
++
++    const auto started = std::chrono::steady_clock::now();
++    pcl::PointCloud<PointType>::Ptr converted(new pcl::PointCloud<PointType>());
++    converted->reserve(cloud->points.size());
++    std::vector<double> offsets;
++    offsets.reserve(cloud->points.size());
++    double maximum_offset = 0.0;
++    for (std::size_t index = 0; index < cloud->points.size(); ++index) {
++        const auto& source = cloud->points[index];
++        const Eigen::Vector4d point =
++            imu_from_lidar_ * Eigen::Vector4d(source.x, source.y, source.z, 1.0);
++        PointType target;
++        target.x = static_cast<float>(point.x());
++        target.y = static_cast<float>(point.y());
++        target.z = static_cast<float>(point.z());
++        target.intensity = source.intensity;
++        converted->push_back(target);
++        const double offset =
++            static_cast<double>(cloud->point_time_offset_ns[index]) * 1e-9;
++        offsets.push_back(offset);
++        maximum_offset = std::max(maximum_offset, offset);
++    }
++    sink_->report_timing(
++        {sample.timestamp_ns, "lidar_preprocess",
++         std::chrono::duration<double, std::milli>(
++             std::chrono::steady_clock::now() - started)
++             .count()});
++    const double start = seconds(sample.timestamp_ns);
++    lidar_queue_.push_back(
++        {start, start + maximum_offset, std::move(converted), std::move(offsets)});
++    drain();
++}
++
++void DlioAdapter::drain() {
++    while (!lidar_queue_.empty() && !imu_queue_.empty() &&
++           imu_queue_.back().timestamp >= lidar_queue_.front().end_time) {
++        LidarFrame frame = std::move(lidar_queue_.front());
++        lidar_queue_.pop_front();
++        std::vector<DlioImuSample> measurements;
++        while (!imu_queue_.empty() &&
++               imu_queue_.front().timestamp <= frame.end_time) {
++            measurements.push_back(std::move(imu_queue_.front()));
++            imu_queue_.pop_front();
++        }
++        if (!measurements.empty())
++            engine_.process(frame.start_time, std::move(frame.cloud),
++                            frame.point_offsets, measurements);
++    }
++}
++
++void DlioAdapter::accept_pose(double timestamp, const Eigen::Isometry3d& value) {
++    const Eigen::Quaterniond rotation(value.linear());
++    slam_benchmark::Pose pose;
++    pose.timestamp_ns = nanoseconds(timestamp);
++    pose.translation_m = {value.translation().x(), value.translation().y(),
++                          value.translation().z()};
++    pose.rotation_xyzw = {rotation.x(), rotation.y(), rotation.z(), rotation.w()};
++    trajectory_.push_back(pose);
++    sink_->report_realtime_pose(pose);
++}
++
++void DlioAdapter::finalize() {
++    drain();
++    engine_.finalize();
++    sink_->report_final_trajectory(trajectory_);
++}
+diff --git a/standalone/dlio_adapter.hpp b/standalone/dlio_adapter.hpp
+new file mode 100644
+index 0000000..c8641c5
+--- /dev/null
++++ b/standalone/dlio_adapter.hpp
+@@ -0,0 +1,39 @@
++#pragma once
++
++#include "dlio_engine.hpp"
++
++#include <slam_benchmark/algorithm.hpp>
++
++#include <deque>
++
++class DlioAdapter final : public slam_benchmark::SlamAlgorithm {
++public:
++    [[nodiscard]] std::string_view name() const noexcept override {
++        return "dlio";
++    }
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++                    const std::filesystem::path& config_path,
++                    slam_benchmark::ResultSink& sink) override;
++    void process(const slam_benchmark::SensorSample& sample) override;
++    void finalize() override;
++
++private:
++    struct LidarFrame {
++        double start_time{};
++        double end_time{};
++        pcl::PointCloud<PointType>::Ptr cloud;
++        std::vector<double> point_offsets;
++    };
++
++    void drain();
++    void accept_pose(double timestamp, const Eigen::Isometry3d& pose);
++
++    slam_benchmark::ResultSink* sink_{};
++    DlioEngine engine_;
++    Eigen::Matrix4d imu_from_lidar_ = Eigen::Matrix4d::Identity();
++    slam_benchmark::SensorId lidar_id_{};
++    slam_benchmark::SensorId imu_id_{};
++    std::deque<DlioImuSample> imu_queue_;
++    std::deque<LidarFrame> lidar_queue_;
++    slam_benchmark::Trajectory trajectory_;
++};
+diff --git a/standalone/dlio_engine.cpp b/standalone/dlio_engine.cpp
+new file mode 100644
+index 0000000..3d97cbb
+--- /dev/null
++++ b/standalone/dlio_engine.cpp
+@@ -0,0 +1,330 @@
++#include "dlio_engine.hpp"
++
++#include <nano_gicp/nano_gicp.h>
++
++#include <pcl/common/transforms.h>
++#include <pcl/filters/voxel_grid.h>
++
++#include <algorithm>
++#include <chrono>
++#include <cmath>
++#include <deque>
++#include <future>
++#include <utility>
++
++namespace {
++
++using Clock = std::chrono::steady_clock;
++
++double elapsed_ms(Clock::time_point started) {
++    return std::chrono::duration<double, std::milli>(Clock::now() - started).count();
++}
++
++Eigen::Quaterniond integrate_rotation(const Eigen::Quaterniond& rotation,
++                                      const Eigen::Vector3d& angular_velocity,
++                                      double dt) {
++    const double angle = angular_velocity.norm() * dt;
++    if (angle < 1e-12) return rotation;
++    return (rotation *
++            Eigen::Quaterniond(Eigen::AngleAxisd(angle, angular_velocity.normalized())))
++        .normalized();
++}
++
++double rotation_distance_degrees(const Eigen::Matrix3d& lhs,
++                                 const Eigen::Matrix3d& rhs) {
++    return Eigen::AngleAxisd(lhs.transpose() * rhs).angle() * 180.0 / M_PI;
++}
++
++}  // namespace
++
++class DlioEngine::Impl {
++public:
++    struct ImuPose {
++        double timestamp{};
++        Eigen::Quaterniond rotation = Eigen::Quaterniond::Identity();
++        Eigen::Vector3d position = Eigen::Vector3d::Zero();
++        Eigen::Vector3d velocity = Eigen::Vector3d::Zero();
++    };
++
++    using Keyframe = std::pair<Eigen::Isometry3d, pcl::PointCloud<PointType>::Ptr>;
++
++    struct SubmapBuildResult {
++        pcl::PointCloud<PointType>::Ptr cloud;
++        double duration_ms{};
++    };
++
++    void initialize(const Options& options) {
++        options_ = options;
++        scan_filter_.setLeafSize(options.scan_filter_size_m,
++                                 options.scan_filter_size_m,
++                                 options.scan_filter_size_m);
++        gicp_.setNumThreads(std::max(1, options.threads));
++        gicp_.setCorrespondenceRandomness(options.correspondence_randomness);
++        gicp_.setMaxCorrespondenceDistance(
++            options.max_correspondence_distance_m);
++        gicp_.setMaximumIterations(options.max_iterations);
++        gicp_.setTransformationEpsilon(1e-3);
++        gicp_.setRotationEpsilon(1e-3);
++        gicp_.setRegularizationMethod(
++            nano_gicp::RegularizationMethod::PLANE);
++    }
++
++    void process(double scan_start, pcl::PointCloud<PointType>::Ptr cloud,
++                 const std::vector<double>& point_offsets,
++                 const std::vector<DlioImuSample>& imu_samples) {
++        if (!cloud || cloud->empty() || cloud->size() != point_offsets.size()) return;
++        const double scan_end =
++            scan_start + *std::max_element(point_offsets.begin(), point_offsets.end());
++
++        auto started = Clock::now();
++        if (!initialize_imu(imu_samples)) {
++            report(scan_end, "imu_preprocess", elapsed_ms(started));
++            return;
++        }
++        std::vector<ImuPose> poses = propagate(scan_start, scan_end, imu_samples);
++        report(scan_end, "state_propagation", elapsed_ms(started));
++
++        started = Clock::now();
++        if (options_.deskew) deskew(scan_start, scan_end, poses, point_offsets, *cloud);
++        report(scan_end, "undistortion", elapsed_ms(started));
++
++        started = Clock::now();
++        pcl::PointCloud<PointType>::Ptr filtered(new pcl::PointCloud<PointType>());
++        scan_filter_.setInputCloud(cloud);
++        scan_filter_.filter(*filtered);
++        report(scan_end, "downsampling", elapsed_ms(started));
++        if (filtered->size() < static_cast<std::size_t>(
++                                   options_.correspondence_randomness))
++            return;
++
++        if (keyframes_.empty()) {
++            pose_.linear() = rotation_.toRotationMatrix();
++            pose_.translation() = position_;
++            add_keyframe(filtered, true, scan_end);
++            last_corrected_position_ = position_;
++            last_corrected_time_ = scan_end;
++            emit_pose(scan_end);
++            return;
++        }
++
++        finish_submap_update();
++        started = Clock::now();
++        gicp_.setInputSource(filtered);
++        gicp_.calculateSourceCovariances();
++        pcl::PointCloud<PointType> aligned;
++        gicp_.align(aligned, pose_.matrix().cast<float>());
++        const Eigen::Isometry3d corrected(
++            gicp_.getFinalTransformation().cast<double>());
++        report(scan_end, "registration", elapsed_ms(started));
++        if (gicp_.hasConverged()) {
++            started = Clock::now();
++            pose_ = corrected;
++            rotation_ = Eigen::Quaterniond(pose_.linear()).normalized();
++            position_ = pose_.translation();
++            const double dt = scan_end - last_corrected_time_;
++            if (dt > 1e-6)
++                velocity_ = (position_ - last_corrected_position_) / dt;
++            last_corrected_position_ = position_;
++            last_corrected_time_ = scan_end;
++            report(scan_end, "filter_update", elapsed_ms(started));
++        }
++
++        if (is_keyframe()) add_keyframe(filtered, false, scan_end);
++        emit_pose(scan_end);
++    }
++
++    void finalize() { finish_submap_update(); }
++
++    bool initialize_imu(const std::vector<DlioImuSample>& samples) {
++        if (imu_initialized_) return true;
++        for (const auto& sample : samples) {
++            ++initialization_samples_;
++            const double count = static_cast<double>(initialization_samples_);
++            mean_acceleration_ +=
++                (sample.linear_acceleration - mean_acceleration_) / count;
++            gyro_bias_ += (sample.angular_velocity - gyro_bias_) / count;
++        }
++        if (!samples.empty()) {
++            last_imu_ = samples.back();
++            has_last_imu_ = true;
++        }
++        if (initialization_samples_ < 200 || mean_acceleration_.norm() < 1e-6)
++            return false;
++        rotation_ = Eigen::Quaterniond::FromTwoVectors(
++            mean_acceleration_.normalized(), Eigen::Vector3d::UnitZ());
++        acceleration_scale_ = 9.80665 / mean_acceleration_.norm();
++        gravity_ = Eigen::Vector3d(0.0, 0.0, -9.80665);
++        pose_.linear() = rotation_.toRotationMatrix();
++        imu_initialized_ = true;
++        return false;
++    }
++
++    std::vector<ImuPose> propagate(
++        double scan_start, double scan_end,
++        const std::vector<DlioImuSample>& samples) {
++        std::vector<DlioImuSample> imu;
++        imu.reserve(samples.size() + (has_last_imu_ ? 1U : 0U));
++        if (has_last_imu_) imu.push_back(last_imu_);
++        imu.insert(imu.end(), samples.begin(), samples.end());
++        std::sort(imu.begin(), imu.end(),
++                  [](const auto& lhs, const auto& rhs) {
++                      return lhs.timestamp < rhs.timestamp;
++                  });
++        std::vector<ImuPose> poses;
++        poses.push_back({scan_start, rotation_, position_, velocity_});
++        double current = scan_start;
++        for (std::size_t index = 0; index < imu.size(); ++index) {
++            const auto& head = imu[index];
++            const auto& tail = index + 1 < imu.size() ? imu[index + 1] : head;
++            const double end = std::min(scan_end, tail.timestamp);
++            if (end <= current || head.timestamp > scan_end) continue;
++            const double dt = end - current;
++            const Eigen::Vector3d omega =
++                0.5 * (head.angular_velocity + tail.angular_velocity) - gyro_bias_;
++            const Eigen::Vector3d acceleration =
++                0.5 * (head.linear_acceleration + tail.linear_acceleration) *
++                acceleration_scale_;
++            rotation_ = integrate_rotation(rotation_, omega, dt);
++            const Eigen::Vector3d world_acceleration =
++                rotation_ * acceleration + gravity_;
++            position_ += velocity_ * dt + 0.5 * world_acceleration * dt * dt;
++            velocity_ += world_acceleration * dt;
++            current = end;
++            poses.push_back({current, rotation_, position_, velocity_});
++            if (current >= scan_end) break;
++        }
++        pose_.linear() = rotation_.toRotationMatrix();
++        pose_.translation() = position_;
++        if (!samples.empty()) {
++            last_imu_ = samples.back();
++            has_last_imu_ = true;
++        }
++        return poses;
++    }
++
++    void deskew(double scan_start, double scan_end,
++                const std::vector<ImuPose>& poses,
++                const std::vector<double>& offsets,
++                pcl::PointCloud<PointType>& cloud) const {
++        if (poses.empty()) return;
++        const auto& end_pose = poses.back();
++        const auto point_count = static_cast<std::ptrdiff_t>(cloud.size());
++#pragma omp parallel for num_threads(options_.threads) schedule(static)
++        for (std::ptrdiff_t signed_index = 0; signed_index < point_count; ++signed_index) {
++            const auto index = static_cast<std::size_t>(signed_index);
++            const double timestamp =
++                std::clamp(scan_start + offsets[index], scan_start, scan_end);
++            const auto upper = std::upper_bound(
++                poses.begin(), poses.end(), timestamp,
++                [](double value, const ImuPose& pose) {
++                    return value < pose.timestamp;
++                });
++            const ImuPose& point_pose =
++                upper == poses.begin() ? poses.front() : *std::prev(upper);
++            const Eigen::Vector3d point(cloud[index].x, cloud[index].y,
++                                        cloud[index].z);
++            const Eigen::Vector3d corrected =
++                end_pose.rotation.conjugate() *
++                (point_pose.rotation * point + point_pose.position -
++                 end_pose.position);
++            cloud[index].x = static_cast<float>(corrected.x());
++            cloud[index].y = static_cast<float>(corrected.y());
++            cloud[index].z = static_cast<float>(corrected.z());
++        }
++    }
++
++    bool is_keyframe() const {
++        const Eigen::Isometry3d& last = keyframes_.back().first;
++        return (pose_.translation() - last.translation()).norm() >=
++                   options_.keyframe_distance_m ||
++               rotation_distance_degrees(last.linear(), pose_.linear()) >=
++                   options_.keyframe_rotation_deg;
++    }
++
++    void add_keyframe(const pcl::PointCloud<PointType>::Ptr& scan,
++                      bool wait_for_completion, double timestamp) {
++        finish_submap_update();
++        keyframes_.push_back({pose_, scan});
++        while (keyframes_.size() > options_.submap_keyframes)
++            keyframes_.pop_front();
++        std::vector<Keyframe> snapshot(keyframes_.begin(), keyframes_.end());
++        const double leaf_size = options_.map_filter_size_m;
++        pending_submap_timestamp_ = timestamp;
++        pending_submap_ = std::async(
++            std::launch::async,
++            [snapshot = std::move(snapshot), leaf_size]() mutable {
++                const auto started = Clock::now();
++                pcl::PointCloud<PointType>::Ptr combined(new pcl::PointCloud<PointType>());
++                for (const auto& [transform, frame] : snapshot) {
++                    pcl::PointCloud<PointType> world;
++                    pcl::transformPointCloud(*frame, world, transform.matrix().cast<float>());
++                    *combined += world;
++                }
++                pcl::VoxelGrid<PointType> filter;
++                filter.setLeafSize(leaf_size, leaf_size, leaf_size);
++                filter.setInputCloud(combined);
++                pcl::PointCloud<PointType>::Ptr filtered(new pcl::PointCloud<PointType>());
++                filter.filter(*filtered);
++                return SubmapBuildResult{std::move(filtered), elapsed_ms(started)};
++            });
++        if (wait_for_completion) finish_submap_update();
++    }
++
++    void finish_submap_update() {
++        if (!pending_submap_.valid()) return;
++        auto result = pending_submap_.get();
++        submap_ = std::move(result.cloud);
++        gicp_.setInputTarget(submap_);
++        gicp_.calculateTargetCovariances();
++        report(pending_submap_timestamp_, "map_update", result.duration_ms);
++    }
++
++    void report(double timestamp, const char* stage, double duration) const {
++        if (timing_callback_) timing_callback_(timestamp, stage, duration);
++    }
++
++    void emit_pose(double timestamp) const {
++        if (pose_callback_) pose_callback_(timestamp, pose_);
++    }
++
++    Options options_;
++    nano_gicp::NanoGICP<PointType, PointType> gicp_;
++    pcl::VoxelGrid<PointType> scan_filter_;
++    pcl::PointCloud<PointType>::ConstPtr submap_{
++        new pcl::PointCloud<PointType>()};
++    std::deque<Keyframe> keyframes_;
++    std::future<SubmapBuildResult> pending_submap_;
++    double pending_submap_timestamp_{};
++    Eigen::Isometry3d pose_ = Eigen::Isometry3d::Identity();
++    Eigen::Quaterniond rotation_ = Eigen::Quaterniond::Identity();
++    Eigen::Vector3d position_ = Eigen::Vector3d::Zero();
++    Eigen::Vector3d velocity_ = Eigen::Vector3d::Zero();
++    Eigen::Vector3d gravity_ = Eigen::Vector3d::Zero();
++    Eigen::Vector3d mean_acceleration_ = Eigen::Vector3d::Zero();
++    Eigen::Vector3d gyro_bias_ = Eigen::Vector3d::Zero();
++    Eigen::Vector3d last_corrected_position_ = Eigen::Vector3d::Zero();
++    double acceleration_scale_ = 1.0;
++    double last_corrected_time_ = 0.0;
++    DlioImuSample last_imu_;
++    std::size_t initialization_samples_ = 0;
++    bool has_last_imu_ = false;
++    bool imu_initialized_ = false;
++    PoseCallback pose_callback_;
++    TimingCallback timing_callback_;
++};
++
++DlioEngine::DlioEngine() : impl_(std::make_unique<Impl>()) {}
++DlioEngine::~DlioEngine() = default;
++void DlioEngine::initialize(const Options& options) { impl_->initialize(options); }
++void DlioEngine::set_pose_callback(PoseCallback callback) {
++    impl_->pose_callback_ = std::move(callback);
++}
++void DlioEngine::set_timing_callback(TimingCallback callback) {
++    impl_->timing_callback_ = std::move(callback);
++}
++void DlioEngine::process(double scan_start, pcl::PointCloud<PointType>::Ptr cloud,
++                         const std::vector<double>& point_offsets,
++                         const std::vector<DlioImuSample>& imu_samples) {
++    impl_->process(scan_start, std::move(cloud), point_offsets, imu_samples);
++}
++void DlioEngine::finalize() { impl_->finalize(); }
+diff --git a/standalone/dlio_engine.hpp b/standalone/dlio_engine.hpp
+new file mode 100644
+index 0000000..3d65509
+--- /dev/null
++++ b/standalone/dlio_engine.hpp
+@@ -0,0 +1,54 @@
++#pragma once
++
++#include "dlio_point.hpp"
++
++#include <Eigen/Geometry>
++#include <pcl/point_cloud.h>
++
++#include <cstdint>
++#include <functional>
++#include <memory>
++#include <vector>
++
++struct DlioImuSample {
++    double timestamp{};
++    Eigen::Vector3d angular_velocity = Eigen::Vector3d::Zero();
++    Eigen::Vector3d linear_acceleration = Eigen::Vector3d::Zero();
++};
++
++class DlioEngine {
++public:
++    struct Options {
++        double scan_filter_size_m = 0.2;
++        double map_filter_size_m = 0.2;
++        int max_iterations = 6;
++        int threads = 4;
++        int correspondence_randomness = 20;
++        double max_correspondence_distance_m = 0.5;
++        double keyframe_distance_m = 0.1;
++        double keyframe_rotation_deg = 1.0;
++        std::size_t submap_keyframes = 25;
++        bool deskew = true;
++    };
++
++    using PoseCallback =
++        std::function<void(double, const Eigen::Isometry3d&)>;
++    using TimingCallback = std::function<void(double, const char*, double)>;
++
++    DlioEngine();
++    ~DlioEngine();
++    DlioEngine(const DlioEngine&) = delete;
++    DlioEngine& operator=(const DlioEngine&) = delete;
++
++    void initialize(const Options& options);
++    void set_pose_callback(PoseCallback callback);
++    void set_timing_callback(TimingCallback callback);
++    void process(double scan_start, pcl::PointCloud<PointType>::Ptr cloud,
++                 const std::vector<double>& point_offsets,
++                 const std::vector<DlioImuSample>& imu_samples);
++    void finalize();
++
++private:
++    class Impl;
++    std::unique_ptr<Impl> impl_;
++};
+diff --git a/standalone/dlio_point.hpp b/standalone/dlio_point.hpp
+new file mode 100644
+index 0000000..7c244c9
+--- /dev/null
++++ b/standalone/dlio_point.hpp
+@@ -0,0 +1,6 @@
++#pragma once
++
++#include <pcl/point_types.h>
++#include <boost/format.hpp>
++
++using PointType = pcl::PointXYZI;
+diff --git a/standalone/main.cpp b/standalone/main.cpp
+new file mode 100644
+index 0000000..8426929
+--- /dev/null
++++ b/standalone/main.cpp
+@@ -0,0 +1,8 @@
++#include "dlio_adapter.hpp"
++
++#include <slam_benchmark/application.hpp>
++
++int main(int argc, char** argv) {
++    DlioAdapter algorithm;
++    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
++}

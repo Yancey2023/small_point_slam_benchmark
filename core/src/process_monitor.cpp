@@ -18,7 +18,7 @@
 namespace slam_benchmark {
 namespace {
 
-double process_cpu_seconds() {
+double current_process_cpu_seconds() noexcept {
 #if defined(_WIN32)
     FILETIME creation{}, exit{}, kernel{}, user{};
     if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) return 0.0;
@@ -63,12 +63,16 @@ double resident_memory_mb() {
 
 ProcessMonitor::ProcessMonitor()
     : previous_wall_(std::chrono::steady_clock::now()),
-      previous_process_seconds_(process_cpu_seconds()),
+      previous_process_seconds_(process_cpu_time_seconds()),
       logical_cpu_count_(std::max(1U, std::thread::hardware_concurrency())) {}
+
+double ProcessMonitor::process_cpu_time_seconds() noexcept {
+    return current_process_cpu_seconds();
+}
 
 CpuUsage ProcessMonitor::sample() {
     const auto now = std::chrono::steady_clock::now();
-    const double cpu_now = process_cpu_seconds();
+    const double cpu_now = process_cpu_time_seconds();
     const double wall_seconds = std::chrono::duration<double>(now - previous_wall_).count();
     const double cpu_seconds = std::max(0.0, cpu_now - previous_process_seconds_);
     previous_wall_ = now;

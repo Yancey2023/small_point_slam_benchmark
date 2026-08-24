@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { BenchmarkResult, CatalogResponse, RunMode, RunSnapshot } from '../../shared/contracts'
 import { cancelRun, createRun, fetchCatalog, fetchResults, observeRun } from '@/api/client'
 
-const terminalStatuses = new Set(['completed', 'failed', 'cancelled'])
+const terminalStatuses = new Set(['completed', 'skipped', 'failed', 'cancelled'])
 
 export function useBenchmark() {
   const catalog = ref<CatalogResponse | null>(null)

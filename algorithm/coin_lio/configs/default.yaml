@@ -1,0 +1,49 @@
+algorithm: coin_lio
+parallel_threads: 4
+filter_size_scan_m: 0.2
+filter_size_map_m: 0.2
+max_iterations: 4
+estimate_extrinsics: false
+point_filter_stride: 4
+cube_side_length_m: 1000.0
+detection_range_m: 150.0
+minimum_geometric_contributions: 25
+geometric_noise: 0.001
+photometric_scale: 0.00095
+gyroscope_noise: 0.1
+accelerometer_noise: 0.1
+gyroscope_bias_noise: 0.0001
+accelerometer_bias_noise: 0.0001
+
+# 通用球面强度图。数据集有精确束角时可在运行配置中覆盖 elevation_angles_deg。
+intensity_projection:
+  rows: 16
+  columns: 360
+  beam_offset_m: 0.0
+  column_shift: 0
+  destagger: false
+  elevation_upper_deg: 45.0
+  elevation_lower_deg: -45.0
+
+intensity_image:
+  reflectivity: false
+  remove_lines: false
+  brightness_filter: true
+  blur: true
+  intensity_scale: 0.25
+  erosion_margin: 0
+  window: [11, 3]
+  masks: []
+
+intensity_features:
+  margin: 3
+  min_range_m: 0.7
+  max_range_m: 30.0
+  minimum_gradient: 16.5
+  ncc_threshold: 0.7075
+  range_threshold_m: 0.2
+  suppression_radius: 5
+  patch_size: 3
+  feature_count: 60
+  maximum_lifetime: 25
+  selection_mode: comp

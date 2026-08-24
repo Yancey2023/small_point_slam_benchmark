@@ -83,6 +83,12 @@ describe('stored benchmark results', () => {
       hasPerformance: true,
     }])
     expect(results[0]?.absoluteOutputDirectory).toBe(outputDirectory)
+
+    await writeFile(
+      path.join(outputDirectory, 'summary.csv'),
+      'run_mode,status,reason\nfull_speed,unsupported,缺少点云强度\n',
+    )
+    expect(await discoverResults(projectRoot, catalog)).toEqual([])
   })
 
 })

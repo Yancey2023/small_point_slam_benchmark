@@ -49,6 +49,49 @@ async function countCsvRows(filePath: string): Promise<number> {
   }
 }
 
+function parseCsvRow(line: string): string[] {
+  const values: string[] = []
+  let value = ''
+  let quoted = false
+  for (let index = 0; index < line.length; ++index) {
+    const character = line[index]
+    if (character === '"') {
+      if (quoted && line[index + 1] === '"') {
+        value += '"'
+        ++index
+      } else {
+        quoted = !quoted
+      }
+    } else if (character === ',' && !quoted) {
+      values.push(value)
+      value = ''
+    } else {
+      value += character
+    }
+  }
+  values.push(value)
+  return values
+}
+
+export async function readRunCompatibility(outputDirectory: string): Promise<{
+  unsupported: boolean
+  reason: string | null
+}> {
+  try {
+    const [header = '', row = ''] = (await readFile(
+      path.join(outputDirectory, 'summary.csv'),
+      'utf8',
+    )).split(/\r?\n/)
+    const headers = parseCsvRow(header)
+    const values = parseCsvRow(row)
+    const status = values[headers.indexOf('status')]
+    const reason = values[headers.indexOf('reason')]?.trim() || null
+    return { unsupported: status === 'unsupported', reason }
+  } catch {
+    return { unsupported: false, reason: null }
+  }
+}
+
 export class RunManager {
   private readonly runs = new Map<string, InternalRun>()
 
@@ -94,6 +137,7 @@ export class RunManager {
           progress: dataset.expectedMessages ? 0 : null,
           outputDirectory: relativeOutput.split(path.sep).join('/'),
           error: null,
+          compatibilityReason: null,
           startedAt: null,
           completedAt: null,
           manifestPath: dataset.manifestPath,
@@ -178,7 +222,7 @@ export class RunManager {
   }
 
   private update(run: InternalRun): void {
-    const terminal: RunStatus[] = ['completed', 'failed', 'cancelled']
+    const terminal: RunStatus[] = ['completed', 'skipped', 'failed', 'cancelled']
     run.snapshot.completedJobs = run.jobs.filter((job) => terminal.includes(job.status)).length
     const fractions = run.jobs.map((job) => {
       if (terminal.includes(job.status)) return 1
@@ -206,6 +250,8 @@ export class RunManager {
       run.snapshot.status = 'cancelled'
     } else if (run.jobs.some((job) => job.status === 'failed')) {
       run.snapshot.status = 'failed'
+    } else if (run.jobs.every((job) => job.status === 'skipped')) {
+      run.snapshot.status = 'skipped'
     } else {
       run.snapshot.status = 'completed'
       run.snapshot.progress = 100
@@ -266,6 +312,15 @@ export class RunManager {
       job.error = exit.error?.message ?? `进程退出码 ${String(exit.code)}`
       run.snapshot.logs.push(`${job.algorithmName} 运行失败：${job.error}`)
     } else {
+      const compatibility = await readRunCompatibility(job.absoluteOutputDirectory)
+      if (compatibility.unsupported) {
+        job.status = 'skipped'
+        job.compatibilityReason = compatibility.reason ?? '数据集不满足算法输入要求'
+        job.progress = 1
+        run.snapshot.logs.push(`${job.algorithmName} 已跳过：${job.compatibilityReason}`)
+        this.update(run)
+        return
+      }
       job.status = 'completed'
       job.progress = 1
       run.snapshot.logs.push(`${job.algorithmName} 完成，轨迹已写入 ${job.outputDirectory}`)

@@ -3,11 +3,13 @@ import { computed } from 'vue'
 
 import AlgorithmPicker from '@/components/AlgorithmPicker.vue'
 import DatasetPicker from '@/components/DatasetPicker.vue'
+import HelpTip from '@/components/HelpTip.vue'
 import PerformancePanel from '@/components/PerformancePanel.vue'
 import ResultPanel from '@/components/ResultPanel.vue'
 import RunProgress from '@/components/RunProgress.vue'
 import RunModePicker from '@/components/RunModePicker.vue'
 import { useBenchmark } from '@/composables/useBenchmark'
+import { isStaticReport } from '@/runtime'
 
 const {
   catalog,
@@ -29,6 +31,9 @@ const plannedJobs = computed(
   () => selectedDatasetIds.value.length * selectedAlgorithmIds.value.length,
 )
 const hasResults = computed(() => results.value.length > 0)
+const selectedModeInfo = computed(() =>
+  catalog.value?.runModes.find((mode) => mode.id === selectedRunMode.value),
+)
 </script>
 
 <template>
@@ -41,21 +46,35 @@ const hasResults = computed(() => results.value.length > 0)
       <div v-if="error" class="error-banner" role="alert">
         <span>!</span>
         <p>{{ error }}</p>
-        <button type="button" @click="load">重新连接</button>
+        <button type="button" @click="load">
+          {{ isStaticReport ? '重新读取' : '重新连接' }}
+        </button>
       </div>
 
-      <div v-if="loading" class="loading-grid" aria-label="正在读取 benchmark 配置">
+      <div
+        v-if="loading"
+        class="loading-grid"
+        :aria-label="isStaticReport ? '正在读取静态报告' : '正在读取 benchmark 配置'"
+      >
         <span /><span /><span />
       </div>
 
       <template v-else-if="catalog">
-        <div class="workspace-grid">
+        <div v-if="!isStaticReport" class="workspace-grid">
           <div class="selection-column">
             <DatasetPicker v-model="selectedDatasetIds" :datasets="catalog.datasets" />
             <AlgorithmPicker v-model="selectedAlgorithmIds" :algorithms="catalog.algorithms" />
             <div class="launch-card">
               <div class="launch-copy">
-                <strong>准备一次新实验</strong>
+                <div class="launch-title">
+                  <strong>准备一次新实验</strong>
+                  <HelpTip
+                    v-if="selectedModeInfo"
+                    :text="selectedModeInfo.description"
+                    :label="`查看${selectedModeInfo.name}说明`"
+                    align="start"
+                  />
+                </div>
                 <span>{{ plannedJobs }} 个任务将按顺序运行，避免干扰 CPU 统计</span>
               </div>
               <RunModePicker
@@ -91,16 +110,19 @@ const hasResults = computed(() => results.value.length > 0)
           </aside>
         </div>
 
-        <ResultPanel
-          v-if="hasResults"
-          class="results"
-          :results="results"
-        />
         <PerformancePanel
           v-if="hasResults"
           class="performance"
           :results="results"
         />
+        <ResultPanel
+          v-if="hasResults"
+          class="results"
+          :results="results"
+        />
+        <p v-else-if="isStaticReport" class="static-empty">
+          静态报告暂时没有可展示的结果。
+        </p>
       </template>
     </main>
 
@@ -130,6 +152,7 @@ main { position: relative; z-index: 1; width: min(1180px, calc(100% - 40px)); ma
 .status-column { min-width: 0; }
 .launch-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 19px 20px; border: 1px solid var(--line-soft); border-radius: 22px; background: #f8f9f7; box-shadow: var(--shadow-card); }
 .launch-copy { display: grid; min-width: 145px; gap: 3px; }
+.launch-title { display: flex; align-items: center; gap: 6px; }
 .launch-card strong { font-size: 14px; }
 .launch-card span { color: var(--ink-muted); font-size: 11px; }
 .launch-card button { display: flex; min-width: 154px; align-items: center; justify-content: space-between; gap: 15px; padding: 13px 14px 13px 17px; border: 0; border-radius: 15px; color: white; background: #59798c; box-shadow: 0 9px 21px rgba(65, 91, 106, 0.2); cursor: pointer; font-weight: 800; transition: 160ms ease; }
@@ -154,6 +177,7 @@ main { position: relative; z-index: 1; width: min(1180px, calc(100% - 40px)); ma
 .ready-list i { display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: #8ec4b4; }
 .results { margin-top: 18px; }
 .performance { margin-top: 18px; }
+.static-empty { margin: 0; padding: 48px 24px; border: 1px dashed var(--line-soft); border-radius: var(--radius-xl); color: var(--ink-muted); background: #f8faf8; text-align: center; }
 footer { display: flex; width: min(1180px, calc(100% - 40px)); justify-content: center; margin: 0 auto; padding: 34px 0 26px; color: #879098; font-size: 10px; }
 
 @media (max-width: 900px) {

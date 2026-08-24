@@ -1,4 +1,5 @@
 algorithm: voxel_map_with_imu
+parallel_threads: 4
 filter_size_scan_m: 0.2
 map_voxel_size_m: 0.4
 max_layer: 2

@@ -14,6 +14,21 @@ def require(mapping: dict, fields: tuple[str, ...], location: str) -> None:
         raise ValueError(f"{location} is missing: {', '.join(missing)}")
 
 
+def reject_embedded_extrinsics(value: object, location: str) -> None:
+    forbidden = {"extrinsic_t", "extrinsic_r", "extrint", "extrinr"}
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if str(key).lower() in forbidden:
+                raise ValueError(
+                    f"{location} must receive sensor extrinsics from the dataset "
+                    f"manifest during initialization; remove {key!r}"
+                )
+            reject_embedded_extrinsics(child, location)
+    elif isinstance(value, list):
+        for child in value:
+            reject_embedded_extrinsics(child, location)
+
+
 def main() -> int:
     try:
         for name in SUPPORTED_ALGORITHMS:
@@ -29,6 +44,7 @@ def main() -> int:
                 raise ValueError(
                     f"{config_path} algorithm must be {name!r}, got {config.get('algorithm')!r}"
                 )
+            reject_embedded_extrinsics(config, str(config_path))
             for key in ("filter_size_scan_m", "filter_size_map_m", "map_voxel_size_m"):
                 if key in config and (not isinstance(config[key], (int, float)) or config[key] <= 0):
                     raise ValueError(f"{config_path} {key} must be positive")

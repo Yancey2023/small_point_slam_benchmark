@@ -1,0 +1,15 @@
+schema_version: 1
+name: CT-LIO
+description: Continuous-time LiDAR-inertial odometry combining CT-ICP constraints with a loosely coupled ESKF.
+authors: [chengwei0427]
+license: GPL-2.0
+repository:
+  name: ct-lio
+  url: https://github.com/chengwei0427/ct-lio.git
+  ref: b7cdb476a54c04310857d897acb838cd42539003
+dependencies:
+  - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
+  - {name: PCL, url: https://github.com/PointCloudLibrary/pcl.git}
+paper: {}
+sensors: [lidar, imu]
+timing_stages: [lidar_preprocess, imu_preprocess, undistortion, downsampling, state_propagation, registration, filter_update, map_update]

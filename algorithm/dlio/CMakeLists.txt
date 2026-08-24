@@ -1,0 +1,5 @@
+set(_source "${CMAKE_CURRENT_SOURCE_DIR}/source/direct_lidar_inertial_odometry")
+if(NOT EXISTS "${_source}/CMakeLists.txt")
+    message(FATAL_ERROR "Run scripts/download_algorithms.py dlio and scripts/patch_algorithms.py apply dlio")
+endif()
+add_subdirectory("${_source}" dlio)

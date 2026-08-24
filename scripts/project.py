@@ -11,10 +11,17 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUPPORTED_ALGORITHMS = (
-    "fast_lio", "point_lio", "voxel_map", "voxel_map_with_imu", "super_lio",
-    "kiss_icp", "faster_lio", "small_point_lio", "small_point_slam",
-)
+
+
+def discover_algorithms() -> tuple[str, ...]:
+    """Discover algorithm IDs from manifests instead of a maintained list."""
+    return tuple(sorted(
+        path.parent.name for path in (ROOT / "algorithm").glob("*/manifest.yaml")
+        if path.parent.is_dir()
+    ))
+
+
+SUPPORTED_ALGORITHMS = discover_algorithms()
 
 
 @dataclass(frozen=True)

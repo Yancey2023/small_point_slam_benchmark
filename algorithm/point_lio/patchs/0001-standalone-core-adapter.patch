@@ -401,12 +401,13 @@ index 0000000..b62f5f4
 +}
 diff --git a/standalone/point_lio_adapter.cpp b/standalone/point_lio_adapter.cpp
 new file mode 100644
-index 0000000..d6277bd
+index 0000000..fda0785
 --- /dev/null
 +++ b/standalone/point_lio_adapter.cpp
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,320 @@
 +#include "point_lio_adapter.hpp"
 +
++#include <slam_benchmark/calibration.hpp>
 +#include <spdlog/spdlog.h>
 +#include <yaml-cpp/yaml.h>
 +
@@ -480,10 +481,13 @@ index 0000000..d6277bd
 +    covariance.block<6, 6>(24, 24) *= 0.001;
 +}
 +
-+void PointLioAdapter::initialize(
++slam_benchmark::InitializationResult PointLioAdapter::initialize(
 +    std::span<const slam_benchmark::SensorDefinition> sensors,
 +    const std::filesystem::path& config_path,
 +    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true, .imu = true, .point_time = true});
++    if (!compatibility) return compatibility;
 +    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
 +                                         &slam_benchmark::SensorDefinition::type);
 +    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
@@ -508,7 +512,8 @@ index 0000000..d6277bd
 +    scan_filter_.setLeafSize(filter_size_surf_min, filter_size_surf_min,
 +                             filter_size_surf_min);
 +
-+    const auto& transform = lidar->calibration.body_from_sensor;
++    const auto transform =
++        slam_benchmark::target_from_source(imu->calibration, lidar->calibration);
 +    Lidar_R_wrt_IMU << transform[0], transform[1], transform[2], transform[4],
 +        transform[5], transform[6], transform[8], transform[9], transform[10];
 +    Lidar_T_wrt_IMU << transform[3], transform[7], transform[11];
@@ -526,6 +531,7 @@ index 0000000..d6277bd
 +    G_m_s2 = kf_input.x_.gravity.norm();
 +    process_covariance_ = process_noise_cov_input();
 +    spdlog::info("Point-LIO standalone adapter initialized");
++    return {};
 +}
 +
 +void PointLioAdapter::process(const slam_benchmark::SensorSample& sample) {
@@ -603,6 +609,8 @@ index 0000000..d6277bd
 +    auto started = std::chrono::steady_clock::now();
 +    scan_filter_.setInputCloud(measures.lidar);
 +    scan_filter_.filter(*feats_down_body);
++    sink_->report_timing(
++        {nanoseconds(measures.lidar_last_time), "downsampling", elapsed_ms(started)});
 +    std::sort(feats_down_body->begin(), feats_down_body->end(),
 +              [](const PointType& lhs, const PointType& rhs) {
 +                  return lhs.curvature < rhs.curvature;
@@ -621,9 +629,6 @@ index 0000000..d6277bd
 +        crossmat_list[index] << SKEW_SYM_MATRX(imu_point);
 +        pointBodyToWorld(&point, &feats_down_world->points[index]);
 +    }
-+    sink_->report_timing(
-+        {nanoseconds(measures.lidar_last_time), "downsampling", elapsed_ms(started)});
-+
 +    if (!map_initialized_) {
 +        ivox_->AddPoints(feats_down_world->points);
 +        map_initialized_ = feats_down_world->size() >= initial_map_size_ ||
@@ -722,7 +727,7 @@ index 0000000..d6277bd
 +}
 diff --git a/standalone/point_lio_adapter.hpp b/standalone/point_lio_adapter.hpp
 new file mode 100644
-index 0000000..5582a58
+index 0000000..cf42e11
 --- /dev/null
 +++ b/standalone/point_lio_adapter.hpp
 @@ -0,0 +1,38 @@
@@ -737,7 +742,7 @@ index 0000000..5582a58
 +class PointLioAdapter final : public slam_benchmark::SlamAlgorithm {
 +public:
 +    [[nodiscard]] std::string_view name() const noexcept override { return "point_lio"; }
-+    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
 +                    const std::filesystem::path& config_path,
 +                    slam_benchmark::ResultSink& sink) override;
 +    void process(const slam_benchmark::SensorSample& sample) override;

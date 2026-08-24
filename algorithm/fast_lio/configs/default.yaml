@@ -1,4 +1,5 @@
 algorithm: fast_lio
+parallel_threads: 4
 filter_size_map_m: 0.2
 filter_size_scan_m: 0.2
 cube_side_length_m: 200.0

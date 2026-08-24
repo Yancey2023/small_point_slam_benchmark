@@ -1,0 +1,5 @@
+set(_source "${CMAKE_CURRENT_SOURCE_DIR}/source/ctlo")
+if(NOT EXISTS "${_source}/CMakeLists.txt")
+    message(FATAL_ERROR "Run scripts/download_algorithms.py ctlo and scripts/patch_algorithms.py apply ctlo")
+endif()
+add_subdirectory("${_source}" ctlo)

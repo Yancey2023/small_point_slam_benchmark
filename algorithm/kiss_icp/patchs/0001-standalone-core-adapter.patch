@@ -1,9 +1,9 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 new file mode 100644
-index 0000000..0121de1
+index 0000000..8147160
 --- /dev/null
 +++ b/CMakeLists.txt
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,42 @@
 +cmake_minimum_required(VERSION 3.24)
 +
 +find_package(Eigen3 CONFIG REQUIRED)
@@ -34,6 +34,9 @@ index 0000000..0121de1
 +    slam_benchmark::core
 +    yaml-cpp::yaml-cpp
 +    spdlog::spdlog
++)
++target_compile_definitions(kiss_icp_benchmark PRIVATE
++    SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
 +)
 +
 +if(MSVC)
@@ -207,10 +210,10 @@ index b95a585..2e42407 100644
  }  // namespace kiss_icp::pipeline
 diff --git a/standalone/kiss_icp_adapter.cpp b/standalone/kiss_icp_adapter.cpp
 new file mode 100644
-index 0000000..1ff47c7
+index 0000000..c0c9fc1
 --- /dev/null
 +++ b/standalone/kiss_icp_adapter.cpp
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,114 @@
 +#include "kiss_icp_adapter.hpp"
 +
 +#include <spdlog/spdlog.h>
@@ -235,10 +238,13 @@ index 0000000..1ff47c7
 +}
 +}  // namespace
 +
-+void KissIcpAdapter::initialize(
++slam_benchmark::InitializationResult KissIcpAdapter::initialize(
 +    std::span<const slam_benchmark::SensorDefinition> sensors,
 +    const std::filesystem::path& config_path,
 +    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true});
++    if (!compatibility) return compatibility;
 +    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
 +                                         &slam_benchmark::SensorDefinition::type);
 +    if (lidar == sensors.end()) throw std::runtime_error("KISS-ICP requires one LiDAR");
@@ -256,7 +262,11 @@ index 0000000..1ff47c7
 +        parameter(root, "max_iterations", config.max_num_iterations);
 +    config.convergence_criterion =
 +        parameter(root, "convergence_criterion", config.convergence_criterion);
-+    config.max_num_threads = parameter(root, "max_num_threads", config.max_num_threads);
++    config.max_num_threads = parameter(
++        root, "parallel_threads", SLAM_BENCHMARK_PARALLEL_THREADS);
++    if (config.max_num_threads <= 0) {
++        throw std::runtime_error("parallel_threads must be positive");
++    }
 +    config.deskew = parameter(root, "deskew", true);
 +
 +    const auto& transform = lidar->calibration.body_from_sensor;
@@ -272,6 +282,7 @@ index 0000000..1ff47c7
 +        sink_->report_timing({current_timestamp_, stage, duration});
 +    });
 +    spdlog::info("KISS-ICP standalone adapter initialized");
++    return {};
 +}
 +
 +void KissIcpAdapter::process(const slam_benchmark::SensorSample& sample) {
@@ -319,7 +330,7 @@ index 0000000..1ff47c7
 +}
 diff --git a/standalone/kiss_icp_adapter.hpp b/standalone/kiss_icp_adapter.hpp
 new file mode 100644
-index 0000000..4ee0722
+index 0000000..4c28ee5
 --- /dev/null
 +++ b/standalone/kiss_icp_adapter.hpp
 @@ -0,0 +1,24 @@
@@ -334,7 +345,7 @@ index 0000000..4ee0722
 +class KissIcpAdapter final : public slam_benchmark::SlamAlgorithm {
 +public:
 +    [[nodiscard]] std::string_view name() const noexcept override { return "kiss_icp"; }
-+    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
 +                    const std::filesystem::path& config_path,
 +                    slam_benchmark::ResultSink& sink) override;
 +    void process(const slam_benchmark::SensorSample& sample) override;

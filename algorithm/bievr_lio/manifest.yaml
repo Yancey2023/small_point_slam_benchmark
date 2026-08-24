@@ -1,0 +1,17 @@
+schema_version: 1
+name: BIEVR-LIO
+description: Robust LiDAR-inertial odometry using bump-image-enhanced voxel maps and map-informed sampling.
+authors: [ETH Zurich Autonomous Systems Lab]
+license: BSD-3-Clause
+repository:
+  name: BIEVR-LIO
+  url: https://github.com/ethz-asl/BIEVR-LIO.git
+  ref: 2306022e341e98ce84244f92ba7d26f047b41dbc
+dependencies:
+  - {name: Ceres Solver, url: https://github.com/ceres-solver/ceres-solver.git}
+  - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
+paper:
+  title: "BIEVR-LIO: Robust LiDAR-Inertial Odometry through Bump-Image-Enhanced Voxel Maps"
+  url: https://arxiv.org/abs/2602.20887
+sensors: [lidar, imu]
+timing_stages: [lidar_preprocess, imu_preprocess, undistortion, downsampling, state_propagation, registration, filter_update, map_update]

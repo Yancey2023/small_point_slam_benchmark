@@ -16,9 +16,10 @@ const commonStages: CommonStage[] = [
   {
     id: 'lidar_preprocess',
     label: 'LIO 雷达预处理',
-    rawStages: ['lidar_preprocess', 'plane_estimation'],
+    rawStages: ['lidar_preprocess'],
   },
   { id: 'downsampling', label: 'LIO 点云降采样', rawStages: ['downsampling'] },
+  { id: 'imu_preprocess', label: 'IMU 预处理', rawStages: ['imu_preprocess'] },
   { id: 'undistortion', label: 'LIO 点云去畸变', rawStages: ['undistortion'] },
   {
     id: 'state_propagation',
@@ -52,7 +53,17 @@ const commonStages: CommonStage[] = [
     label: 'LIO 观测更新（旧版组合阶段）',
     rawStages: ['correspondence_search_filter_update'],
   },
+  { id: 'registration', label: '点云配准', rawStages: ['registration', 'resitration'] },
+  { id: 'intensity_image', label: '强度图预处理', rawStages: ['intensity_image'] },
+  {
+    id: 'photometric_registration',
+    label: '强度光度配准',
+    rawStages: ['photometric_registration'],
+  },
+  { id: 'intensity_feature', label: '强度特征管理', rawStages: ['intensity_feature'] },
 ]
+
+const ignoredStages = new Set(['plane_estimation'])
 
 const sensorLabels: Record<string, string> = {
   camera: '图像消息',
@@ -70,9 +81,30 @@ const groupLabels: Record<string, string> = {
   count: '调用次数',
 }
 
+const groupDescriptions: Record<string, string> = {
+  overview: '快速比较每种算法的运行速度、CPU 和内存占用。',
+  message: '查看算法处理不同传感器消息分别需要多少时间。',
+  stage: '查看算法在雷达预处理、去畸变、滤波和地图更新等步骤上花费的时间。',
+  count: '查看每类消息或处理步骤一共执行了多少次。',
+}
+
+const metricDescriptions: Record<string, string> = {
+  wall_time_ms: '从点击运行到全部完成一共等待了多久，包括读取rosbag数据和播放rosbag时的等待。',
+  algorithm_process_time_ms: '算法真正处理传感器数据累计花了多久，不包括读取rosbag数据和播放rosbag时的等待。',
+  algorithm_cpu_time_ms: '算法实际消耗了多少 CPU 计算时间。可以理解为所有CPU核心的耗时加在一起，用于衡量实际的CPU占用。',
+  mean_cpu_percent: '运行期间平均使用了整台机器多少 CPU。100% 表示所有核心都在满负荷工作。',
+  p95_cpu_percent: '大多数时间里的较高 CPU 占用，可减少偶尔出现的尖峰对判断的影响。',
+  peak_cpu_percent: '运行期间出现过的最高 CPU 占用。',
+  mean_core_cpu_percent: '运行期间平均用了多少个核心。100% 约等于用满一个核心，800% 约等于用满八个核心。',
+  peak_core_cpu_percent: '运行期间最多同时用了多少个核心。100% 约等于用满一个核心。',
+  mean_memory_mb: '运行期间通常占用了多少内存。',
+  peak_memory_mb: '运行期间最多占用了多少内存。',
+  message_count: '这次运行一共处理了多少条传感器消息。',
+}
+
 const defaultMetricIds = new Set([
   'algorithm_process_time_ms',
-  'mean_memory_mb',
+  'algorithm_cpu_time_ms',
   'peak_memory_mb',
 ])
 
@@ -114,6 +146,7 @@ function metric(
   lowerIsBetter = true,
   selectionId?: string,
   timingStatistic?: PerformanceMetric['timingStatistic'],
+  description?: string,
 ): PerformanceMetric {
   return {
     id,
@@ -122,8 +155,10 @@ function metric(
     unit,
     group,
     groupLabel: groupLabels[group] ?? group,
+    groupDescription: groupDescriptions[group],
     defaultSelected: defaultMetricIds.has(id),
     lowerIsBetter,
+    description: description ?? metricDescriptions[id],
     ...(selectionId ? { selectionId } : {}),
     ...(timingStatistic ? { timingStatistic } : {}),
   }
@@ -148,12 +183,20 @@ function timingStatistics(
   group: 'message' | 'stage',
 ): PerformanceMetric[] {
   if (!durations.length) return []
+  const source = group === 'message'
+    ? `处理${label}`
+    : `执行“${label}”步骤`
   return [
-    metric(`${idPrefix}:mean_ms`, label, mean(durations), 'ms', group, true, idPrefix, 'mean'),
-    metric(`${idPrefix}:p95_ms`, label, percentile(durations, 0.95), 'ms', group, true, idPrefix, 'p95'),
-    metric(`${idPrefix}:max_ms`, label, Math.max(0, ...durations), 'ms', group, true, idPrefix, 'max'),
-    metric(`${idPrefix}:total_ms`, label, durations.reduce((sum, value) => sum + value, 0), 'ms', group, true, idPrefix, 'total'),
-    metric(`${idPrefix}:count`, label, durations.length, 'count', 'count', false),
+    metric(`${idPrefix}:mean_ms`, label, mean(durations), 'ms', group, true, idPrefix, 'mean',
+      `${source}平均需要多久。`),
+    metric(`${idPrefix}:p95_ms`, label, percentile(durations, 0.95), 'ms', group, true, idPrefix, 'p95',
+      `${source}时，大多数（95%）记录不会超过这个时间。`),
+    metric(`${idPrefix}:max_ms`, label, Math.max(0, ...durations), 'ms', group, true, idPrefix, 'max',
+      `${source}最慢的一次花了多久。`),
+    metric(`${idPrefix}:total_ms`, label, durations.reduce((sum, value) => sum + value, 0), 'ms', group, true, idPrefix, 'total',
+      `${source}全部加起来花了多久。`),
+    metric(`${idPrefix}:count`, label, durations.length, 'count', 'count', false,
+      undefined, undefined, `${source}一共记录了多少次。`),
   ]
 }
 
@@ -201,7 +244,8 @@ export async function readPerformance(outputDirectory: string): Promise<Performa
   const discoveredStages = [...new Set(
     timingRows
       .map((row) => row.stage ?? '')
-      .filter((stage) => stage && stage !== 'total' && stage !== 'finalize' && !consumedStages.has(stage)),
+      .filter((stage) => stage && stage !== 'total' && stage !== 'finalize' &&
+        !consumedStages.has(stage) && !ignoredStages.has(stage)),
   )].map((stage) => ({
     id: stage,
     label: stage.replaceAll('_', ' '),
@@ -247,6 +291,12 @@ export async function readPerformance(outputDirectory: string): Promise<Performa
         number(summary, 'algorithm_process_time_ms'),
         'ms',
       ),
+      ...(summary && 'algorithm_cpu_time_ms' in summary ? [metric(
+        'algorithm_cpu_time_ms',
+        '算法 CPU 总耗时',
+        number(summary, 'algorithm_cpu_time_ms'),
+        'ms',
+      )] : []),
       metric(
         'mean_cpu_percent',
         '平均 CPU 占用（归一化）',

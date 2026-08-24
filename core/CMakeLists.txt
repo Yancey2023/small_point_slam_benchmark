@@ -1,4 +1,5 @@
 set(SLAM_BENCHMARK_CORE_SOURCES
+    src/algorithm.cpp
     src/application.cpp
     src/benchmark_runner.cpp
     src/csv_writer.cpp

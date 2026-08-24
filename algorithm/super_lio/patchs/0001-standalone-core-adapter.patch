@@ -1,9 +1,9 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 new file mode 100644
-index 0000000..7120eee
+index 0000000..d3ae7fa
 --- /dev/null
 +++ b/CMakeLists.txt
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,46 @@
 +cmake_minimum_required(VERSION 3.24)
 +
 +find_package(Eigen3 CONFIG REQUIRED)
@@ -38,6 +38,9 @@ index 0000000..7120eee
 +    super_lio_algorithm
 +    slam_benchmark::core
 +    yaml-cpp::yaml-cpp
++)
++target_compile_definitions(super_lio_benchmark PRIVATE
++    SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
 +)
 +
 +if(MSVC)
@@ -496,14 +499,15 @@ index 0000000..89a2946
 +}
 diff --git a/standalone/super_lio_adapter.cpp b/standalone/super_lio_adapter.cpp
 new file mode 100644
-index 0000000..f56fbb6
+index 0000000..540e2f2
 --- /dev/null
 +++ b/standalone/super_lio_adapter.cpp
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,176 @@
 +#include "super_lio_adapter.hpp"
 +
 +#include "lio/params.h"
 +
++#include <slam_benchmark/calibration.hpp>
 +#include <yaml-cpp/yaml.h>
 +#include <spdlog/spdlog.h>
 +
@@ -511,6 +515,10 @@ index 0000000..f56fbb6
 +#include <chrono>
 +#include <cmath>
 +#include <stdexcept>
++
++#ifndef SLAM_BENCHMARK_PARALLEL_THREADS
++#define SLAM_BENCHMARK_PARALLEL_THREADS 4
++#endif
 +
 +namespace {
 +
@@ -559,10 +567,14 @@ index 0000000..f56fbb6
 +    g_lidar_robo_yaw = BASIC::M3::Identity();
 +    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
 +                                         &slam_benchmark::SensorDefinition::type);
-+    if (lidar == sensors.end()) throw std::runtime_error("Super-LIO requires a LiDAR");
++    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
++                                       &slam_benchmark::SensorDefinition::type);
++    if (lidar == sensors.end() || imu == sensors.end())
++        throw std::runtime_error("Super-LIO requires one LiDAR and one IMU");
 +    BASIC::M3 rotation;
 +    BASIC::V3 translation;
-+    const auto& transform = lidar->calibration.body_from_sensor;
++    const auto transform =
++        slam_benchmark::target_from_source(imu->calibration, lidar->calibration);
 +    rotation << transform[0], transform[1], transform[2],
 +                transform[4], transform[5], transform[6],
 +                transform[8], transform[9], transform[10];
@@ -572,22 +584,36 @@ index 0000000..f56fbb6
 +
 +}  // namespace
 +
-+void SuperLioAdapter::initialize(
++slam_benchmark::InitializationResult SuperLioAdapter::initialize(
 +    std::span<const slam_benchmark::SensorDefinition> sensors,
 +    const std::filesystem::path& config_path,
 +    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true, .imu = true, .point_time = true});
++    if (!compatibility) return compatibility;
 +    const bool has_imu = std::ranges::any_of(sensors, [](const auto& sensor) {
 +        return sensor.type == slam_benchmark::SensorType::Imu;
 +    });
 +    if (!has_imu) throw std::runtime_error("Super-LIO requires an IMU");
 +    sink_ = &sink;
-+    load_parameters(YAML::LoadFile(config_path.string()), sensors);
++    const YAML::Node root = YAML::LoadFile(config_path.string());
++    const int parallel_threads = parameter(
++        root, "parallel_threads", SLAM_BENCHMARK_PARALLEL_THREADS);
++    if (parallel_threads <= 0) {
++        throw std::runtime_error("parallel_threads must be positive");
++    }
++    tbb_control_ = std::make_unique<tbb::global_control>(
++        tbb::global_control::max_allowed_parallelism,
++        static_cast<std::size_t>(parallel_threads));
++    load_parameters(root, sensors);
 +    algorithm_.setPoseCallback([this](const LI2Sup::NavState& state) { accept_pose(state); });
 +    algorithm_.setTimingCallback([this](const char* stage, double time, double duration) {
 +        sink_->report_timing({nanoseconds(time), stage, duration});
 +    });
 +    algorithm_.init();
-+    spdlog::info("Super-LIO standalone adapter initialized");
++    spdlog::info("Super-LIO standalone adapter initialized with {} compute threads",
++                 parallel_threads);
++    return {};
 +}
 +
 +void SuperLioAdapter::process(const slam_benchmark::SensorSample& sample) {
@@ -655,21 +681,23 @@ index 0000000..f56fbb6
 +}
 diff --git a/standalone/super_lio_adapter.hpp b/standalone/super_lio_adapter.hpp
 new file mode 100644
-index 0000000..c0d980e
+index 0000000..2985789
 --- /dev/null
 +++ b/standalone/super_lio_adapter.hpp
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,29 @@
 +#pragma once
 +
 +#include "lio/super_lio.h"
 +#include <slam_benchmark/algorithm.hpp>
++#include <tbb/global_control.h>
 +
 +#include <deque>
++#include <memory>
 +
 +class SuperLioAdapter final : public slam_benchmark::SlamAlgorithm {
 +public:
 +    [[nodiscard]] std::string_view name() const noexcept override { return "super_lio"; }
-+    void initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
++    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
 +                    const std::filesystem::path& config_path,
 +                    slam_benchmark::ResultSink& sink) override;
 +    void process(const slam_benchmark::SensorSample& sample) override;
@@ -680,6 +708,7 @@ index 0000000..c0d980e
 +    void accept_pose(const LI2Sup::NavState& state);
 +
 +    slam_benchmark::ResultSink* sink_{};
++    std::unique_ptr<tbb::global_control> tbb_control_;
 +    LI2Sup::SuperLIO algorithm_;
 +    std::deque<LI2Sup::IMUData> imu_queue_;
 +    std::deque<LI2Sup::LidarData> lidar_queue_;

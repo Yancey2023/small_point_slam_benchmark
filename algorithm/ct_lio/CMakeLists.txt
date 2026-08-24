@@ -1,0 +1,5 @@
+set(_source "${CMAKE_CURRENT_SOURCE_DIR}/source/ct-lio")
+if(NOT EXISTS "${_source}/CMakeLists.txt")
+    message(FATAL_ERROR "Run scripts/download_algorithms.py ct_lio and scripts/patch_algorithms.py apply ct_lio")
+endif()
+add_subdirectory("${_source}" ct-lio)

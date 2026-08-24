@@ -1,4 +1,5 @@
 #include "slam_benchmark/dataset_reader.hpp"
+#include "slam_benchmark/algorithm.hpp"
 
 #include <rosbag_io/writer.hpp>
 #include <rosbag_io/message/decoded_messages.hpp>
@@ -55,7 +56,7 @@ std::vector<std::byte> point_cloud_cdr() {
     cloud.width = 2;
     cloud.fields = {
         {"x", 0, 7, 1}, {"y", 4, 7, 1}, {"z", 8, 7, 1},
-        {"intensity", 12, 7, 1}, {"ring", 16, 4, 1}, {"time", 20, 7, 1},
+        {"reflectivity", 12, 7, 1}, {"ring", 16, 4, 1}, {"time", 20, 7, 1},
     };
     cloud.point_step = 24;
     cloud.row_step = 48;
@@ -107,9 +108,16 @@ int main() {
     lidar.topic = "/points";
     lidar.message_type = "sensor_msgs/msg/PointCloud2";
     lidar.point_time_field = "time";
+    lidar.intensity_field = "reflectivity";
     lidar.point_time_to_nanoseconds = 1e9;
     BagDefinition bag{"sensors", path, {sensor, lidar}};
     RosbagDatasetReader reader;
+    const auto inspected = reader.inspect(bag);
+    expect(inspected.size() == 2);
+    expect(inspected[0].available);
+    expect(inspected[1].available);
+    expect(inspected[1].provides_point_time);
+    expect(inspected[1].provides_intensity);
     int count = 0;
     reader.read(bag, [&](SensorSample&& sample) {
         ++count;
@@ -134,5 +142,17 @@ int main() {
         }
     });
     expect(count == 2);
+
+    lidar.intensity_field = "missing_intensity";
+    BagDefinition missing_intensity{"missing_intensity", path, {lidar}};
+    missing_intensity.sensors = reader.inspect(missing_intensity);
+    expect(!missing_intensity.sensors[0].provides_intensity);
+    expect(!check_dataset_compatibility(
+        missing_intensity.sensors, {.lidar = true, .intensity = true}));
+    reader.read(missing_intensity, [](SensorSample&& sample) {
+        const auto& cloud = std::get<PointCloud>(sample.payload);
+        expect(cloud.points[1].intensity == 0.0F);
+    });
+
     std::filesystem::remove(path);
 }

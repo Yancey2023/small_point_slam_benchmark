@@ -1,0 +1,5 @@
+set(_source "${CMAKE_CURRENT_SOURCE_DIR}/source/COIN-LIO")
+if(NOT EXISTS "${_source}/CMakeLists.txt")
+    message(FATAL_ERROR "Run scripts/download_algorithms.py coin_lio and scripts/patch_algorithms.py apply coin_lio")
+endif()
+add_subdirectory("${_source}" coin-lio)

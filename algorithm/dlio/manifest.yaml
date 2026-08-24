@@ -1,0 +1,17 @@
+schema_version: 1
+name: DLIO
+description: Direct LiDAR-inertial odometry with coarse-to-fine continuous-time motion correction.
+authors: [Kevin Chen, Ryan Nemiroff, Brett T. Lopez]
+license: MIT
+repository:
+  name: direct_lidar_inertial_odometry
+  url: https://github.com/vectr-ucla/direct_lidar_inertial_odometry.git
+  ref: fc8d183f18cdcfb9bb4fc754c6d373cedc4cbd04
+dependencies:
+  - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
+  - {name: PCL, url: https://github.com/PointCloudLibrary/pcl.git}
+paper:
+  title: "Direct LiDAR-Inertial Odometry: Lightweight LIO with Continuous-Time Motion Correction"
+  url: https://arxiv.org/abs/2203.03749
+sensors: [lidar, imu]
+timing_stages: [lidar_preprocess, imu_preprocess, undistortion, downsampling, state_propagation, registration, filter_update, map_update]

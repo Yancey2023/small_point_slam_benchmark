@@ -1,0 +1,15 @@
+schema_version: 1
+name: CTLO
+description: Lightweight continuous-time LiDAR odometry with voxelized incremental NDT association.
+authors: [G3tupup]
+license: Not specified by upstream
+repository:
+  name: ctlo
+  url: https://github.com/G3tupup/ctlo.git
+  ref: 03caf1d6c8f4fd7d03d53934a3636a5db1a31c4c
+dependencies:
+  - {name: Ceres Solver, url: https://github.com/ceres-solver/ceres-solver.git}
+  - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
+paper: {}
+sensors: [lidar]
+timing_stages: [lidar_preprocess, downsampling, registration, map_update]

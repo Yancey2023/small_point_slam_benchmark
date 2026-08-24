@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 
 import type { BenchmarkResult, PerformanceMetric, PerformanceResponse } from '../../shared/contracts'
 import { fetchResultPerformance } from '@/api/client'
+import HelpTip from '@/components/HelpTip.vue'
 import { algorithmColor } from '@/presentation'
 
 const props = defineProps<{
@@ -13,7 +14,7 @@ const availableResults = computed(() => props.results.filter((result) => result.
 const selectedDatasetId = ref<string | null>(null)
 const selectedAlgorithmIds = ref<string[]>([])
 const selectedMetricIds = ref<string[]>([])
-const selectedTimingStatistic = ref<'mean' | 'p95' | 'max' | 'total'>('mean')
+const selectedTimingStatistic = ref<'mean' | 'p95' | 'max' | 'total'>('total')
 const performances = ref<Record<string, PerformanceResponse>>({})
 const performanceVersions = ref<Record<string, string>>({})
 const loadingJobIds = ref(new Set<string>())
@@ -27,6 +28,15 @@ const timingStatistics = [
   { id: 'max', label: '峰值耗时' },
   { id: 'total', label: '累积耗时' },
 ] as const
+
+const hiddenMetricIds = new Set([
+  'mean_cpu_percent',
+  'p95_cpu_percent',
+  'peak_cpu_percent',
+  'mean_core_cpu_percent',
+  'peak_core_cpu_percent',
+  'message_count',
+])
 
 const datasetOptions = computed(() => uniqueOptions('datasetId', 'datasetName'))
 const algorithmOptions = computed(() => uniqueOptions('algorithmId', 'algorithmName'))
@@ -45,6 +55,7 @@ const metricOptions = computed(() => {
   const options = new Map<string, PerformanceMetric>()
   for (const performance of Object.values(performances.value)) {
     for (const metric of performance.metrics) {
+      if (hiddenMetricIds.has(metric.id) || metric.id.startsWith('message:')) continue
       if (metric.timingStatistic && metric.timingStatistic !== selectedTimingStatistic.value) {
         continue
       }
@@ -54,11 +65,17 @@ const metricOptions = computed(() => {
   return [...options.values()]
 })
 const metricGroups = computed(() => {
-  const groups = new Map<string, { id: string; label: string; metrics: PerformanceMetric[] }>()
+  const groups = new Map<string, {
+    id: string
+    label: string
+    description?: string
+    metrics: PerformanceMetric[]
+  }>()
   for (const metric of metricOptions.value) {
     const group = groups.get(metric.group) ?? {
       id: metric.group,
       label: metric.groupLabel,
+      description: metric.groupDescription,
       metrics: [],
     }
     group.metrics.push(metric)
@@ -66,12 +83,6 @@ const metricGroups = computed(() => {
   }
   return [...groups.values()]
 })
-const cpuDescriptions = computed(() => [...new Set(
-  selectedJobs.value.flatMap((job) => {
-    const performance = performances.value[job.id]
-    return performance ? [`${performance.runModeLabel}：${performance.cpuDescription}`] : []
-  }),
-)])
 const charts = computed(() =>
   selectedMetricIds.value.flatMap((metricId) => {
     const definition = metricOptions.value.find(
@@ -218,30 +229,31 @@ function formatValue(value: number, unit: PerformanceMetric['unit']): string {
 <template>
   <section class="performance-card" aria-labelledby="performance-title">
     <div class="performance-heading">
-      <h2 id="performance-title">性能对比</h2>
+      <div class="heading-title">
+        <h2 id="performance-title">性能对比</h2>
+        <HelpTip
+          text="条形越长，数值越大。请在同一张图里比较算法，不要用不同图的条形长度互相比较。"
+          label="查看性能对比说明"
+          align="start"
+        />
+      </div>
       <p>数据集单选，算法与指标多选；条形长度按当前指标内的最大值计算</p>
     </div>
 
     <div v-if="availableResults.length" class="performance-content">
       <div class="filter-grid">
-        <fieldset>
+        <fieldset class="dataset-filter">
           <legend>数据集（单选）</legend>
-          <div class="chips">
-            <button
-              v-for="dataset in datasetOptions"
-              :key="dataset.id"
-              type="button"
-              :aria-pressed="selectedDatasetId === dataset.id"
-              :class="{ active: selectedDatasetId === dataset.id, radio: true }"
-              @click="selectedDatasetId = dataset.id"
-            >
-              <span>{{ selectedDatasetId === dataset.id ? '●' : '' }}</span>
-              {{ dataset.label }}
-            </button>
+          <div class="dataset-select-wrap">
+            <select v-model="selectedDatasetId" class="dataset-select" aria-label="选择性能数据集">
+              <option v-for="dataset in datasetOptions" :key="dataset.id" :value="dataset.id">
+                {{ dataset.label }}
+              </option>
+            </select>
           </div>
         </fieldset>
 
-        <fieldset>
+        <fieldset class="algorithm-filter">
           <legend class="with-action">
             <span>算法</span>
             <button type="button" @click="toggleAllAlgorithms">
@@ -269,13 +281,26 @@ function formatValue(value: number, unit: PerformanceMetric['unit']): string {
           <div class="metric-groups">
             <section v-for="group in metricGroups" :key="group.id" class="metric-group">
               <header>
-                <strong>{{ group.label }}</strong>
+                <div class="metric-group-title">
+                  <strong>{{ group.label }}</strong>
+                  <HelpTip
+                    v-if="group.description"
+                    :text="group.description"
+                    :label="`查看${group.label}说明`"
+                    align="start"
+                  />
+                </div>
                 <div class="metric-group-actions">
                   <div
                     v-if="group.id === 'stage'"
                     class="timing-switch"
                     aria-label="耗时统计方式"
                   >
+                    <HelpTip
+                      text="阶段耗时的显示方式：平均、绝大多数情况、最慢一次或全部累计。"
+                      label="查看耗时统计方式说明"
+                      align="end"
+                    />
                     <div>
                       <button
                         v-for="statistic in timingStatistics"
@@ -299,17 +324,26 @@ function formatValue(value: number, unit: PerformanceMetric['unit']): string {
                 </div>
               </header>
               <div class="chips">
-                <button
+                <div
                   v-for="metric in group.metrics"
                   :key="metricSelectionId(metric)"
-                  type="button"
-                  :aria-pressed="selectedMetricIds.includes(metricSelectionId(metric))"
-                  :class="{ active: selectedMetricIds.includes(metricSelectionId(metric)) }"
-                  @click="selectedMetricIds = toggle(selectedMetricIds, metricSelectionId(metric))"
+                  class="metric-choice"
                 >
-                  <span>{{ selectedMetricIds.includes(metricSelectionId(metric)) ? '✓' : '' }}</span>
-                  {{ metric.label }}
-                </button>
+                  <button
+                    type="button"
+                    :aria-pressed="selectedMetricIds.includes(metricSelectionId(metric))"
+                    :class="{ active: selectedMetricIds.includes(metricSelectionId(metric)) }"
+                    @click="selectedMetricIds = toggle(selectedMetricIds, metricSelectionId(metric))"
+                  >
+                    <span>{{ selectedMetricIds.includes(metricSelectionId(metric)) ? '✓' : '' }}</span>
+                    {{ metric.label }}
+                  </button>
+                  <HelpTip
+                    v-if="metric.description"
+                    :text="metric.description"
+                    :label="`查看${metric.label}说明`"
+                  />
+                </div>
               </div>
             </section>
           </div>
@@ -318,14 +352,18 @@ function formatValue(value: number, unit: PerformanceMetric['unit']): string {
 
       <div v-if="loadingJobIds.size" class="loading-note">正在读取性能数据…</div>
       <p v-for="(message, jobId) in errors" :key="jobId" class="chart-error">{{ message }}</p>
-      <div v-if="cpuDescriptions.length" class="cpu-notes">
-        <p v-for="description in cpuDescriptions" :key="description">{{ description }}</p>
-      </div>
-
       <div v-if="charts.length" class="charts">
         <article v-for="chart in charts" :key="chart.id" class="chart">
           <header>
-            <h3>{{ chart.label }}</h3>
+            <div class="chart-title">
+              <h3>{{ chart.label }}</h3>
+              <HelpTip
+                v-if="chart.description"
+                :text="chart.description"
+                :label="`查看${chart.label}说明`"
+                align="start"
+              />
+            </div>
             <span v-if="chart.lowerIsBetter">越低越好</span>
           </header>
           <div v-if="chart.entries.length" class="bar-list">
@@ -360,15 +398,34 @@ function formatValue(value: number, unit: PerformanceMetric['unit']): string {
   box-shadow: var(--shadow-card);
 }
 .performance-heading { margin-bottom: 22px; }
+.heading-title, .metric-group-title, .chart-title { display: flex; align-items: center; gap: 6px; }
 .performance-heading h2 { margin: 0 0 3px; font-size: 23px; }
 .performance-heading p { margin: 0; color: var(--ink-muted); font-size: 13px; }
 .performance-content { display: grid; gap: 20px; }
-.filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.filter-grid { display: grid; gap: 14px; }
 fieldset { min-width: 0; margin: 0; padding: 14px; border: 1px solid #e1e7e5; border-radius: 18px; background: #f8faf8; }
 legend { padding: 0 5px; color: #68797f; font-size: 11px; font-weight: 900; letter-spacing: .08em; }
 .with-action { display: flex; width: calc(100% - 10px); align-items: center; justify-content: space-between; gap: 8px; }
 .with-action button { padding: 3px 7px; border: 0; border-radius: 7px; color: #60777f; background: #e8efec; cursor: pointer; font-size: 9px; font-weight: 800; letter-spacing: 0; }
+.dataset-select-wrap { position: relative; width: min(100%, 360px); }
+.dataset-select-wrap::after { position: absolute; top: 50%; right: 12px; color: #60777f; content: '⌄'; font-size: 15px; pointer-events: none; transform: translateY(-58%); }
+.dataset-select {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 34px 9px 11px;
+  border: 1px solid #cbd7d5;
+  border-radius: 12px;
+  color: #40575f;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 750;
+  appearance: none;
+}
+.dataset-select:focus-visible { outline: 2px solid #87a0aa; outline-offset: 2px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.metric-choice { display: inline-flex; align-items: center; gap: 4px; }
 .chips button {
   display: inline-flex;
   align-items: center;
@@ -388,8 +445,7 @@ legend { padding: 0 5px; color: #68797f; font-size: 11px; font-weight: 900; lett
 .chips button.active > span { border-color: #607c89; color: #fff; background: #607c89; }
 .chips button.radio > span { border-radius: 50%; font-size: 7px; }
 .chips i { width: 7px; height: 7px; border-radius: 50%; }
-.metric-filter { grid-column: 1 / -1; }
-.timing-switch { display: flex; align-items: center; gap: 8px; }
+.timing-switch { display: flex; align-items: center; gap: 6px; }
 .timing-switch > span { color: #66767b; font-size: 10px; font-weight: 800; }
 .timing-switch > div { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; border: 1px solid #dce4e1; border-radius: 10px; background: #eef2f0; }
 .timing-switch button { padding: 5px 9px; border: 0; border-radius: 7px; color: #68777b; background: transparent; cursor: pointer; font-size: 9px; font-weight: 800; }
@@ -402,9 +458,6 @@ legend { padding: 0 5px; color: #68797f; font-size: 11px; font-weight: 900; lett
 .metric-group .group-toggle { padding: 3px 7px; border: 0; border-radius: 7px; color: #60777f; background: #e8efec; cursor: pointer; font-size: 9px; font-weight: 800; }
 .loading-note { color: var(--ink-muted); font-size: 11px; text-align: center; }
 .chart-error { margin: 0; color: #a85e62; font-size: 11px; text-align: center; }
-.cpu-notes { display: grid; gap: 5px; padding: 11px 13px; border: 1px solid #dce5e2; border-radius: 13px; color: #63757a; background: #f1f5f3; }
-.cpu-notes p { margin: 0; font-size: 10px; line-height: 1.55; }
-
 .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .chart { min-width: 0; padding: 17px; border: 1px solid #e2e7e5; border-radius: 19px; background: #fbfcfa; }
 .chart header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 15px; }
@@ -420,9 +473,6 @@ legend { padding: 0 5px; color: #68797f; font-size: 11px; font-weight: 900; lett
 .panel-placeholder { display: grid; min-height: 180px; place-items: center; border: 1px dashed #cad4d2; border-radius: 19px; background: #f7f9f7; }
 .empty { padding: 40px; }
 
-@media (max-width: 900px) {
-  .filter-grid { grid-template-columns: 1fr; }
-}
 @media (max-width: 760px) {
   .charts { grid-template-columns: 1fr; }
 }

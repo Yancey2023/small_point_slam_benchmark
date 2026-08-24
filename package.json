@@ -4,7 +4,13 @@
   "packageManager": "pnpm@11.22.0",
   "scripts": {
     "dev": "pnpm --filter @slam-benchmark/frontend dev",
+    "dev:web:static": "pnpm --filter @slam-benchmark/frontend dev:static",
     "build:web": "pnpm --filter @slam-benchmark/frontend build",
+    "build:web:static": "pnpm --filter @slam-benchmark/frontend build:static",
+    "export:web:static": "pnpm --filter @slam-benchmark/frontend export:static",
+    "generate:web-report": "pnpm --filter @slam-benchmark/frontend generate:report",
+    "preview:web:static": "pnpm --filter @slam-benchmark/frontend preview:static",
+    "validate:web-report": "pnpm --filter @slam-benchmark/frontend validate:report",
     "test:web": "pnpm --filter @slam-benchmark/frontend test",
     "start:web": "pnpm --filter @slam-benchmark/frontend start"
   }

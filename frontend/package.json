@@ -8,10 +8,16 @@
   },
   "scripts": {
     "dev": "concurrently --kill-others --names api,web --prefix-colors magenta,cyan \"pnpm dev:server\" \"pnpm dev:web\"",
+    "dev:static": "pnpm validate:report && vite --mode static",
     "dev:web": "vite",
     "dev:server": "tsx watch server/index.ts",
     "typecheck": "vue-tsc --noEmit -p tsconfig.app.json && tsc -p tsconfig.server.json --noEmit",
     "build": "pnpm typecheck && vite build && tsc -p tsconfig.server.json",
+    "build:static": "pnpm typecheck && pnpm validate:report && vite build --mode static",
+    "export:static": "pnpm generate:report && pnpm build:static",
+    "generate:report": "node --import tsx server/generate-static-report.ts",
+    "preview:static": "pnpm build:static && vite preview --mode static",
+    "validate:report": "node --import tsx server/validate-static-report.ts",
     "start": "node dist-server/server/index.js",
     "test": "vitest run"
   },

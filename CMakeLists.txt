@@ -3,7 +3,21 @@ project(small_point_slam_benchmark VERSION 0.1.0 LANGUAGES C CXX)
 
 option(SLAM_BENCHMARK_BUILD_TESTS "Build benchmark tests" ON)
 option(SLAM_BENCHMARK_BUILD_ALGORITHMS "Build downloaded algorithm adapters" OFF)
-set(SLAM_BENCHMARK_ALGORITHMS "fast_lio;point_lio;voxel_map;voxel_map_with_imu;super_lio;kiss_icp;faster_lio;small_point_lio;small_point_slam"
+set(SLAM_BENCHMARK_PARALLEL_THREADS 4 CACHE STRING
+    "Maximum compute threads used by each parallel algorithm")
+if(NOT SLAM_BENCHMARK_PARALLEL_THREADS MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "SLAM_BENCHMARK_PARALLEL_THREADS must be a positive integer")
+endif()
+file(GLOB _algorithm_manifests CONFIGURE_DEPENDS
+    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/algorithm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/algorithm/*/manifest.yaml")
+set(_discovered_algorithms)
+foreach(_manifest IN LISTS _algorithm_manifests)
+    get_filename_component(_algorithm "${_manifest}" DIRECTORY)
+    list(APPEND _discovered_algorithms "${_algorithm}")
+endforeach()
+list(SORT _discovered_algorithms)
+set(SLAM_BENCHMARK_ALGORITHMS "${_discovered_algorithms}"
     CACHE STRING "Semicolon-separated algorithms to build when adapters are enabled")
 option(SLAM_BENCHMARK_ENABLE_ROSBAG_IO "Build the rosbag-backed dataset reader" ON)
 
@@ -30,7 +44,7 @@ add_subdirectory(core)
 
 if(SLAM_BENCHMARK_BUILD_ALGORITHMS)
     foreach(algorithm IN LISTS SLAM_BENCHMARK_ALGORITHMS)
-        if(NOT algorithm MATCHES "^(fast_lio|point_lio|voxel_map|voxel_map_with_imu|super_lio|kiss_icp|faster_lio|small_point_lio|small_point_slam)$")
+        if(NOT algorithm IN_LIST _discovered_algorithms)
             message(FATAL_ERROR "Unknown algorithm in SLAM_BENCHMARK_ALGORITHMS: ${algorithm}")
         endif()
         add_subdirectory("algorithm/${algorithm}" "algorithm/${algorithm}")

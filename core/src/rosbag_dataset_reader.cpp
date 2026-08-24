@@ -97,19 +97,29 @@ PointCloud convert_cloud(const rosbag_io::message::PointCloud2 &input,
   const auto *x = find_field(input, "x", true);
   const auto *y = find_field(input, "y", true);
   const auto *z = find_field(input, "z", true);
-  const auto *intensity = find_field(input, "intensity", false);
+  const auto *intensity = sensor.provides_intensity
+                              ? find_field(input, sensor.intensity_field, false)
+                              : nullptr;
   const auto *ring = find_field(input, "ring", false);
-  const auto *time = find_field(input, sensor.point_time_field, true);
+  const auto *time = sensor.provides_point_time
+                         ? find_field(input, sensor.point_time_field, false)
+                         : nullptr;
   const std::size_t count =
       static_cast<std::size_t>(input.width) * input.height;
-  if (input.point_step == 0 || input.data.size() < count * input.point_step)
+  const std::size_t minimum_row_size =
+      static_cast<std::size_t>(input.width) * input.point_step;
+  if (input.point_step == 0 || input.row_step < minimum_row_size ||
+      input.data.size() < static_cast<std::size_t>(input.height) * input.row_step)
     throw std::runtime_error("invalid PointCloud2 data size");
 
   PointCloud output;
   output.points.reserve(count);
   output.point_time_offset_ns.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    const auto *point = input.data.data() + i * input.point_step;
+    const std::size_t row = i / input.width;
+    const std::size_t column = i % input.width;
+    const auto *point = input.data.data() + row * input.row_step +
+                        column * input.point_step;
     PointXYZIR converted;
     converted.x = static_cast<float>(
         field_value(point + x->offset, x->datatype, input.is_bigendian) *
@@ -127,10 +137,10 @@ PointCloud convert_cloud(const rosbag_io::message::PointCloud2 &input,
       converted.ring = static_cast<std::uint16_t>(field_value(
           point + ring->offset, ring->datatype, input.is_bigendian));
     output.points.push_back(converted);
-    output.point_time_offset_ns.push_back(static_cast<std::int64_t>(
+    output.point_time_offset_ns.push_back(time ? static_cast<std::int64_t>(
         std::llround(field_value(point + time->offset, time->datatype,
                                  input.is_bigendian) *
-                     sensor.point_time_to_nanoseconds)));
+                     sensor.point_time_to_nanoseconds)) : 0);
   }
   return output;
 }
@@ -229,6 +239,74 @@ SensorPayload decode(const rosbag_io::SerializedMessage &message,
 }
 
 } // namespace
+
+std::vector<SensorDefinition>
+RosbagDatasetReader::inspect(const BagDefinition &bag) {
+  std::vector<SensorDefinition> sensors = bag.sensors;
+  rosbag_io::Reader reader(bag.path.string());
+
+  std::map<std::string, const rosbag_io::TopicMetadata *, std::less<>> topics;
+  for (const auto &topic : reader.topics())
+    topics.emplace(topic.name, &topic);
+
+  std::map<std::string, SensorDefinition *, std::less<>> pending;
+  for (auto &sensor : sensors) {
+    sensor.available = topics.contains(sensor.topic);
+    sensor.availability_reason.clear();
+    if (!sensor.available) {
+      sensor.availability_reason = std::string(to_string(sensor.type)) +
+                                   " 话题在 bag 中不存在：" + sensor.topic;
+      continue;
+    }
+    if (sensor.type == SensorType::Lidar) {
+      sensor.provides_point_time = false;
+      sensor.provides_intensity = false;
+    }
+    pending.emplace(sensor.topic, &sensor);
+  }
+
+  while (!pending.empty() && reader.has_next()) {
+    const auto message = reader.read_next();
+    const auto sensor_it = pending.find(message.topic_name);
+    if (sensor_it == pending.end()) continue;
+    SensorDefinition &sensor = *sensor_it->second;
+    try {
+      const auto topic_it = topics.find(message.topic_name);
+      if (sensor.type == SensorType::Lidar) {
+        if (sensor.message_type.find("CustomMsg") != std::string::npos) {
+          sensor.provides_point_time = true;
+          sensor.provides_intensity = true;
+        } else {
+          const auto cloud = rosbag_io::decode_point_cloud2(
+              message.data, topic_it->second->serialization_format);
+          sensor.provides_point_time =
+              find_field(cloud, sensor.point_time_field, false) != nullptr;
+          sensor.provides_intensity =
+              find_field(cloud, sensor.intensity_field, false) != nullptr;
+        }
+      }
+      // Validate small structured messages before the algorithm starts. Avoid
+      // materializing a full image or Livox cloud during the probe because the
+      // allocator could retain that memory and bias the benchmark RSS.
+      if (sensor.type == SensorType::Imu || sensor.type == SensorType::Gnss ||
+          sensor.type == SensorType::WheelSpeed)
+        (void)decode(message, *topic_it->second, sensor);
+    } catch (const std::exception &error) {
+      sensor.available = false;
+      sensor.availability_reason =
+          std::string("无法检查 ") + to_string(sensor.type) + " 消息：" +
+          error.what();
+    }
+    pending.erase(sensor_it);
+  }
+
+  for (const auto &[topic, sensor] : pending) {
+    sensor->available = false;
+    sensor->availability_reason = std::string(to_string(sensor->type)) +
+                                  " 话题没有消息：" + topic;
+  }
+  return sensors;
+}
 
 void RosbagDatasetReader::read(const BagDefinition &bag,
                                const SampleCallback &callback) {
