@@ -231,15 +231,16 @@ index b37d5ee..a94d530 100644
  // 使用枚举的宏
 diff --git a/standalone/CMakeLists.txt b/standalone/CMakeLists.txt
 new file mode 100644
-index 0000000..4826c60
+index 0000000..26680b2
 --- /dev/null
 +++ b/standalone/CMakeLists.txt
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,90 @@
 +cmake_minimum_required(VERSION 3.24)
 +
 +find_package(Eigen3 CONFIG REQUIRED)
 +find_package(TBB REQUIRED)
 +find_package(small_gicp CONFIG REQUIRED)
++find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc imgcodecs calib3d)
 +
 +find_package(unordered_dense CONFIG QUIET)
 +if(NOT TARGET unordered_dense::unordered_dense)
@@ -259,10 +260,20 @@ index 0000000..4826c60
 +add_library(small_point_slam_algorithm STATIC
 +    "${NAVIGATION_ROOT}/src/localization/map/cached_ivox.cpp"
 +    "${NAVIGATION_ROOT}/src/localization/observation/imu.cpp"
++    "${NAVIGATION_ROOT}/src/localization/observation/image.cpp"
 +    "${NAVIGATION_ROOT}/src/localization/observation/point_cloud.cpp"
++    "${NAVIGATION_ROOT}/src/localization/observation/wheel_speed.cpp"
 +    "${NAVIGATION_ROOT}/src/localization/small_point_slam/eskf.cpp"
 +    "${NAVIGATION_ROOT}/src/localization/small_point_slam/estimator.cpp"
 +    "${NAVIGATION_ROOT}/src/localization/small_point_slam/parameters.cpp"
++    "${NAVIGATION_ROOT}/src/localization/vio/camera_model.cpp"
++    "${NAVIGATION_ROOT}/src/localization/vio/vio.cpp"
++    "${NAVIGATION_ROOT}/src/localization/vio/vision.cpp"
++    "${NAVIGATION_ROOT}/src/localization/vio/visual_point.cpp"
++    "${NAVIGATION_ROOT}/src/localization/vio/vikit/atan_camera.cpp"
++    "${NAVIGATION_ROOT}/src/localization/vio/vikit/equidistant_camera.cpp"
++    "${NAVIGATION_ROOT}/src/localization/vio/vikit/pinhole_camera.cpp"
++    "${NAVIGATION_ROOT}/src/localization/vio/vikit/polynomial_camera.cpp"
 +    small_point_slam_engine.cpp
 +)
 +target_compile_features(small_point_slam_algorithm PUBLIC cxx_std_20)
@@ -279,10 +290,15 @@ index 0000000..4826c60
 +    unordered_dense::unordered_dense
 +    yaml-cpp::yaml-cpp
 +    spdlog::spdlog
++    ${OpenCV_LIBS}
 +)
 +
 +add_executable(small_point_slam_benchmark
 +    main.cpp
++    small_point_slam_adapter.cpp
++)
++add_executable(small_point_slam_lio_mode_benchmark
++    main_lio_mode.cpp
 +    small_point_slam_adapter.cpp
 +)
 +target_link_libraries(small_point_slam_benchmark PRIVATE
@@ -292,65 +308,86 @@ index 0000000..4826c60
 +target_compile_definitions(small_point_slam_benchmark PRIVATE
 +    SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
 +)
++target_link_libraries(small_point_slam_lio_mode_benchmark PRIVATE
++    small_point_slam_algorithm
++    slam_benchmark::core
++)
++target_compile_definitions(small_point_slam_lio_mode_benchmark PRIVATE
++    SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
++)
 +
 +if(MSVC)
 +    target_compile_options(small_point_slam_algorithm PRIVATE /W3 /utf-8)
 +    target_compile_options(small_point_slam_benchmark PRIVATE /W4 /utf-8)
++    target_compile_options(small_point_slam_lio_mode_benchmark PRIVATE /W4 /utf-8)
 +else()
 +    target_compile_options(small_point_slam_algorithm PRIVATE -Wall -Wextra)
 +    target_compile_options(small_point_slam_benchmark PRIVATE -Wall -Wextra -Wpedantic)
++    target_compile_options(small_point_slam_lio_mode_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 +endif()
 diff --git a/standalone/include/common/common.h b/standalone/include/common/common.h
 new file mode 100644
-index 0000000..8a01f58
+index 0000000..599989e
 --- /dev/null
 +++ b/standalone/include/common/common.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,51 @@
 +#pragma once
 +
 +#include <pch.h>
 +
 +namespace common {
 +
-+struct Odometry {
-+    double timestamp{};
-+    Eigen::Vector3f position = Eigen::Vector3f::Zero();
-+    Eigen::Vector3f velocity = Eigen::Vector3f::Zero();
-+    Eigen::Vector3f acceleration = Eigen::Vector3f::Zero();
-+    Eigen::Matrix3f orientation = Eigen::Matrix3f::Identity();
-+    Eigen::Vector3f angular_velocity = Eigen::Vector3f::Zero();
-+};
++    struct Odometry {
++        double timestamp{};
++        Eigen::Vector3f position = Eigen::Vector3f::Zero();
++        Eigen::Vector3f velocity = Eigen::Vector3f::Zero();
++        Eigen::Vector3f acceleration = Eigen::Vector3f::Zero();
++        Eigen::Matrix3f orientation = Eigen::Matrix3f::Identity();
++        Eigen::Vector3f angular_velocity = Eigen::Vector3f::Zero();
++    };
 +
-+struct ImuStamped {
-+    double timestamp{};
-+    Eigen::Vector3f angular_velocity = Eigen::Vector3f::Zero();
-+    Eigen::Vector3f linear_acceleration = Eigen::Vector3f::Zero();
-+};
++    struct ImuStamped {
++        double timestamp{};
++        Eigen::Vector3f angular_velocity = Eigen::Vector3f::Zero();
++        Eigen::Vector3f linear_acceleration = Eigen::Vector3f::Zero();
++    };
 +
-+struct PointStamped {
-+    double timestamp{};
-+    Eigen::Vector3f position = Eigen::Vector3f::Zero();
-+};
++    struct PointStamped {
++        double timestamp{};
++        Eigen::Vector3f position = Eigen::Vector3f::Zero();
++    };
 +
-+struct MapPlane {
-+    Eigen::Vector3f center = Eigen::Vector3f::Zero();
-+    Eigen::Vector3f x_axis = Eigen::Vector3f::UnitX();
-+    Eigen::Vector3f y_axis = Eigen::Vector3f::UnitY();
-+    Eigen::Vector3f normal = Eigen::Vector3f::UnitZ();
-+    float minimum_eigenvalue{};
-+    float middle_eigenvalue{};
-+    float maximum_eigenvalue{};
-+    Eigen::Matrix3f normal_covariance = Eigen::Matrix3f::Zero();
-+    float alpha{0.8F};
-+};
++    struct WheelSpeed {
++        double timestamp{};
++        double velocity_x{};
++        double velocity_y{};
++        double angular_velocity_z{};
++    };
 +
-+}  // namespace common
++    struct ImageStamped {
++        double timestamp{};
++        cv::Mat image;
++    };
++
++    struct MapPlane {
++        Eigen::Vector3f center = Eigen::Vector3f::Zero();
++        Eigen::Vector3f x_axis = Eigen::Vector3f::UnitX();
++        Eigen::Vector3f y_axis = Eigen::Vector3f::UnitY();
++        Eigen::Vector3f normal = Eigen::Vector3f::UnitZ();
++        float minimum_eigenvalue{};
++        float middle_eigenvalue{};
++        float maximum_eigenvalue{};
++        Eigen::Matrix3f normal_covariance = Eigen::Matrix3f::Zero();
++        float alpha{0.8F};
++    };
++
++}// namespace common
 diff --git a/standalone/include/pch.h b/standalone/include/pch.h
 new file mode 100644
-index 0000000..98c1393
+index 0000000..b21f969
 --- /dev/null
 +++ b/standalone/include/pch.h
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,43 @@
 +#pragma once
 +
 +#include <Eigen/Core>
@@ -358,7 +395,9 @@ index 0000000..98c1393
 +#include <Eigen/Geometry>
 +#include <Eigen/Sparse>
 +
++#include <ankerl/unordered_dense.h>
 +#include <fmt/format.h>
++#include <opencv2/opencv.hpp>
 +#include <small_gicp/points/traits.hpp>
 +#include <small_gicp/util/fast_floor.hpp>
 +#include <spdlog/spdlog.h>
@@ -366,7 +405,6 @@ index 0000000..98c1393
 +#include <tbb/parallel_for.h>
 +#include <tbb/parallel_sort.h>
 +#include <yaml-cpp/yaml.h>
-+#include <ankerl/unordered_dense.h>
 +
 +#include <algorithm>
 +#include <array>
@@ -407,12 +445,26 @@ index 0000000..8c06fb1
 +    SmallPointSlamAdapter algorithm;
 +    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
 +}
+diff --git a/standalone/main_lio_mode.cpp b/standalone/main_lio_mode.cpp
+new file mode 100644
+index 0000000..bd0af8f
+--- /dev/null
++++ b/standalone/main_lio_mode.cpp
+@@ -0,0 +1,8 @@
++#include "small_point_slam_adapter.hpp"
++
++#include <slam_benchmark/application.hpp>
++
++int main(int argc, char** argv) {
++    SmallPointSlamAdapter algorithm("small_point_slam_lio_mode", true);
++    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
++}
 diff --git a/standalone/small_point_slam_adapter.cpp b/standalone/small_point_slam_adapter.cpp
 new file mode 100644
-index 0000000..b48b961
+index 0000000..7ad99ef
 --- /dev/null
 +++ b/standalone/small_point_slam_adapter.cpp
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,236 @@
 +#include "small_point_slam_adapter.hpp"
 +
 +#include <spdlog/spdlog.h>
@@ -428,115 +480,205 @@ index 0000000..b48b961
 +#endif
 +
 +namespace {
-+double seconds(slam_benchmark::TimestampNs timestamp) {
-+    return static_cast<double>(timestamp) * 1e-9;
-+}
++    double seconds(slam_benchmark::TimestampNs timestamp) {
++        return static_cast<double>(timestamp) * 1e-9;
++    }
 +
-+slam_benchmark::TimestampNs nanoseconds(double timestamp) {
-+    return static_cast<slam_benchmark::TimestampNs>(std::llround(timestamp * 1e9));
-+}
++    slam_benchmark::TimestampNs nanoseconds(double timestamp) {
++        return static_cast<slam_benchmark::TimestampNs>(std::llround(timestamp * 1e9));
++    }
 +
-+double elapsed_ms(std::chrono::steady_clock::time_point started) {
-+    return std::chrono::duration<double, std::milli>(
-+               std::chrono::steady_clock::now() - started).count();
-+}
++    double elapsed_ms(std::chrono::steady_clock::time_point started) {
++        return std::chrono::duration<double, std::milli>(
++                       std::chrono::steady_clock::now() - started)
++                .count();
++    }
 +
-+Eigen::Matrix3f rotation(const slam_benchmark::SensorCalibration& calibration) {
-+    const auto& value = calibration.body_from_sensor;
-+    Eigen::Matrix3f result;
-+    result << value[0], value[1], value[2], value[4], value[5], value[6],
-+              value[8], value[9], value[10];
-+    return result;
-+}
++    Eigen::Matrix3f rotation(const slam_benchmark::SensorCalibration &calibration) {
++        const auto &value = calibration.body_from_sensor;
++        Eigen::Matrix3f result;
++        result << value[0], value[1], value[2], value[4], value[5], value[6],
++                value[8], value[9], value[10];
++        return result;
++    }
 +
-+Eigen::Vector3f translation(const slam_benchmark::SensorCalibration& calibration) {
-+    const auto& value = calibration.body_from_sensor;
-+    return Eigen::Vector3f(static_cast<float>(value[3]),
-+                           static_cast<float>(value[7]),
-+                           static_cast<float>(value[11]));
-+}
-+}  // namespace
++    Eigen::Vector3f translation(const slam_benchmark::SensorCalibration &calibration) {
++        const auto &value = calibration.body_from_sensor;
++        return Eigen::Vector3f(static_cast<float>(value[3]),
++                               static_cast<float>(value[7]),
++                               static_cast<float>(value[11]));
++    }
++
++    small_point_slam::standalone::SensorExtrinsic extrinsic(
++            const slam_benchmark::SensorCalibration &calibration) {
++        return {rotation(calibration), translation(calibration)};
++    }
++
++    YAML::Node camera_model(const slam_benchmark::SensorDefinition &sensor) {
++        const auto &calibration = sensor.calibration;
++        if (calibration.intrinsics.size() != 4 || calibration.image_width == 0 ||
++            calibration.image_height == 0) {
++            throw std::invalid_argument(
++                    "camera calibration requires [fx, fy, cx, cy] intrinsics and resolution");
++        }
++        YAML::Node model;
++        model["cam_model"] = "Pinhole";
++        model["cam_width"] = calibration.image_width;
++        model["cam_height"] = calibration.image_height;
++        model["scale"] = 1.0;
++        model["cam_fx"] = calibration.intrinsics[0];
++        model["cam_fy"] = calibration.intrinsics[1];
++        model["cam_cx"] = calibration.intrinsics[2];
++        model["cam_cy"] = calibration.intrinsics[3];
++        for (std::size_t index = 0; index < 4; ++index) {
++            model["cam_d" + std::to_string(index)] =
++                    index < calibration.distortion.size() ? calibration.distortion[index] : 0.0;
++        }
++        return model;
++    }
++
++    cv::Mat convert_image(const slam_benchmark::ImageFrame &frame) {
++        if (frame.compressed) {
++            const auto *begin = reinterpret_cast<const std::uint8_t *>(frame.data.data());
++            const std::vector<std::uint8_t> encoded(begin, begin + frame.data.size());
++            cv::Mat image = cv::imdecode(encoded, cv::IMREAD_COLOR);
++            if (image.empty()) throw std::runtime_error("failed to decode compressed camera image");
++            return image;
++        }
++        if (frame.width == 0 || frame.height == 0 || frame.row_stride == 0)
++            throw std::runtime_error("invalid raw camera image dimensions");
++        const auto *data = reinterpret_cast<const std::uint8_t *>(frame.data.data());
++        if (frame.encoding == "mono8") {
++            return cv::Mat(static_cast<int>(frame.height), static_cast<int>(frame.width),
++                           CV_8UC1, const_cast<std::uint8_t *>(data), frame.row_stride)
++                    .clone();
++        }
++        if (frame.encoding == "rgb8" || frame.encoding == "bgr8") {
++            cv::Mat image(static_cast<int>(frame.height), static_cast<int>(frame.width),
++                          CV_8UC3, const_cast<std::uint8_t *>(data), frame.row_stride);
++            if (frame.encoding == "rgb8") {
++                cv::Mat converted;
++                cv::cvtColor(image, converted, cv::COLOR_RGB2BGR);
++                return converted;
++            }
++            return image.clone();
++        }
++        throw std::runtime_error("unsupported raw camera encoding: " + frame.encoding);
++    }
++}// namespace
 +
 +slam_benchmark::InitializationResult SmallPointSlamAdapter::initialize(
-+    std::span<const slam_benchmark::SensorDefinition> sensors,
-+    const std::filesystem::path& config_path,
-+    slam_benchmark::ResultSink& sink) {
++        std::span<const slam_benchmark::SensorDefinition> sensors,
++        const std::filesystem::path &config_path,
++        slam_benchmark::ResultSink &sink) {
++    const YAML::Node root = YAML::LoadFile(config_path.string());
++    const bool use_imu = root["enable_imu"].as<bool>(true);
++    const bool use_camera = !lio_only_ && root["use_camera"].as<bool>(true);
++    const bool use_wheel_speed =
++            !lio_only_ && root["enable_wheel_speed"].as<bool>(true);
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
-+        sensors, {.lidar = true, .imu = true, .point_time = true});
++            sensors, {.lidar = true,
++                      .point_time = true,
++                      .all_lidars = true,
++                      .optional_imu = use_imu,
++                      .optional_camera = use_camera,
++                      .optional_wheel_speed = use_wheel_speed});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
-+                                         &slam_benchmark::SensorDefinition::type);
-+    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
-+                                       &slam_benchmark::SensorDefinition::type);
-+    if (lidar == sensors.end() || imu == sensors.end()) {
-+        throw std::runtime_error("Small Point SLAM requires one LiDAR and one IMU");
-+    }
 +
 +    sink_ = &sink;
-+    lidar_id_ = lidar->id;
-+    imu_id_ = imu->id;
-+    const YAML::Node root = YAML::LoadFile(config_path.string());
-+    const int parallel_threads = root["parallel_threads"]
-+        ? root["parallel_threads"].as<int>()
-+        : SLAM_BENCHMARK_PARALLEL_THREADS;
-+    if (parallel_threads <= 0) {
-+        throw std::runtime_error("parallel_threads must be positive");
++    lidar_indices_.clear();
++    imu_id_.reset();
++    camera_id_.reset();
++    wheel_speed_id_.reset();
++    std::vector<small_point_slam::standalone::SensorExtrinsic> lidars;
++    std::optional<Eigen::Matrix3f> imu_rotation;
++    std::optional<small_point_slam::standalone::CameraConfiguration> camera;
++    for (const auto &sensor: sensors) {
++        if (!compatibility.sensor_selected(sensor.id)) continue;
++        if (sensor.type == slam_benchmark::SensorType::Lidar) {
++            lidar_indices_.emplace_back(sensor.id, lidars.size());
++            lidars.push_back(extrinsic(sensor.calibration));
++        } else if (sensor.type == slam_benchmark::SensorType::Imu) {
++            imu_id_ = sensor.id;
++            imu_rotation = rotation(sensor.calibration);
++        } else if (sensor.type == slam_benchmark::SensorType::Camera) {
++            camera_id_ = sensor.id;
++            camera = small_point_slam::standalone::CameraConfiguration{
++                    extrinsic(sensor.calibration), camera_model(sensor)};
++        } else if (sensor.type == slam_benchmark::SensorType::WheelSpeed) {
++            wheel_speed_id_ = sensor.id;
++        }
 +    }
++
++    const int parallel_threads = root["parallel_threads"]
++                                         ? root["parallel_threads"].as<int>()
++                                         : SLAM_BENCHMARK_PARALLEL_THREADS;
++    if (parallel_threads <= 0) throw std::runtime_error("parallel_threads must be positive");
 +    tbb_control_ = std::make_unique<tbb::global_control>(
-+        tbb::global_control::max_allowed_parallelism,
-+        static_cast<std::size_t>(parallel_threads));
++            tbb::global_control::max_allowed_parallelism,
++            static_cast<std::size_t>(parallel_threads));
 +    engine_ = std::make_unique<small_point_slam::standalone::SmallPointSlamEngine>(
-+        root, rotation(lidar->calibration),
-+        translation(lidar->calibration), rotation(imu->calibration));
-+    engine_->set_pose_callback(
-+        [this](double timestamp, const small_point_slam::State& state) {
-+            accept_pose(timestamp, state);
-+        });
-+    engine_->set_timing_callback([this](double timestamp, const char* stage,
++            root, lidars, imu_rotation, wheel_speed_id_.has_value(), camera);
++    engine_->set_pose_callback([this](double timestamp,
++                                      const small_point_slam::State &state) {
++        accept_pose(timestamp, state);
++    });
++    engine_->set_timing_callback([this](double timestamp, const char *stage,
 +                                        double duration_ms) {
 +        sink_->report_timing({nanoseconds(timestamp), stage, duration_ms});
 +    });
-+    spdlog::info("Small Point SLAM standalone adapter initialized with at most {} compute threads",
-+                 parallel_threads);
-+    return {};
++    spdlog::info(
++            "{} initialized with {} LiDAR(s), IMU={}, camera={}, wheel_speed={}, threads={}",
++            algorithm_name_, lidars.size(), imu_id_.has_value(), camera_id_.has_value(),
++            wheel_speed_id_.has_value(), parallel_threads);
++    return compatibility;
 +}
 +
-+void SmallPointSlamAdapter::process(const slam_benchmark::SensorSample& sample) {
++void SmallPointSlamAdapter::process(const slam_benchmark::SensorSample &sample) {
 +    if (!engine_) throw std::logic_error("Small Point SLAM is not initialized");
-+    if (const auto* imu = std::get_if<slam_benchmark::ImuSample>(&sample.payload)) {
-+        if (sample.sensor_id != imu_id_) return;
++    if (const auto *imu = std::get_if<slam_benchmark::ImuSample>(&sample.payload)) {
++        if (!imu_id_ || sample.sensor_id != *imu_id_) return;
 +        const auto started = std::chrono::steady_clock::now();
 +        common::ImuStamped converted;
 +        converted.timestamp = seconds(sample.timestamp_ns);
 +        converted.angular_velocity = Eigen::Vector3f(
-+            static_cast<float>(imu->angular_velocity_rad_s[0]),
-+            static_cast<float>(imu->angular_velocity_rad_s[1]),
-+            static_cast<float>(imu->angular_velocity_rad_s[2]));
++                static_cast<float>(imu->angular_velocity_rad_s[0]),
++                static_cast<float>(imu->angular_velocity_rad_s[1]),
++                static_cast<float>(imu->angular_velocity_rad_s[2]));
 +        converted.linear_acceleration = Eigen::Vector3f(
-+            static_cast<float>(imu->linear_acceleration_m_s2[0]),
-+            static_cast<float>(imu->linear_acceleration_m_s2[1]),
-+            static_cast<float>(imu->linear_acceleration_m_s2[2]));
++                static_cast<float>(imu->linear_acceleration_m_s2[0]),
++                static_cast<float>(imu->linear_acceleration_m_s2[1]),
++                static_cast<float>(imu->linear_acceleration_m_s2[2]));
 +        engine_->add_imu(converted);
 +        sink_->report_timing({sample.timestamp_ns, "imu_preprocess", elapsed_ms(started)});
-+    } else if (const auto* cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload)) {
-+        if (sample.sensor_id != lidar_id_) return;
-+        if (cloud->points.size() != cloud->point_time_offset_ns.size()) {
++    } else if (const auto *cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload)) {
++        const auto source = std::ranges::find_if(
++                lidar_indices_, [&](const auto &entry) { return entry.first == sample.sensor_id; });
++        if (source == lidar_indices_.end()) return;
++        if (cloud->points.size() != cloud->point_time_offset_ns.size())
 +            throw std::runtime_error("point/time array size mismatch");
-+        }
 +        const auto started = std::chrono::steady_clock::now();
 +        std::vector<common::PointStamped> converted;
 +        converted.reserve(cloud->points.size());
 +        const double base_timestamp = seconds(sample.timestamp_ns);
 +        for (std::size_t index = 0; index < cloud->points.size(); ++index) {
-+            const auto& point = cloud->points[index];
++            const auto &point = cloud->points[index];
 +            if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
 +                !std::isfinite(point.z)) continue;
-+            converted.push_back({
-+                base_timestamp + static_cast<double>(cloud->point_time_offset_ns[index]) * 1e-9,
-+                Eigen::Vector3f(point.x, point.y, point.z)});
++            converted.push_back({base_timestamp + static_cast<double>(cloud->point_time_offset_ns[index]) * 1e-9,
++                                 Eigen::Vector3f(point.x, point.y, point.z)});
 +        }
 +        sink_->report_timing({sample.timestamp_ns, "lidar_preprocess", elapsed_ms(started)});
-+        engine_->add_point_cloud(converted);
++        engine_->add_point_cloud(source->second, converted);
++    } else if (const auto *wheel = std::get_if<slam_benchmark::WheelSpeed>(&sample.payload)) {
++        if (!wheel_speed_id_ || sample.sensor_id != *wheel_speed_id_) return;
++        engine_->add_wheel_speed({seconds(sample.timestamp_ns), wheel->linear_m_s, 0.0,
++                                  wheel->angular_rad_s});
++    } else if (const auto *frame = std::get_if<slam_benchmark::ImageFrame>(&sample.payload)) {
++        if (!camera_id_ || sample.sensor_id != *camera_id_) return;
++        const auto started = std::chrono::steady_clock::now();
++        engine_->add_image({seconds(sample.timestamp_ns), convert_image(*frame)});
++        sink_->report_timing({sample.timestamp_ns, "image_preprocess", elapsed_ms(started)});
 +    } else {
 +        return;
 +    }
@@ -544,7 +686,7 @@ index 0000000..b48b961
 +}
 +
 +void SmallPointSlamAdapter::accept_pose(double timestamp,
-+                                         const small_point_slam::State& state) {
++                                        const small_point_slam::State &state) {
 +    const Eigen::Quaterniond orientation(state.rotation);
 +    slam_benchmark::Pose pose;
 +    pose.timestamp_ns = nanoseconds(timestamp);
@@ -561,10 +703,10 @@ index 0000000..b48b961
 +}
 diff --git a/standalone/small_point_slam_adapter.hpp b/standalone/small_point_slam_adapter.hpp
 new file mode 100644
-index 0000000..1516aed
+index 0000000..60b9d8b
 --- /dev/null
 +++ b/standalone/small_point_slam_adapter.hpp
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,37 @@
 +#pragma once
 +
 +#include "small_point_slam_engine.hpp"
@@ -576,31 +718,38 @@ index 0000000..1516aed
 +
 +class SmallPointSlamAdapter final : public slam_benchmark::SlamAlgorithm {
 +public:
++    explicit SmallPointSlamAdapter(std::string algorithm_name = "small_point_slam",
++                                   bool lio_only = false)
++        : algorithm_name_(std::move(algorithm_name)), lio_only_(lio_only) {}
 +    [[nodiscard]] std::string_view name() const noexcept override {
-+        return "small_point_slam";
++        return algorithm_name_;
 +    }
 +    slam_benchmark::InitializationResult initialize(std::span<const slam_benchmark::SensorDefinition> sensors,
-+                    const std::filesystem::path& config_path,
-+                    slam_benchmark::ResultSink& sink) override;
-+    void process(const slam_benchmark::SensorSample& sample) override;
++                                                    const std::filesystem::path &config_path,
++                                                    slam_benchmark::ResultSink &sink) override;
++    void process(const slam_benchmark::SensorSample &sample) override;
 +    void finalize() override;
 +
 +private:
-+    void accept_pose(double timestamp, const small_point_slam::State& state);
++    void accept_pose(double timestamp, const small_point_slam::State &state);
 +
-+    slam_benchmark::ResultSink* sink_{};
-+    slam_benchmark::SensorId lidar_id_{};
-+    slam_benchmark::SensorId imu_id_{};
++    slam_benchmark::ResultSink *sink_{};
++    std::string algorithm_name_;
++    bool lio_only_{};
++    std::vector<std::pair<slam_benchmark::SensorId, std::size_t>> lidar_indices_;
++    std::optional<slam_benchmark::SensorId> imu_id_;
++    std::optional<slam_benchmark::SensorId> camera_id_;
++    std::optional<slam_benchmark::SensorId> wheel_speed_id_;
 +    std::unique_ptr<tbb::global_control> tbb_control_;
 +    std::unique_ptr<small_point_slam::standalone::SmallPointSlamEngine> engine_;
 +    slam_benchmark::Trajectory trajectory_;
 +};
 diff --git a/standalone/small_point_slam_engine.cpp b/standalone/small_point_slam_engine.cpp
 new file mode 100644
-index 0000000..461e34b
+index 0000000..6e91d63
 --- /dev/null
 +++ b/standalone/small_point_slam_engine.cpp
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,261 @@
 +#include "small_point_slam_engine.hpp"
 +
 +#include <algorithm>
@@ -609,252 +758,332 @@ index 0000000..461e34b
 +#include <utility>
 +
 +namespace small_point_slam::standalone {
-+namespace {
++    namespace {
 +
-+YAML::Node normalized_config(const YAML::Node& input) {
-+    YAML::Node result = YAML::Clone(input);
-+    result["min_distance"] = input["min_range_m"].as<float>();
-+    result["max_distance"] = input["max_range_m"].as<float>();
-+    result["space_downsample_leaf_size"] = input["filter_size_scan_m"].as<float>();
-+    result["map_resolution"] = input["map_voxel_size_m"].as<float>();
-+    result["batch_update_max_iterated_times"] = input["max_iterations"].as<std::size_t>();
-+    result["point_plane_distance_cov"] = input["lidar_measurement_noise"].as<double>();
-+    result["imu_meas_acc_cov"] = input["accelerometer_noise"].as<double>();
-+    result["imu_meas_omg_cov"] = input["gyroscope_noise"].as<double>();
-+    result["ba_cov"] = input["accelerometer_bias_noise"].as<double>();
-+    result["bg_cov"] = input["gyroscope_bias_noise"].as<double>();
-+    return result;
-+}
++        YAML::Node normalized_config(const YAML::Node &input) {
++            YAML::Node result = YAML::Clone(input);
++            result["min_distance"] = input["min_range_m"].as<float>();
++            result["max_distance"] = input["max_range_m"].as<float>();
++            result["space_downsample_leaf_size"] = input["filter_size_scan_m"].as<float>();
++            result["map_resolution"] = input["map_voxel_size_m"].as<float>();
++            result["batch_update_max_iterated_times"] = input["max_iterations"].as<std::size_t>();
++            result["point_plane_distance_cov"] = input["lidar_measurement_noise"].as<double>();
++            result["imu_meas_acc_cov"] = input["accelerometer_noise"].as<double>();
++            result["imu_meas_omg_cov"] = input["gyroscope_noise"].as<double>();
++            result["ba_cov"] = input["accelerometer_bias_noise"].as<double>();
++            result["bg_cov"] = input["gyroscope_bias_noise"].as<double>();
++            return result;
++        }
 +
-+enum class EventType { None, Imu, Point };
++        enum class EventType { None,
++                               Imu,
++                               Point,
++                               WheelSpeed,
++                               Image };
 +
-+struct NextEvent {
-+    EventType type{EventType::None};
-+    double timestamp{std::numeric_limits<double>::max()};
-+};
-+
-+}  // namespace
-+
-+SmallPointSlamEngine::SmallPointSlamEngine(
-+    const YAML::Node& config,
-+    const Eigen::Matrix3f& body_from_lidar_rotation,
-+    const Eigen::Vector3f& body_from_lidar_translation,
-+    const Eigen::Matrix3f& body_from_imu_rotation) {
-+    parameters_.read_parameters(normalized_config(config));
-+    if (!parameters_.enable_imu) {
-+        throw std::invalid_argument("Small Point SLAM benchmark requires enable_imu: true");
-+    }
-+
-+    estimator_.parameters = &parameters_;
-+    estimator_.performance_stats = &performance_stats_;
-+    estimator_.kf.debug = parameters_.debug_eskf;
-+    estimator_.kf.debug_point_window_start = parameters_.debug_point_window_start;
-+    estimator_.kf.debug_point_window_end = parameters_.debug_point_window_end;
-+    estimator_.kf.debug_point_update_row_stride = parameters_.debug_point_row_stride;
-+    process_noise_ = estimator_.process_noise_cov();
-+
-+    point_cloud_.initialize(&parameters_, body_from_lidar_rotation,
-+                            body_from_lidar_translation, &performance_stats_);
-+    // Dense points are a visualization-only output. The benchmark consumes
-+    // poses and timings, so avoid transforming and retaining every raw point.
-+    point_cloud_.set_dense_output_enabled(false);
-+    imu_.initialize(&parameters_, body_from_imu_rotation, &performance_stats_);
-+    estimator_.reset();
-+}
-+
-+void SmallPointSlamEngine::add_imu(const common::ImuStamped& sample) {
-+    imu_.initialize_data(sample);
-+}
-+
-+void SmallPointSlamEngine::add_point_cloud(
-+    const std::vector<common::PointStamped>& cloud) {
-+    point_cloud_.initialize_data(cloud);
-+}
-+
-+void SmallPointSlamEngine::initialize_if_ready() {
-+    point_cloud_.run_initialization_once(estimator_, initialization_timestamp_,
-+                                         initialization_map_size_);
-+    imu_.run_initialization_once(initialization_timestamp_);
-+    if (initialization_timestamp_ <= 0.0 ||
-+        initialization_map_size_ < parameters_.init_map_size ||
-+        !imu_.initialization_ready()) {
-+        return;
-+    }
-+
-+    initialized_ = true;
-+    current_timestamp_ = initialization_timestamp_;
-+    estimator_.kf.init_timestamp(initialization_timestamp_);
-+    imu_.initialize_filter_state(estimator_.kf);
-+    estimator_.kf.align_to_gravity();
-+    point_cloud_.finish_initialization(initialization_timestamp_, estimator_);
-+    spdlog::info("Small Point SLAM initialized with {} map points",
-+                 initialization_map_size_);
-+}
-+
-+void SmallPointSlamEngine::handle_once() {
-+    if (!initialized_) {
-+        initialize_if_ready();
-+        flush_timings(initialization_timestamp_);
-+        return;
-+    }
-+    process_ready_events(false);
-+    flush_timings(current_timestamp_);
-+}
-+
-+void SmallPointSlamEngine::finalize() {
-+    if (!initialized_) {
-+        initialize_if_ready();
-+    }
-+    if (initialized_) {
-+        process_ready_events(true);
-+    }
-+    flush_timings(current_timestamp_);
-+}
-+
-+void SmallPointSlamEngine::process_ready_events(bool drain) {
-+    bool updated = false;
-+    const auto normal_ready = [&] {
-+        // A Livox message timestamp marks the beginning of its scan while its
-+        // points extend into the future. Do not advance through those points
-+        // until an IMU sample is available to order against them, otherwise
-+        // the following IMU samples would be incorrectly discarded as old.
-+        return imu_.has_data() && point_cloud_.has_filter_data();
-+    };
-+
-+    while (drain ? (imu_.has_data() || point_cloud_.has_filter_data())
-+                 : normal_ready()) {
-+        NextEvent next;
-+        const auto consider = [&next](EventType type, double timestamp) {
-+            if (timestamp <= next.timestamp) next = {type, timestamp};
++        struct NextEvent {
++            EventType type{EventType::None};
++            std::size_t sensor_index{};
++            double timestamp{std::numeric_limits<double>::max()};
 +        };
-+        if (imu_.has_data()) consider(EventType::Imu, imu_.timestamp());
-+        if (point_cloud_.has_filter_data())
-+            consider(EventType::Point, point_cloud_.filter_timestamp());
-+        if (next.type == EventType::None) break;
 +
-+        observation::UpdateResult result = observation::UpdateResult::Updated;
-+        if (next.type == EventType::Imu) {
-+            result = imu_.run_update_once(estimator_.kf, process_noise_, current_timestamp_);
-+            if (imu_.was_saturated() && parameters_.map_update_suspend_duration > 0.0) {
-+                estimator_.imu_saturated_until =
-+                    current_timestamp_ + parameters_.map_update_suspend_duration;
-+            }
-+        } else if (next.type == EventType::Point) {
-+            std::vector<PointWithNormal> unused_visual_points;
-+            result = point_cloud_.run_update_once(estimator_, process_noise_,
-+                                                  current_timestamp_, false,
-+                                                  unused_visual_points);
++    }// namespace
++
++    SmallPointSlamEngine::SmallPointSlamEngine(
++            const YAML::Node &config, const std::vector<SensorExtrinsic> &lidars,
++            const std::optional<Eigen::Matrix3f> &imu_rotation,
++            bool wheel_speed_available,
++            const std::optional<CameraConfiguration> &camera) {
++        if (lidars.empty()) throw std::invalid_argument("at least one LiDAR is required");
++
++        YAML::Node effective = normalized_config(config);
++        effective["enable_imu"] = config["enable_imu"].as<bool>(true) && imu_rotation.has_value();
++        effective["enable_wheel_speed"] =
++                config["enable_wheel_speed"].as<bool>(true) && wheel_speed_available;
++        effective["enable_image_update"] =
++                config["enable_image_update"].as<bool>(true) && camera.has_value();
++        parameters_.read_parameters(effective);
++
++        estimator_.parameters = &parameters_;
++        estimator_.performance_stats = &performance_stats_;
++        estimator_.kf.debug = parameters_.debug_eskf;
++        estimator_.kf.debug_point_window_start = parameters_.debug_point_window_start;
++        estimator_.kf.debug_point_window_end = parameters_.debug_point_window_end;
++        estimator_.kf.debug_point_update_row_stride = parameters_.debug_point_row_stride;
++        process_noise_ = estimator_.process_noise_cov();
++        if (!parameters_.enable_imu) {
++            process_noise_.block<3, 3>(State::velocity_index, State::velocity_index)
++                    .diagonal()
++                    .fill(parameters_.imu_off_velocity_cov);
++            process_noise_.block<3, 3>(State::omg_index, State::omg_index)
++                    .diagonal()
++                    .fill(parameters_.imu_off_omg_cov);
++            process_noise_.block<3, 3>(State::acceleration_index, State::acceleration_index)
++                    .diagonal()
++                    .fill(parameters_.imu_off_acceleration_cov);
++            process_noise_.block<3, 3>(State::bg_index, State::bg_index).setZero();
++            process_noise_.block<3, 3>(State::ba_index, State::ba_index).setZero();
++            process_noise_(State::wheel_k_index, State::wheel_k_index) = 0.0;
 +        }
-+        if (result == observation::UpdateResult::PredictionFailed) {
-+            throw std::runtime_error("Small Point SLAM filter prediction failed");
++
++        point_clouds_.resize(lidars.size());
++        for (std::size_t index = 0; index < lidars.size(); ++index) {
++            point_clouds_[index].initialize(&parameters_, lidars[index].rotation,
++                                            lidars[index].translation, &performance_stats_);
++            point_clouds_[index].set_dense_output_enabled(false);
 +        }
-+        updated = updated || result == observation::UpdateResult::Updated;
++        imu_.initialize(&parameters_, imu_rotation.value_or(Eigen::Matrix3f::Identity()),
++                        &performance_stats_);
++        if (parameters_.enable_wheel_speed) {
++            wheel_speed_.emplace();
++            wheel_speed_->initialize(&parameters_, &performance_stats_);
++        }
++        if (camera) {
++            image_.emplace();
++            image_->initialize(camera->model, parameters_, camera->extrinsic.rotation,
++                               camera->extrinsic.translation, &performance_stats_);
++        }
++        estimator_.reset();
 +    }
-+    report_pose_if_changed(updated);
-+}
 +
-+void SmallPointSlamEngine::report_pose_if_changed(bool updated) {
-+    if (!updated || !pose_callback_ || current_timestamp_ <= last_pose_timestamp_) return;
-+    pose_callback_(current_timestamp_, estimator_.kf.x);
-+    last_pose_timestamp_ = current_timestamp_;
-+}
++    void SmallPointSlamEngine::add_imu(const common::ImuStamped &sample) {
++        imu_.initialize_data(sample);
++    }
 +
-+void SmallPointSlamEngine::flush_timings(double timestamp) {
-+    if (!timing_callback_ || timestamp <= 0.0) return;
-+    const auto delta = [this](PerfTimer timer) {
-+        const std::size_t index = static_cast<std::size_t>(timer);
-+        const double total = performance_stats_.get_time_stat(timer).total_time_ns;
-+        const double value = std::max(0.0, total - previous_time_ns_[index]);
-+        previous_time_ns_[index] = total;
-+        return value * 1e-6;
-+    };
++    void SmallPointSlamEngine::add_point_cloud(
++            std::size_t sensor_index, const std::vector<common::PointStamped> &cloud) {
++        point_clouds_.at(sensor_index).initialize_data(cloud);
++    }
 +
-+    delta(PerfTimer::DataPreprocessing);
-+    const double downsampling = delta(PerfTimer::PreprocessVoxelDownsample);
-+    const double state_propagation = delta(PerfTimer::FilterPrediction);
-+    const double imu_update = delta(PerfTimer::ImuUpdate);
-+    const double point_update = delta(PerfTimer::PointCloudUpdate);
-+    const double lookup = delta(PerfTimer::MapLookup);
-+    const double residual = delta(PerfTimer::ResidualCalculation);
-+    const double map_update = delta(PerfTimer::MapUpdate);
-+    // These timers are nested in MapLookup and are advanced here to keep the
-+    // snapshots consistent without double-counting them.
-+    delta(PerfTimer::PlaneConstruction);
++    void SmallPointSlamEngine::add_wheel_speed(const common::WheelSpeed &sample) {
++        if (wheel_speed_) wheel_speed_->initialize_data(sample);
++    }
 +
-+    const auto report = [this, timestamp](const char* stage, double duration_ms) {
-+        if (duration_ms > 0.0) timing_callback_(timestamp, stage, duration_ms);
-+    };
-+    report("downsampling", downsampling);
-+    report("state_propagation", state_propagation);
-+    report("map_search", lookup + residual);
-+    report("filter_update", imu_update +
-+              std::max(0.0, point_update - lookup - residual));
-+    report("map_update", map_update);
-+}
++    void SmallPointSlamEngine::add_image(const common::ImageStamped &sample) {
++        if (image_) image_->initialize_data(sample);
++    }
 +
-+void SmallPointSlamEngine::set_pose_callback(PoseCallback callback) {
-+    pose_callback_ = std::move(callback);
-+}
++    void SmallPointSlamEngine::initialize_if_ready() {
++        for (auto &point_cloud: point_clouds_) {
++            point_cloud.run_initialization_once(estimator_, initialization_timestamp_,
++                                                initialization_map_size_);
++        }
++        imu_.run_initialization_once(initialization_timestamp_);
++        if (wheel_speed_) wheel_speed_->run_initialization_once(initialization_timestamp_);
++        if (image_) image_->run_initialization_once(initialization_timestamp_);
++        if (initialization_timestamp_ <= 0.0 ||
++            initialization_map_size_ < parameters_.init_map_size ||
++            !imu_.initialization_ready()) return;
 +
-+void SmallPointSlamEngine::set_timing_callback(TimingCallback callback) {
-+    timing_callback_ = std::move(callback);
-+}
++        initialized_ = true;
++        current_timestamp_ = initialization_timestamp_;
++        estimator_.kf.init_timestamp(initialization_timestamp_);
++        imu_.initialize_filter_state(estimator_.kf);
++        estimator_.kf.align_to_gravity();
++        for (auto &point_cloud: point_clouds_) {
++            point_cloud.finish_initialization(initialization_timestamp_, estimator_);
++        }
++        spdlog::info("Small Point SLAM initialized with {} LiDARs and {} map points",
++                     point_clouds_.size(), initialization_map_size_);
++    }
 +
-+}  // namespace small_point_slam::standalone
++    void SmallPointSlamEngine::handle_once() {
++        if (!initialized_) {
++            initialize_if_ready();
++            flush_timings(initialization_timestamp_);
++            return;
++        }
++        process_ready_events(false);
++        flush_timings(current_timestamp_);
++    }
++
++    void SmallPointSlamEngine::finalize() {
++        if (!initialized_) initialize_if_ready();
++        if (initialized_) process_ready_events(true);
++        flush_timings(current_timestamp_);
++    }
++
++    void SmallPointSlamEngine::process_ready_events(bool drain) {
++        bool updated = false;
++        const auto synchronized_sources_ready = [&] {
++            if (parameters_.enable_imu && !imu_.has_data()) return false;
++            if (std::ranges::any_of(point_clouds_, [](const auto &cloud) {
++                    return !cloud.has_filter_data();
++                })) return false;
++            if (wheel_speed_ && !wheel_speed_->has_data()) return false;
++            if (image_ && !image_->has_data()) return false;
++            return true;
++        };
++        const auto any_source_ready = [&] {
++            return imu_.has_data() ||
++                   std::ranges::any_of(point_clouds_, [](const auto &cloud) {
++                       return cloud.has_filter_data();
++                   }) ||
++                   (wheel_speed_ && wheel_speed_->has_data()) || (image_ && image_->has_data());
++        };
++
++        while (drain ? any_source_ready() : synchronized_sources_ready()) {
++            NextEvent next;
++            const auto consider = [&next](EventType type, std::size_t sensor_index,
++                                          double timestamp) {
++                if (timestamp <= next.timestamp) next = {type, sensor_index, timestamp};
++            };
++            if (parameters_.enable_imu && imu_.has_data())
++                consider(EventType::Imu, 0, imu_.timestamp());
++            for (std::size_t index = 0; index < point_clouds_.size(); ++index) {
++                if (point_clouds_[index].has_filter_data())
++                    consider(EventType::Point, index, point_clouds_[index].filter_timestamp());
++            }
++            if (wheel_speed_ && wheel_speed_->has_data())
++                consider(EventType::WheelSpeed, 0, wheel_speed_->timestamp());
++            if (image_ && image_->has_data())
++                consider(EventType::Image, 0, image_->timestamp());
++            if (next.type == EventType::None) break;
++
++            observation::UpdateResult result = observation::UpdateResult::Updated;
++            if (next.type == EventType::Imu) {
++                result = imu_.run_update_once(estimator_.kf, process_noise_, current_timestamp_);
++            } else if (next.type == EventType::Point) {
++                std::vector<PointWithNormal> visual_points;
++                result = point_clouds_[next.sensor_index].run_update_once(
++                        estimator_, process_noise_, current_timestamp_, image_.has_value(),
++                        visual_points);
++                if (image_) image_->append_visual_points(visual_points);
++            } else if (next.type == EventType::WheelSpeed) {
++                result = wheel_speed_->run_update_once(estimator_.kf, process_noise_,
++                                                       current_timestamp_);
++            } else if (next.type == EventType::Image) {
++                result = image_->run_update_once(estimator_, process_noise_, current_timestamp_,
++                                                 parameters_.enable_image_update, {}, {});
++            }
++            if (result == observation::UpdateResult::PredictionFailed)
++                throw std::runtime_error("Small Point SLAM filter prediction failed");
++            updated = updated || result == observation::UpdateResult::Updated;
++        }
++        report_pose_if_changed(updated);
++    }
++
++    void SmallPointSlamEngine::report_pose_if_changed(bool updated) {
++        if (!updated || !pose_callback_ || current_timestamp_ <= last_pose_timestamp_) return;
++        pose_callback_(current_timestamp_, estimator_.kf.x);
++        last_pose_timestamp_ = current_timestamp_;
++    }
++
++    void SmallPointSlamEngine::flush_timings(double timestamp) {
++        if (!timing_callback_ || timestamp <= 0.0) return;
++        const auto delta = [this](PerfTimer timer) {
++            const std::size_t index = static_cast<std::size_t>(timer);
++            const double total = performance_stats_.get_time_stat(timer).total_time_ns;
++            const double value = std::max(0.0, total - previous_time_ns_[index]);
++            previous_time_ns_[index] = total;
++            return value * 1e-6;
++        };
++
++        delta(PerfTimer::DataPreprocessing);
++        const double downsampling = delta(PerfTimer::PreprocessVoxelDownsample);
++        const double state_propagation = delta(PerfTimer::FilterPrediction);
++        const double imu_update = delta(PerfTimer::ImuUpdate);
++        const double point_update = delta(PerfTimer::PointCloudUpdate);
++        const double wheel_update = delta(PerfTimer::WheelOdometryUpdate);
++        const double image_update = delta(PerfTimer::ImageUpdate);
++        const double lookup = delta(PerfTimer::MapLookup);
++        const double residual = delta(PerfTimer::ResidualCalculation);
++        const double map_update = delta(PerfTimer::MapUpdate);
++        delta(PerfTimer::PlaneConstruction);
++
++        const auto report = [this, timestamp](const char *stage, double duration_ms) {
++            if (duration_ms > 0.0) timing_callback_(timestamp, stage, duration_ms);
++        };
++        report("downsampling", downsampling);
++        report("state_propagation", state_propagation);
++        report("map_search", lookup + residual);
++        report("filter_update", imu_update + wheel_update + image_update +
++                                        std::max(0.0, point_update - lookup - residual));
++        report("map_update", map_update);
++    }
++
++    void SmallPointSlamEngine::set_pose_callback(PoseCallback callback) {
++        pose_callback_ = std::move(callback);
++    }
++
++    void SmallPointSlamEngine::set_timing_callback(TimingCallback callback) {
++        timing_callback_ = std::move(callback);
++    }
++
++}// namespace small_point_slam::standalone
 diff --git a/standalone/small_point_slam_engine.hpp b/standalone/small_point_slam_engine.hpp
 new file mode 100644
-index 0000000..f3a0bdd
+index 0000000..1fe1e82
 --- /dev/null
 +++ b/standalone/small_point_slam_engine.hpp
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,70 @@
 +#pragma once
 +
++#include "localization/observation/image.h"
 +#include "localization/observation/imu.h"
 +#include "localization/observation/point_cloud.h"
++#include "localization/observation/wheel_speed.h"
 +#include "localization/small_point_slam/estimator.h"
 +
 +#include <array>
 +#include <functional>
++#include <optional>
 +
 +namespace small_point_slam::standalone {
 +
-+class SmallPointSlamEngine {
-+public:
-+    using PoseCallback = std::function<void(double, const State&)>;
-+    using TimingCallback = std::function<void(double, const char*, double)>;
++    struct SensorExtrinsic {
++        Eigen::Matrix3f rotation{Eigen::Matrix3f::Identity()};
++        Eigen::Vector3f translation{Eigen::Vector3f::Zero()};
++    };
 +
-+    SmallPointSlamEngine(const YAML::Node& config,
-+                         const Eigen::Matrix3f& body_from_lidar_rotation,
-+                         const Eigen::Vector3f& body_from_lidar_translation,
-+                         const Eigen::Matrix3f& body_from_imu_rotation);
++    struct CameraConfiguration {
++        SensorExtrinsic extrinsic;
++        YAML::Node model;
++    };
 +
-+    void add_imu(const common::ImuStamped& sample);
-+    void add_point_cloud(const std::vector<common::PointStamped>& cloud);
-+    void handle_once();
-+    void finalize();
-+    void set_pose_callback(PoseCallback callback);
-+    void set_timing_callback(TimingCallback callback);
++    class SmallPointSlamEngine {
++    public:
++        using PoseCallback = std::function<void(double, const State &)>;
++        using TimingCallback = std::function<void(double, const char *, double)>;
 +
-+private:
-+    void initialize_if_ready();
-+    void process_ready_events(bool drain);
-+    void report_pose_if_changed(bool updated);
-+    void flush_timings(double timestamp);
++        SmallPointSlamEngine(const YAML::Node &config,
++                             const std::vector<SensorExtrinsic> &lidars,
++                             const std::optional<Eigen::Matrix3f> &imu_rotation,
++                             bool wheel_speed_available,
++                             const std::optional<CameraConfiguration> &camera);
 +
-+    Parameters parameters_;
-+    PerformanceStats performance_stats_;
-+    Estimator estimator_;
-+    observation::ImuObservation imu_;
-+    observation::PointCloudObservation point_cloud_;
-+    Eigen::Matrix<State::ValueType, State::DIM, State::DIM> process_noise_;
-+    std::array<double, static_cast<std::size_t>(PerfTimer::Count)> previous_time_ns_{};
-+    double initialization_timestamp_{};
-+    std::size_t initialization_map_size_{};
-+    double current_timestamp_{};
-+    double last_pose_timestamp_{-1.0};
-+    bool initialized_{};
-+    PoseCallback pose_callback_;
-+    TimingCallback timing_callback_;
-+};
++        void add_imu(const common::ImuStamped &sample);
++        void add_point_cloud(std::size_t sensor_index,
++                             const std::vector<common::PointStamped> &cloud);
++        void add_wheel_speed(const common::WheelSpeed &sample);
++        void add_image(const common::ImageStamped &sample);
++        void handle_once();
++        void finalize();
++        void set_pose_callback(PoseCallback callback);
++        void set_timing_callback(TimingCallback callback);
 +
-+}  // namespace small_point_slam::standalone
++    private:
++        void initialize_if_ready();
++        void process_ready_events(bool drain);
++        void report_pose_if_changed(bool updated);
++        void flush_timings(double timestamp);
++
++        Parameters parameters_;
++        PerformanceStats performance_stats_;
++        Estimator estimator_;
++        observation::ImuObservation imu_;
++        std::vector<observation::PointCloudObservation> point_clouds_;
++        std::optional<observation::WheelSpeedObservation> wheel_speed_;
++        std::optional<observation::ImageObservation> image_;
++        Eigen::Matrix<State::ValueType, State::DIM, State::DIM> process_noise_;
++        std::array<double, static_cast<std::size_t>(PerfTimer::Count)> previous_time_ns_{};
++        double initialization_timestamp_{};
++        std::size_t initialization_map_size_{};
++        double current_timestamp_{};
++        double last_pose_timestamp_{-1.0};
++        bool initialized_{};
++        PoseCallback pose_callback_;
++        TimingCallback timing_callback_;
++    };
++
++}// namespace small_point_slam::standalone

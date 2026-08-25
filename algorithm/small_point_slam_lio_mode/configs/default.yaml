@@ -1,4 +1,4 @@
-algorithm: small_point_slam
+algorithm: small_point_slam_lio_mode
 parallel_threads: 4
 
 point_filter_num: 1
@@ -31,9 +31,9 @@ twice_update_dt: 0.1
 twice_update_max_iterated_times: 5
 converge_epsilon: 0.0001
 enable_imu: true
-enable_wheel_speed: true
-enable_image_update: true
-use_camera: true
+enable_wheel_speed: false
+enable_image_update: false
+use_camera: false
 debug_eskf: false
 debug_point_window_start: -1.0
 debug_point_window_end: -1.0

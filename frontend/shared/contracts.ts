@@ -14,8 +14,10 @@ export interface DatasetCatalogItem {
   description: string
   bagName: string
   sensorTypes: string[]
+  sensorNames?: string[]
   expectedMessages: number | null
   sourceAvailable: boolean
+  hasGroundTruth: boolean
 }
 
 export interface AlgorithmCatalogItem {
@@ -81,6 +83,9 @@ export interface BenchmarkResult {
   runModeName: string
   hasTrajectory: boolean
   hasPerformance: boolean
+  hasGroundTruth: boolean
+  status?: 'completed' | 'failed'
+  failureReason?: string | null
   updatedAt: string
 }
 
@@ -107,6 +112,14 @@ export interface TrajectoryResponse {
     minZ: number
     maxZ: number
   }
+  groundTruth?: TrajectoryResponse
+}
+
+export interface AccuracyResponse {
+  status: 'success' | 'failed'
+  ateRmseMeters: number | null
+  matchedPoseCount: number
+  reason: string | null
 }
 
 export interface PerformanceMetric {
@@ -134,6 +147,7 @@ export interface PerformanceResponse {
 export interface StaticBenchmarkResult extends BenchmarkResult {
   trajectory?: TrajectoryResponse
   performance?: PerformanceResponse
+  accuracy?: AccuracyResponse
 }
 
 export interface StaticReport {
@@ -141,4 +155,7 @@ export interface StaticReport {
   generatedAt: string
   catalog: CatalogResponse
   results: StaticBenchmarkResult[]
+  // Stored once per bag so Ground truth can be rendered without selecting or
+  // even having a successful algorithm trajectory.
+  groundTruth?: Record<string, TrajectoryResponse>
 }

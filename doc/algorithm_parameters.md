@@ -47,7 +47,7 @@ KISS-ICP 的 `voxel_size_m` 同时决定地图体素和其内部两级扫描采�
 
 `parallel_threads` 限制的是算法计算工作线程。FAST-LIO、COIN-LIO 的 ikd-Tree 重建以及
 DLIO 的子地图构建保留上游独立维护线程，因此进程瞬时线程总数可能比该值多一个。Point-LIO、
-Small Point LIO 和当前 benchmark 使用的 Small Point SLAM LIO 路径原生为串行实现，不为了
+Small Point LIO 和当前 benchmark 使用的 Small Point SLAM (lio mode) 路径原生为串行实现，不为了
 凑齐线程数而增加无意义并行。
 
 ## 点云强度与 COIN-LIO

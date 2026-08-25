@@ -89,8 +89,8 @@ const groupDescriptions: Record<string, string> = {
 }
 
 const metricDescriptions: Record<string, string> = {
-  wall_time_ms: '从点击运行到全部完成一共等待了多久，包括读取rosbag数据和播放rosbag时的等待。',
-  algorithm_process_time_ms: '算法真正处理传感器数据累计花了多久，不包括读取rosbag数据和播放rosbag时的等待。',
+  wall_time_ms: '从点击运行到全部完成一共等待了多久，包括读取rosbag的耗时和播放rosbag时的等待耗时。',
+  algorithm_process_time_ms: '算法真正处理传感器数据累计花了多久，不包括读取rosbag的耗时和播放rosbag时的等待耗时。',
   algorithm_cpu_time_ms: '算法实际消耗了多少 CPU 计算时间。可以理解为所有CPU核心的耗时加在一起，用于衡量实际的CPU占用。',
   mean_cpu_percent: '运行期间平均使用了整台机器多少 CPU。100% 表示所有核心都在满负荷工作。',
   p95_cpu_percent: '大多数时间里的较高 CPU 占用，可减少偶尔出现的尖峰对判断的影响。',

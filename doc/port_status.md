@@ -19,15 +19,18 @@
 | PV-LIO | `494c27f62f7333d6cc32c26dccaa8d8a971c2c2d` | LiDAR + IMU | 已移植 |
 | BIEVR-LIO | `2306022e341e98ce84244f92ba7d26f047b41dbc` | LiDAR + IMU | 已移植 |
 | COIN-LIO | `76729cc4feb3649cbd79d28f82d9f62a2c82889b` | LiDAR + IMU | 已移植 |
-| LIGO | `987b88cd9ee3183c6e62231008c8cb26cf1786d6` | LiDAR + IMU + GNSS | 已登记，受 core GNSS 输入阻塞 |
+| LIGO | `987b88cd9ee3183c6e62231008c8cb26cf1786d6` | LiDAR + IMU + GNSS | 已移植 |
 
 “已移植”表示存在可从固定上游 commit 重放的 Git patch，且目标不依赖 ROS/ROS2，能独立
-链接 `slam_benchmark::core`。实包验证使用 `ACE/Mid-360/ACE实验室门口10hz`。
+链接 `slam_benchmark::core`。一般 LIO 实包验证使用 `ACE/Mid-360/ACE实验室门口10hz`；
+LIGO 使用带原始 GNSS 的 `M3DGR/Visual Challenge/outdoor/Dark01`。
 
 COIN-LIO 保留了上游的几何残差、球面强度图、互补强度特征和光度残差，并直接消费 core
 提供的点坐标、逐点时间与强度；适配没有用普通强度最近邻替代其光度模型。LIGO 的紧耦合
-分支需要伪距、载波、星历、接收机 PVT/速度等原始 GNSS 信息；当前 `core::GnssFix` 仅包含
-经纬高、状态和位置协方差，因此只有 LIGO 不生成同名可执行文件，完整构建会跳过它。
+分支所需伪距、载波、星历、电离层参数和接收机 PVT/速度由 `rosbag_io` 从 ROS wire format
+解码，随后转换为 benchmark 自有 GNSS 类型，并直接送入上游 GNSS 因子图。Dark01 全速
+运行处理 49,490 条选中传感器消息、2,058 个原始观测历元，完成 732 个 GNSS 优化历元，
+输出 2,059 个位姿；与 1,393 个真值位姿匹配后的 ATE RMSE 为 0.187496 m。
 
 ## 完整构建验证
 
@@ -58,8 +61,10 @@ ctest --preset algorithms
 | `pv_lio` | `pv_lio_benchmark` |
 | `bievr_lio` | `bievr_lio_benchmark` |
 | `coin_lio` | `coin_lio_benchmark` |
+| `ligo` | `ligo_benchmark` |
 
-这些可执行目标均单独与当前 core 静态链接，并已使用 ACE 数据完成运行验证。
+这些可执行目标均单独与当前 core 静态链接；除 LIGO 使用上述 M3DGR GNSS 包外，其他算法
+使用 ACE 数据完成运行验证。
 编译器可能报告来自上游 Eigen、IKFoM、ikd-Tree 或 fmt 的警告；这些警告不影响目标生成，
 但不能据此宣称其他编译器或平台已经过验证。
 
@@ -68,7 +73,7 @@ ctest --preset algorithms
 并行算法默认统一为 `parallel_threads: 4`。ACE 数据运行时，BIEVR-LIO、CT-LIO、CTLO、
 Faster-LIO、KISS-ICP、PV-LIO、Super-LIO、VoxelMap 与 VoxelMap (with imu) 的进程峰值均为
 4 个线程；FAST-LIO、COIN-LIO 和 DLIO 因保留上游独立地图维护线程，峰值为 5。Point-LIO、
-Small Point LIO 与当前 Small Point SLAM LIO 路径保持其上游串行计算语义，峰值为 1。
+Small Point LIO 与当前 Small Point SLAM (lio mode) 路径保持其上游串行计算语义，峰值为 1。
 
 本轮同时恢复了 Faster-LIO 的并行雅可比构建，以及 DLIO 的并行去畸变和异步子地图构建。
 Faster-LIO 与 DLIO 均在 `ACE/Mid-360/ACE实验室门口10hz` 完整处理 20,773 条消息并输出

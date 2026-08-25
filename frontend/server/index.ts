@@ -4,11 +4,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { CreateRunRequest } from '../shared/contracts.js'
+import { failedAccuracy, readAccuracy } from './accuracy.js'
 import { loadCatalog } from './catalog.js'
 import { readPerformance } from './performance.js'
 import { discoverResults, publicResults, type DiscoveredResult } from './results.js'
 import { RunManager } from './run-manager.js'
-import { readTrajectory } from './trajectory.js'
+import { readGroundTruth, readTrajectory } from './trajectory.js'
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
 
@@ -121,6 +122,20 @@ const server = createServer(async (request, response) => {
       return
     }
 
+    const groundTruthMatch = url.pathname.match(
+      /^\/api\/datasets\/([^/]+)\/ground-truth$/,
+    )
+    if (request.method === 'GET' && groundTruthMatch) {
+      const catalog = await loadCatalog(projectRoot, buildDirectory)
+      const dataset = catalog.datasets.get(decodeURIComponent(groundTruthMatch[1]!))
+      if (!dataset?.hasGroundTruth || !dataset.groundTruthPath) {
+        sendJson(response, 404, { error: '该数据集没有可用的 Ground truth' })
+        return
+      }
+      sendJson(response, 200, await readGroundTruth(dataset.groundTruthPath))
+      return
+    }
+
     if (request.method === 'POST' && url.pathname === '/api/runs') {
       const body = await readJson<CreateRunRequest>(request)
       const catalog = await loadCatalog(projectRoot, buildDirectory)
@@ -192,7 +207,7 @@ const server = createServer(async (request, response) => {
     }
 
     const storedResultMatch = url.pathname.match(
-      /^\/api\/results\/([^/]+)\/(trajectory|performance)$/,
+      /^\/api\/results\/([^/]+)\/(trajectory|performance|accuracy)$/,
     )
     if (request.method === 'GET' && storedResultMatch) {
       let result = storedResults.find((item) => item.id === storedResultMatch[1])
@@ -208,17 +223,33 @@ const server = createServer(async (request, response) => {
           sendJson(response, 404, { error: '该历史结果没有可用轨迹' })
           return
         }
-        sendJson(
-          response,
-          200,
-          await readTrajectory(path.join(result.absoluteOutputDirectory, 'final_trajectory.csv')),
+        const trajectory = await readTrajectory(
+          path.join(result.absoluteOutputDirectory, 'final_trajectory.csv'),
         )
-      } else {
+        if (result.absoluteGroundTruthPath) {
+          trajectory.groundTruth = await readGroundTruth(result.absoluteGroundTruthPath)
+        }
+        sendJson(response, 200, trajectory)
+      } else if (storedResultMatch[2] === 'performance') {
         if (!result.hasPerformance) {
           sendJson(response, 404, { error: '该历史结果没有完整性能数据' })
           return
         }
         sendJson(response, 200, await readPerformance(result.absoluteOutputDirectory))
+      } else {
+        if (!result.hasGroundTruth) {
+          sendJson(response, 404, { error: '该数据集没有 ground truth' })
+          return
+        }
+        if (result.status === 'failed') {
+          sendJson(response, 200, failedAccuracy(result.failureReason ?? '算法运行失败'))
+          return
+        }
+        sendJson(response, 200, await readAccuracy(
+          path.join(result.absoluteOutputDirectory, 'final_trajectory.csv'),
+          result.absoluteGroundTruthPath,
+          result.groundTruthMaxTimeDifferenceMs,
+        ))
       }
       return
     }

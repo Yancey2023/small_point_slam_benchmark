@@ -37,4 +37,37 @@ describe('static benchmark report', () => {
       }],
     })).toThrow('泄露了本地输出路径')
   })
+
+  it('requires a precomputed accuracy result when ground truth is declared', () => {
+    expect(() => validateStaticReport({
+      ...validReport,
+      results: [{
+        id: 'result',
+        datasetId: 'dataset',
+        algorithmId: 'algorithm',
+        hasGroundTruth: true,
+      }],
+    })).toThrow('缺少预计算精度')
+  })
+
+  it('accepts Ground truth stored independently from algorithm results', () => {
+    expect(() => validateStaticReport({
+      ...validReport,
+      groundTruth: {
+        dataset: {
+          points: [{ timestampNs: '1', x: 0, y: 0, z: 0 }],
+          originalPointCount: 1,
+          distanceMeters: 0,
+          bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 },
+        },
+      },
+    })).not.toThrow()
+  })
+
+  it('rejects an empty independently stored Ground truth trajectory', () => {
+    expect(() => validateStaticReport({
+      ...validReport,
+      groundTruth: { dataset: { points: [] } },
+    })).toThrow('缺少有效 Ground truth')
+  })
 })

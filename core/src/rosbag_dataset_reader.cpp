@@ -185,12 +185,166 @@ ImageFrame compressed_image(const rosbag_io::message::CompressedImage &input) {
   return output;
 }
 
+GnssTime convert_gnss_time(const rosbag_io::message::GnssTime &input) {
+  return {input.week, input.seconds_of_week};
+}
+
+GnssObservation convert_gnss_observation(
+    const rosbag_io::message::GnssObservation &input) {
+  return {
+      .time = convert_gnss_time(input.time),
+      .satellite = input.satellite,
+      .frequencies_hz = input.frequencies_hz,
+      .carrier_to_noise_db_hz = input.carrier_to_noise_db_hz,
+      .lost_lock_indicators = input.lost_lock_indicators,
+      .codes = input.codes,
+      .pseudoranges_m = input.pseudoranges_m,
+      .pseudorange_std_m = input.pseudorange_std_m,
+      .carrier_phases_cycles = input.carrier_phases_cycles,
+      .carrier_phase_std_cycles = input.carrier_phase_std_cycles,
+      .doppler_hz = input.doppler_hz,
+      .doppler_std_hz = input.doppler_std_hz,
+      .tracking_status = input.tracking_status,
+  };
+}
+
+GnssObservations convert_gnss_observations(
+    const rosbag_io::message::GnssObservations &input) {
+  GnssObservations output;
+  output.observations.reserve(input.observations.size());
+  for (const auto &observation : input.observations)
+    output.observations.push_back(convert_gnss_observation(observation));
+  return output;
+}
+
+GnssEphemeris convert_gnss_ephemeris(
+    const rosbag_io::message::GnssEphemeris &input) {
+  return {
+      .satellite = input.satellite,
+      .transmission_time = convert_gnss_time(input.transmission_time),
+      .ephemeris_reference_time =
+          convert_gnss_time(input.ephemeris_reference_time),
+      .clock_reference_time = convert_gnss_time(input.clock_reference_time),
+      .ephemeris_reference_tow_s = input.ephemeris_reference_tow_s,
+      .week = input.week,
+      .issue_of_data_ephemeris = input.issue_of_data_ephemeris,
+      .issue_of_data_clock = input.issue_of_data_clock,
+      .health = input.health,
+      .code = input.code,
+      .user_range_accuracy_m = input.user_range_accuracy_m,
+      .semi_major_axis_m = input.semi_major_axis_m,
+      .eccentricity = input.eccentricity,
+      .inclination_rad = input.inclination_rad,
+      .argument_of_perigee_rad = input.argument_of_perigee_rad,
+      .ascending_node_longitude_rad = input.ascending_node_longitude_rad,
+      .mean_anomaly_rad = input.mean_anomaly_rad,
+      .mean_motion_difference_rad_s = input.mean_motion_difference_rad_s,
+      .ascending_node_rate_rad_s = input.ascending_node_rate_rad_s,
+      .inclination_rate_rad_s = input.inclination_rate_rad_s,
+      .latitude_correction_cos_rad = input.latitude_correction_cos_rad,
+      .latitude_correction_sin_rad = input.latitude_correction_sin_rad,
+      .radius_correction_cos_m = input.radius_correction_cos_m,
+      .radius_correction_sin_m = input.radius_correction_sin_m,
+      .inclination_correction_cos_rad = input.inclination_correction_cos_rad,
+      .inclination_correction_sin_rad = input.inclination_correction_sin_rad,
+      .clock_bias_s = input.clock_bias_s,
+      .clock_drift_s_s = input.clock_drift_s_s,
+      .clock_drift_rate_s_s2 = input.clock_drift_rate_s_s2,
+      .group_delay_0_s = input.group_delay_0_s,
+      .group_delay_1_s = input.group_delay_1_s,
+      .semi_major_axis_rate_m_s = input.semi_major_axis_rate_m_s,
+      .mean_motion_rate_rad_s2 = input.mean_motion_rate_rad_s2,
+  };
+}
+
+GnssGlonassEphemeris convert_gnss_glonass_ephemeris(
+    const rosbag_io::message::GnssGlonassEphemeris &input) {
+  return {
+      .satellite = input.satellite,
+      .transmission_time = convert_gnss_time(input.transmission_time),
+      .ephemeris_reference_time =
+          convert_gnss_time(input.ephemeris_reference_time),
+      .frequency_channel = input.frequency_channel,
+      .issue_of_data = input.issue_of_data,
+      .health = input.health,
+      .age_days = input.age_days,
+      .user_range_accuracy_m = input.user_range_accuracy_m,
+      .position_m = input.position_m,
+      .velocity_m_s = input.velocity_m_s,
+      .acceleration_m_s2 = input.acceleration_m_s2,
+      .clock_bias_s = input.clock_bias_s,
+      .relative_frequency_bias = input.relative_frequency_bias,
+      .inter_frequency_delay_s = input.inter_frequency_delay_s,
+  };
+}
+
+TimestampNs timestamp_ns(const rosbag_io::message::Time &time) {
+  if (time.sec < 0)
+    throw std::runtime_error("negative GNSS header timestamp");
+  return static_cast<TimestampNs>(time.sec) * 1'000'000'000ULL + time.nanosec;
+}
+
+GnssIonosphereParameters convert_gnss_ionosphere(
+    const rosbag_io::message::GnssIonosphereParameters &input) {
+  return {
+      .source_timestamp_ns = timestamp_ns(input.header.stamp),
+      .frame_id = input.header.frame_id,
+      .values = input.values,
+  };
+}
+
+GnssReceiverPvt convert_gnss_receiver_pvt(
+    const rosbag_io::message::GnssReceiverPvt &input) {
+  return {
+      .time = convert_gnss_time(input.time),
+      .fix_type = input.fix_type,
+      .valid_fix = input.valid_fix,
+      .differential_solution = input.differential_solution,
+      .carrier_solution = input.carrier_solution,
+      .satellites_used = input.satellites_used,
+      .latitude_deg = input.latitude_deg,
+      .longitude_deg = input.longitude_deg,
+      .altitude_m = input.altitude_m,
+      .height_mean_sea_level_m = input.height_mean_sea_level_m,
+      .horizontal_accuracy_m = input.horizontal_accuracy_m,
+      .vertical_accuracy_m = input.vertical_accuracy_m,
+      .position_dop = input.position_dop,
+      .velocity_ned_m_s = input.velocity_ned_m_s,
+      .velocity_accuracy_m_s = input.velocity_accuracy_m_s,
+  };
+}
+
+SensorPayload decode_custom_gnss(const rosbag_io::SerializedMessage &message,
+                                 const rosbag_io::TopicMetadata &topic,
+                                 std::string_view message_type) {
+  if (message_type.ends_with("GnssMeasMsg"))
+    return convert_gnss_observations(rosbag_io::decode_gnss_observations(
+        message.data, topic.serialization_format));
+  if (message_type.ends_with("GnssEphemMsg"))
+    return convert_gnss_ephemeris(rosbag_io::decode_gnss_ephemeris(
+        message.data, topic.serialization_format));
+  if (message_type.ends_with("GnssGloEphemMsg"))
+    return convert_gnss_glonass_ephemeris(
+        rosbag_io::decode_gnss_glonass_ephemeris(
+            message.data, topic.serialization_format));
+  if (message_type.ends_with("StampedFloat64Array"))
+    return convert_gnss_ionosphere(
+        rosbag_io::decode_gnss_ionosphere_parameters(
+            message.data, topic.serialization_format));
+  if (message_type.ends_with("GnssPVTSolnMsg"))
+    return convert_gnss_receiver_pvt(rosbag_io::decode_gnss_receiver_pvt(
+        message.data, topic.serialization_format));
+  throw std::runtime_error("unsupported GNSS message type: " +
+                           std::string(message_type));
+}
+
 SensorPayload decode(const rosbag_io::SerializedMessage &message,
                      const rosbag_io::TopicMetadata &topic,
-                     const SensorDefinition &sensor) {
+                     const SensorDefinition &sensor,
+                     const SensorInputBinding &binding) {
   switch (sensor.type) {
   case SensorType::Lidar:
-    if (sensor.message_type.find("CustomMsg") != std::string::npos) {
+    if (binding.message_type.find("CustomMsg") != std::string::npos) {
       return convert_livox(rosbag_io::decode_livox_custom_message(
                                message.data, topic.serialization_format),
                            sensor);
@@ -216,7 +370,7 @@ SensorPayload decode(const rosbag_io::SerializedMessage &message,
     };
   }
   case SensorType::Camera:
-    if (sensor.message_type.find("CompressedImage") != std::string::npos)
+    if (binding.message_type.find("CompressedImage") != std::string::npos)
       return compressed_image(rosbag_io::decode_compressed_image(
           message.data, topic.serialization_format));
     return raw_image(
@@ -229,6 +383,8 @@ SensorPayload decode(const rosbag_io::SerializedMessage &message,
                           sensor.angular_velocity_to_rad_per_second};
   }
   case SensorType::Gnss: {
+    if (binding.message_type.find("NavSatFix") == std::string::npos)
+      return decode_custom_gnss(message, topic, binding.message_type);
     const auto value =
         rosbag_io::decode_nav_sat_fix(message.data, topic.serialization_format);
     return GnssFix{value.latitude, value.longitude, value.altitude,
@@ -251,18 +407,29 @@ RosbagDatasetReader::inspect(const BagDefinition &bag) {
 
   std::map<std::string, SensorDefinition *, std::less<>> pending;
   for (auto &sensor : sensors) {
-    sensor.available = topics.contains(sensor.topic);
+    if (!sensor.enabled) {
+      sensor.available = false;
+      sensor.availability_reason = "传感器已在 manifest 中禁用";
+      continue;
+    }
+    const auto binding_it = bag.sensor_inputs.find(sensor.id);
+    if (binding_it == bag.sensor_inputs.end())
+      throw std::runtime_error("missing core topic binding for sensor id " +
+                               std::to_string(sensor.id));
+    const auto &binding = binding_it->second;
+    const auto &topic_name = binding.topic;
+    sensor.available = topics.contains(topic_name);
     sensor.availability_reason.clear();
     if (!sensor.available) {
       sensor.availability_reason = std::string(to_string(sensor.type)) +
-                                   " 话题在 bag 中不存在：" + sensor.topic;
+                                   " 数据在 bag 中不存在";
       continue;
     }
     if (sensor.type == SensorType::Lidar) {
       sensor.provides_point_time = false;
       sensor.provides_intensity = false;
     }
-    pending.emplace(sensor.topic, &sensor);
+    pending.emplace(topic_name, &sensor);
   }
 
   while (!pending.empty() && reader.has_next()) {
@@ -272,8 +439,9 @@ RosbagDatasetReader::inspect(const BagDefinition &bag) {
     SensorDefinition &sensor = *sensor_it->second;
     try {
       const auto topic_it = topics.find(message.topic_name);
+      const auto &binding = bag.sensor_inputs.at(sensor.id);
       if (sensor.type == SensorType::Lidar) {
-        if (sensor.message_type.find("CustomMsg") != std::string::npos) {
+        if (binding.message_type.find("CustomMsg") != std::string::npos) {
           sensor.provides_point_time = true;
           sensor.provides_intensity = true;
         } else {
@@ -290,7 +458,7 @@ RosbagDatasetReader::inspect(const BagDefinition &bag) {
       // allocator could retain that memory and bias the benchmark RSS.
       if (sensor.type == SensorType::Imu || sensor.type == SensorType::Gnss ||
           sensor.type == SensorType::WheelSpeed)
-        (void)decode(message, *topic_it->second, sensor);
+        (void)decode(message, *topic_it->second, sensor, binding);
     } catch (const std::exception &error) {
       sensor.available = false;
       sensor.availability_reason =
@@ -301,9 +469,10 @@ RosbagDatasetReader::inspect(const BagDefinition &bag) {
   }
 
   for (const auto &[topic, sensor] : pending) {
+    (void)topic;
     sensor->available = false;
-    sensor->availability_reason = std::string(to_string(sensor->type)) +
-                                  " 话题没有消息：" + topic;
+    sensor->availability_reason =
+        std::string(to_string(sensor->type)) + " 数据流没有消息";
   }
   return sensors;
 }
@@ -312,8 +481,13 @@ void RosbagDatasetReader::read(const BagDefinition &bag,
                                const SampleCallback &callback) {
   rosbag_io::Reader reader(bag.path.string());
   std::map<std::string, const SensorDefinition *, std::less<>> sensors;
-  for (const auto &sensor : bag.sensors)
-    sensors.emplace(sensor.topic, &sensor);
+  for (const auto &sensor : bag.sensors) {
+    const auto binding = bag.sensor_inputs.find(sensor.id);
+    if (binding == bag.sensor_inputs.end())
+      throw std::runtime_error("missing core topic binding for sensor id " +
+                               std::to_string(sensor.id));
+    sensors.emplace(binding->second.topic, &sensor);
+  }
 
   std::map<std::string, const rosbag_io::TopicMetadata *, std::less<>> topics;
   for (const auto &topic : reader.topics())
@@ -332,11 +506,13 @@ void RosbagDatasetReader::read(const BagDefinition &bag,
       continue;
     const auto topic_it = topics.find(serialized.topic_name);
     const auto &sensor = *sensor_it->second;
+    const auto &binding = bag.sensor_inputs.at(sensor.id);
     const TimestampNs timestamp = serialized.send_timestamp != 0
                                       ? serialized.send_timestamp
                                       : serialized.receive_timestamp;
     callback(SensorSample{sensor.id, timestamp,
-                          decode(serialized, *topic_it->second, sensor)});
+                          decode(serialized, *topic_it->second, sensor,
+                                 binding)});
   }
 }
 

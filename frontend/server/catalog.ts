@@ -13,6 +13,8 @@ import { runModes } from './run-modes.js'
 interface DatasetRuntimeItem extends DatasetCatalogItem {
   manifestPath: string
   bagPath: string
+  groundTruthPath: string | null
+  groundTruthMaxTimeDifferenceMs: number
 }
 
 interface AlgorithmRuntimeItem extends AlgorithmCatalogItem {
@@ -107,6 +109,20 @@ export async function loadCatalog(
         ? configuredPath
         : path.resolve(path.dirname(manifestPath), configuredPath)
       const sensors = Array.isArray(bag.sensors) ? bag.sensors.map(record) : []
+      const sensorInventory = Array.isArray(bag.sensor_inventory)
+        ? bag.sensor_inventory.map(record)
+        : sensors
+      // Disabled sensors never take part in runtime selection or replay, so the
+      // web UI hides them as well. A missing `enabled` field means enabled.
+      const visibleSensors = sensorInventory.filter((sensor) => sensor.enabled !== false)
+      const groundTruth = record(bag.ground_truth)
+      const configuredGroundTruthPath = String(groundTruth.path ?? '')
+      const groundTruthPath = configuredGroundTruthPath
+        ? (path.isAbsolute(configuredGroundTruthPath)
+            ? configuredGroundTruthPath
+            : path.resolve(path.dirname(manifestPath), configuredGroundTruthPath))
+        : null
+      const configuredMaxDifference = Number(groundTruth.max_time_difference_ms)
       const relativeManifest = path.relative(path.join(projectRoot, 'datasets'), manifestPath)
       const id = `${relativeManifest}#${bagName}`
       const rawMessageCount = Number(bag.message_count)
@@ -115,12 +131,22 @@ export async function loadCatalog(
         datasetName,
         description,
         bagName,
-        sensorTypes: [...new Set(sensors.map((sensor) => String(sensor.type ?? 'unknown')))],
+        sensorTypes: [...new Set(visibleSensors.map(
+          (sensor) => String(sensor.type ?? 'unknown'),
+        ))],
+        sensorNames: visibleSensors.map((sensor) =>
+          String(sensor.name ?? sensor.topic ?? sensor.type ?? 'unknown')),
         expectedMessages:
           Number.isSafeInteger(rawMessageCount) && rawMessageCount > 0 ? rawMessageCount : null,
         sourceAvailable: await exists(bagPath),
+        hasGroundTruth: groundTruthPath !== null && await exists(groundTruthPath),
         manifestPath,
         bagPath,
+        groundTruthPath,
+        groundTruthMaxTimeDifferenceMs:
+          Number.isFinite(configuredMaxDifference) && configuredMaxDifference > 0
+            ? configuredMaxDifference
+            : 100,
       })
     }
   }
@@ -163,7 +189,9 @@ export async function loadCatalog(
   return {
     response: {
       datasets: [...datasets.values()].map(
-        ({ manifestPath: _manifestPath, bagPath: _bagPath, ...item }) => item,
+        ({ manifestPath: _manifestPath, bagPath: _bagPath,
+          groundTruthPath: _groundTruthPath,
+          groundTruthMaxTimeDifferenceMs: _maxDifference, ...item }) => item,
       ),
       algorithms: [...algorithms.values()].map(
         ({ configPath: _configPath, executablePath: _executablePath, ...item }) => item,

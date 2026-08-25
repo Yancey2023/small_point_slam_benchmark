@@ -235,10 +235,10 @@ index 0000000..0f37cfc
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
-+                                         &slam_benchmark::SensorDefinition::type);
-+    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
-+                                       &slam_benchmark::SensorDefinition::type);
++    const auto lidar = compatibility.selected_sensor(sensors,
++                                                      slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors,
++                                                    slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
 +        throw std::runtime_error("DLIO requires one LiDAR and one IMU");
 +    sink_ = &sink;
@@ -289,7 +289,7 @@ index 0000000..0f37cfc
 +    spdlog::info("DLIO parameters: scan filter={} m, map filter={} m, threads={}",
 +                 options.scan_filter_size_m, options.map_filter_size_m,
 +                 options.threads);
-+    return {};
++    return compatibility;
 +}
 +
 +void DlioAdapter::process(const slam_benchmark::SensorSample& sample) {

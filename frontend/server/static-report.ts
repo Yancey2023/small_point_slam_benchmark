@@ -5,10 +5,11 @@ import type {
   StaticBenchmarkResult,
   StaticReport,
 } from '../shared/contracts.js'
+import { failedAccuracy, readAccuracy } from './accuracy.js'
 import { loadCatalog } from './catalog.js'
 import { readPerformance } from './performance.js'
 import { discoverResults } from './results.js'
-import { readTrajectory } from './trajectory.js'
+import { readGroundTruth, readTrajectory } from './trajectory.js'
 
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -23,22 +24,40 @@ export async function buildStaticReport(
   const runtimeCatalog = await loadCatalog(projectRoot, buildDirectory)
   const discovered = await discoverResults(projectRoot, runtimeCatalog)
   const results: StaticBenchmarkResult[] = []
+  const groundTruth: StaticReport['groundTruth'] = {}
+
+  for (const dataset of runtimeCatalog.datasets.values()) {
+    if (dataset.hasGroundTruth && dataset.groundTruthPath) {
+      groundTruth[dataset.id] = await readGroundTruth(dataset.groundTruthPath)
+    }
+  }
 
   // Keep peak memory bounded: timing CSV files can be large, so precompute one
   // result at a time instead of parsing every algorithm concurrently.
   for (const discoveredResult of discovered) {
-    const { absoluteOutputDirectory, ...result } = discoveredResult
+    const {
+      absoluteOutputDirectory,
+      absoluteGroundTruthPath,
+      groundTruthMaxTimeDifferenceMs,
+      ...result
+    } = discoveredResult
+    const trajectory = result.hasTrajectory
+      ? await readTrajectory(path.join(absoluteOutputDirectory, 'final_trajectory.csv'))
+      : null
     results.push({
       ...result,
-      ...(result.hasTrajectory
-        ? {
-            trajectory: await readTrajectory(
-              path.join(absoluteOutputDirectory, 'final_trajectory.csv'),
-            ),
-          }
-        : {}),
+      ...(trajectory ? { trajectory } : {}),
       ...(result.hasPerformance
         ? { performance: await readPerformance(absoluteOutputDirectory) }
+        : {}),
+      ...(result.hasGroundTruth
+        ? { accuracy: result.status === 'failed'
+            ? failedAccuracy(result.failureReason ?? '算法运行失败')
+            : await readAccuracy(
+                path.join(absoluteOutputDirectory, 'final_trajectory.csv'),
+                absoluteGroundTruthPath,
+                groundTruthMaxTimeDifferenceMs,
+              ) }
         : {}),
     })
   }
@@ -51,6 +70,7 @@ export async function buildStaticReport(
       buildDirectory: '静态报告（预计算）',
     },
     results,
+    groundTruth,
   }
 }
 
@@ -68,6 +88,17 @@ export function validateStaticReport(value: unknown): asserts value is StaticRep
   }
   if (!Array.isArray(report.results)) {
     throw new Error('静态报告 results 必须是数组')
+  }
+
+  const groundTruth = record(report.groundTruth)
+  if (report.groundTruth !== undefined && !groundTruth) {
+    throw new Error('静态报告 Ground truth 必须按数据集 ID 保存')
+  }
+  for (const [datasetId, rawTrajectory] of Object.entries(groundTruth ?? {})) {
+    const trajectory = record(rawTrajectory)
+    if (!trajectory || !Array.isArray(trajectory.points) || trajectory.points.length === 0) {
+      throw new Error(`静态报告数据集 ${datasetId} 缺少有效 Ground truth`)
+    }
   }
 
   for (const [index, rawResult] of report.results.entries()) {
@@ -96,6 +127,17 @@ export function validateStaticReport(value: unknown): asserts value is StaticRep
             typeof metric.value !== 'number' || !Number.isFinite(metric.value)) {
           throw new Error(`静态报告结果 ${result.id} 包含无效性能指标`)
         }
+      }
+    }
+    if (result.hasGroundTruth === true) {
+      const accuracy = record(result.accuracy)
+      if (!accuracy || !['success', 'failed'].includes(String(accuracy.status))) {
+        throw new Error(`静态报告结果 ${result.id} 缺少预计算精度`)
+      }
+      if (accuracy.status === 'success' &&
+          (typeof accuracy.ateRmseMeters !== 'number' ||
+           !Number.isFinite(accuracy.ateRmseMeters))) {
+        throw new Error(`静态报告结果 ${result.id} 包含无效 ATE RMSE`)
       }
     }
   }

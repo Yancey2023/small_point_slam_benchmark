@@ -1,6 +1,6 @@
 # GitHub Pages 静态报告
 
-GitHub Pages 用于公开展示已经完成的 benchmark 结果。它只包含性能对比和轨迹对比，不提供
+GitHub Pages 用于公开展示已经完成的 benchmark 结果。它只包含性能、轨迹和精度对比，不提供
 用于启动任务的数据集/算法选择、进度监控或取消任务功能，也不需要部署 Node API。
 
 ## 数据如何进入网页

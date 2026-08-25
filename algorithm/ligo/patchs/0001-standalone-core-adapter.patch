@@ -1,0 +1,1135 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+old mode 100755
+new mode 100644
+index 5b6692d..73b19d0
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,117 +1,63 @@
+-cmake_minimum_required(VERSION 2.8.3)
+-project(ligo)
++cmake_minimum_required(VERSION 3.24)
+ 
+-SET(CMAKE_BUILD_TYPE "Debug")
+-
+-ADD_COMPILE_OPTIONS(-std=c++17 )
+-ADD_COMPILE_OPTIONS(-std=c++17 )
+-set( CMAKE_CXX_FLAGS "-std=c++17 -O3" ) 
+-
+-add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
+-
+-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions" )
+-set(CMAKE_CXX_STANDARD 17)
+-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+-set(CMAKE_CXX_EXTENSIONS OFF)
+-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -pthread -std=c++0x -std=c++17 -fexceptions")
+-
+-message("Current CPU archtecture: ${CMAKE_SYSTEM_PROCESSOR}")
+-if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)" )
+-  include(ProcessorCount)
+-  ProcessorCount(N)
+-  message("Processer number:  ${N}")
+-  if(N GREATER 5)
+-    add_definitions(-DMP_EN)
+-    add_definitions(-DMP_PROC_NUM=4)
+-    message("core for MP:  3")
+-  elseif(N GREATER 3)
+-    math(EXPR PROC_NUM "${N} - 2")
+-    add_definitions(-DMP_EN)
+-    add_definitions(-DMP_PROC_NUM="${PROC_NUM}")
+-    message("core for MP:  ${PROC_NUM}")
+-  else()
+-    add_definitions(-DMP_PROC_NUM=1)
+-  endif()
+-else()
+-  add_definitions(-DMP_PROC_NUM=1)
+-endif()
+-
+-find_package(OpenMP QUIET)
+-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   ${OpenMP_C_FLAGS}")
+-
+-find_package(PythonLibs REQUIRED)
+-# find_path(MATPLOTLIB_CPP_INCLUDE_DIRS "matplotlibcpp.h")
+-
+-find_package(catkin REQUIRED COMPONENTS
+-  geometry_msgs
+-  nav_msgs
+-  sensor_msgs
+-  roscpp
+-  rospy
+-  std_msgs
+-  pcl_ros
+-  tf
+-  cv_bridge
+-  livox_ros_driver
+-  message_generation
+-  eigen_conversions
+-  gnss_comm
+-)
+-
+-find_package(OpenCV REQUIRED)
+-find_package(Eigen3 REQUIRED)
+-find_package(GTSAM REQUIRED QUIET)
+-find_package(PCL 1.8 REQUIRED)
+ find_package(Ceres REQUIRED)
+-find_package(Sophus REQUIRED)
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(PCL 1.10 REQUIRED COMPONENTS common)
++find_package(glog CONFIG REQUIRED)
+ 
+-message(Eigen: ${EIGEN3_INCLUDE_DIR})
++set(_gnss_comm "${CMAKE_CURRENT_SOURCE_DIR}/../gnss_comm")
+ 
+-include_directories(
+-	${catkin_INCLUDE_DIRS} 
+-  ${EIGEN3_INCLUDE_DIR}
+-  ${PCL_INCLUDE_DIRS}
+-	${GTSAM_INCLUDE_DIR}
+-  ${CERES_INCLUDE_DIRS}
+-  ${PYTHON_INCLUDE_DIRS}
+-  include)
+-
+-link_directories(
+-	include
+-	${PCL_LIBRARY_DIRS}
+-  ${OpenCV_LIBRARY_DIRS}
+-  ${CERES_INCLUDE_DIRS}
+-  ${GTSAM_LIBRARY_DIRS}
++add_library(ligo_gnss_comm STATIC
++    "${_gnss_comm}/src/gnss_utility.cpp"
++    "${_gnss_comm}/src/gnss_spp.cpp"
+ )
+-
+-add_message_files(
+-  FILES
+-  LocalSensorExternalTrigger.msg
++target_include_directories(ligo_gnss_comm PUBLIC "${_gnss_comm}/include")
++target_include_directories(ligo_gnss_comm PRIVATE "${_gnss_comm}/include/gnss_comm")
++target_link_libraries(ligo_gnss_comm PUBLIC Eigen3::Eigen glog::glog)
++
++add_library(ligo_gnss_backend STATIC
++    src/GNSS_Processing_fg.cpp
++    src/GNSS_Initialization.cpp
++    src/GNSS_Assignment.cpp
+ )
+-
+-generate_messages(
+- DEPENDENCIES
+- geometry_msgs
++target_include_directories(ligo_gnss_backend PUBLIC
++    include
++    src
++    "${_gnss_comm}/include"
++    ${PCL_INCLUDE_DIRS}
+ )
+-
+-catkin_package(
+-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
+-  DEPENDS EIGEN3 PCL GTSAM CERES
+-  INCLUDE_DIRS
++target_compile_definitions(ligo_gnss_backend PUBLIC
++    SLAM_BENCHMARK_STANDALONE
++    ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/"
++)
++target_link_libraries(ligo_gnss_backend PUBLIC
++    Ceres::ceres
++    Eigen3::Eigen
++    gtsam
++    ligo_gnss_comm
++    ${PCL_LIBRARIES}
+ )
+ 
+-add_executable(ligo_mapping src/laserMapping.cpp 
+-                include/Urbannav_process/handler.cpp
+-                src/li_initialization.cpp src/parameters.cpp src/preprocess.cpp src/Estimator.cpp 
+-                src/IMU_Processing.cpp src/GNSS_Processing_fg.cpp src/GNSS_Initialization.cpp src/GNSS_Assignment.cpp
+-                src/NMEA_Processing_fg.cpp src/NMEA_Assignment.cpp)
+-target_link_libraries(ligo_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES} ${OpenCV_LIBS} ${PYTHON_LIBRARIES} ceres gtsam)
+-target_link_libraries(ligo_mapping
+-		dw
+-		)
+-target_link_libraries(ligo_mapping ${Sophus_LIBRARIES} fmt)
+-target_include_directories(ligo_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
+-
+-
++add_executable(ligo_benchmark
++    standalone/main.cpp
++    standalone/ligo_adapter.cpp
++    standalone/ligo_lio_bridge.cpp
++    standalone/ligo_gnss_bridge.cpp
++)
++target_include_directories(ligo_benchmark PRIVATE standalone)
++target_link_libraries(ligo_benchmark PRIVATE
++    fast_lio_algorithm
++    ligo_gnss_backend
++    slam_benchmark::core
++    yaml-cpp::yaml-cpp
++)
+ 
++if(MSVC)
++    target_compile_options(ligo_gnss_comm PRIVATE /W3 /utf-8)
++    target_compile_options(ligo_gnss_backend PRIVATE /W3 /utf-8)
++    target_compile_options(ligo_benchmark PRIVATE /W4 /utf-8)
++else()
++    target_compile_options(ligo_gnss_comm PRIVATE -Wall -Wextra)
++    target_compile_options(ligo_gnss_backend PRIVATE -Wall -Wextra)
++    target_compile_options(ligo_benchmark PRIVATE -Wall -Wextra -Wpedantic)
++endif()
+diff --git a/include/common_lib.h b/include/common_lib.h
+index b229ba0..b3554ca 100755
+--- a/include/common_lib.h
++++ b/include/common_lib.h
+@@ -37,17 +37,25 @@
+ #ifndef COMMON_LIB_H
+ #define COMMON_LIB_H
+ 
+-#include <so3_math.h>
++#include "so3_math.h"
+ #include <Eigen/Eigen>
+ #include <pcl/point_types.h>
+ #include <pcl/point_cloud.h>
++#ifndef SLAM_BENCHMARK_STANDALONE
+ #include <sensor_msgs/Imu.h>
+ #include <nav_msgs/Odometry.h>
+ #include <tf/transform_broadcaster.h>
+ #include <eigen_conversions/eigen_msg.h>
++#else
++#include <cstdio>
++#define ROS_WARN(...) do { std::fprintf(stderr, __VA_ARGS__); std::fprintf(stderr, "\n"); } while (false)
++#define ROS_INFO(...) do { std::fprintf(stderr, __VA_ARGS__); std::fprintf(stderr, "\n"); } while (false)
++#endif
+ #include <color.h>
+ #include <../include/IKFoM/IKFoM_toolkit/esekfom/esekfom.hpp>
++#ifndef SLAM_BENCHMARK_STANDALONE
+ #include <ligo/LocalSensorExternalTrigger.h>
++#endif
+ #include <queue>
+ 
+ using namespace std;
+@@ -143,7 +151,9 @@ struct MeasureGroup     // Lidar data and imu dates for the curent process
+     double lidar_beg_time;
+     double lidar_last_time;
+     PointCloudXYZI::Ptr lidar;
++#ifndef SLAM_BENCHMARK_STANDALONE
+     deque<sensor_msgs::Imu::ConstPtr> imu;
++#endif
+ };
+ 
+ template <typename T>
+@@ -258,4 +268,4 @@ bool esti_plane(Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &
+ // template<typename T>
+ // const bool time_list(PointType &x, PointType &y) {return (x.curvature < y.curvature);};
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/src/GNSS_Assignment.h b/src/GNSS_Assignment.h
+index c037409..547341b 100755
+--- a/src/GNSS_Assignment.h
++++ b/src/GNSS_Assignment.h
+@@ -42,10 +42,12 @@
+ #include <Eigen/Geometry>
+ #include <Eigen/Core>
+ #include <gnss_comm/gnss_constant.hpp>
++#include <gnss_comm/gnss_utility.hpp>
++#ifndef SLAM_BENCHMARK_STANDALONE
+ #include <gnss_comm/gnss_ros.hpp>
+-#include <common_lib.h>
++#endif
++#include "../include/common_lib.h"
+ #include <numeric>
+-#include <opencv2/core/eigen.hpp>
+ #include <gtsam/inference/Symbol.h>
+ #include <gtsam/nonlinear/Values.h>
+ #include <gtsam/geometry/Rot3.h>
+@@ -211,4 +213,4 @@ class GNSSAssignment
+         double str2double(const std::string &num_str);
+         EphemPtr rinex_line2ephem(const std::vector<std::string> &ephem_lines);
+         GloEphemPtr rinex_line2glo_ephem(const std::vector<std::string> &ephem_lines, const uint32_t gpst_leap_seconds);
+-};
+\ No newline at end of file
++};
+diff --git a/src/GNSS_Initialization.cpp b/src/GNSS_Initialization.cpp
+index 52178b3..ab851cb 100755
+--- a/src/GNSS_Initialization.cpp
++++ b/src/GNSS_Initialization.cpp
+@@ -37,8 +37,10 @@
+ #include "GNSS_Initialization.h"
+ 
+ GNSSLIInitializer::GNSSLIInitializer(const std::vector<std::vector<ObsPtr>> &gnss_meas_buf_, 
+-    const std::vector<std::vector<EphemBasePtr>> &gnss_ephem_buf_, const std::vector<double> &iono_params_)
+-        : gnss_meas_buf(gnss_meas_buf_), gnss_ephem_buf(gnss_ephem_buf_), iono_params(iono_params_)
++    const std::vector<std::vector<EphemBasePtr>> &gnss_ephem_buf_, const std::vector<double> &iono_params_,
++    const Eigen::Vector3d &initial_ecef_position_)
++        : gnss_meas_buf(gnss_meas_buf_), gnss_ephem_buf(gnss_ephem_buf_), iono_params(iono_params_),
++          initial_ecef_position(initial_ecef_position_)
+ {
+     num_all_meas = 0;
+     all_sat_states.clear();
+@@ -301,9 +303,14 @@ bool GNSSLIInitializer::yaw_refinement(const std::vector<Eigen::Vector3d> &local
+         std::vector<SatStatePtr> all_sat_states = sat_states(valid_obs, valid_ephems);
+         Eigen::Matrix<double, 7, 1> xyzt;
+         xyzt.setZero();
++        if (initial_ecef_position.allFinite() && initial_ecef_position.norm() > 1.0)
++            xyzt.head<3>() = initial_ecef_position;
+         double dx_norm = 1.0;
+         uint32_t num_iter = 0;
+-        while(num_iter < MAX_ITER_PVT && dx_norm > EPSILON_PVT)
++        // Raw pseudoranges do not support the nanometre-scale stopping threshold
++        // used by gnss_comm's generic solver.  The initializer only needs a
++        // coarse ECEF anchor, so use its own 10-micrometre convergence bound.
++        while(num_iter < MAX_ITER_PVT && dx_norm > CONVERGENCE_EPSILON)
+         {
+             Eigen::VectorXd b;
+             Eigen::MatrixXd G;
+@@ -388,7 +395,7 @@ bool GNSSLIInitializer::yaw_refinement(const std::vector<Eigen::Vector3d> &local
+ 
+             // ready for solving
+             Eigen::VectorXd dx = -(good_G.transpose()*good_W*good_G).inverse() * good_G.transpose() * good_W * good_b;
+-            if (dx_norm > 1e12)
++            if (!dx.allFinite() || dx.norm() > 1e12)
+             {
+                 xyzt.setZero();
+                 return xyzt;
+@@ -400,10 +407,11 @@ bool GNSSLIInitializer::yaw_refinement(const std::vector<Eigen::Vector3d> &local
+         }
+         if (num_iter == MAX_ITER_PVT)
+         {
+-            LOG(WARNING) << "[gnss_comm::psr_pos] XYZT solver reached maximum iterations.\n";
++            LOG(WARNING) << "[gnss_comm::psr_pos] XYZT solver reached maximum iterations; final step="
++                         << dx_norm << " m, position=" << xyzt.head<3>().transpose() << "\n";
+             return result;
+         }
+ 
+         result = xyzt;
+         return result;
+-    }
+\ No newline at end of file
++    }
+diff --git a/src/GNSS_Initialization.h b/src/GNSS_Initialization.h
+index f326f3e..623eed2 100755
+--- a/src/GNSS_Initialization.h
++++ b/src/GNSS_Initialization.h
+@@ -48,7 +48,8 @@ class GNSSLIInitializer
+     public:
+         GNSSLIInitializer(const std::vector<std::vector<ObsPtr>> &gnss_meas_buf_, 
+             const std::vector<std::vector<EphemBasePtr>> &gnss_ephem_buf_, 
+-            const std::vector<double> &iono_params_);
++            const std::vector<double> &iono_params_,
++            const Eigen::Vector3d &initial_ecef_position = Eigen::Vector3d::Zero());
+         GNSSLIInitializer(const GNSSLIInitializer&) = delete;
+         GNSSLIInitializer& operator=(const GNSSLIInitializer&) = delete;
+         ~GNSSLIInitializer() {};
+@@ -69,6 +70,7 @@ class GNSSLIInitializer
+         const std::vector<std::vector<ObsPtr>> &gnss_meas_buf;
+         const std::vector<std::vector<EphemBasePtr>> &gnss_ephem_buf;
+         const std::vector<double> &iono_params;
++        Eigen::Vector3d initial_ecef_position;
+ 
+         uint32_t num_all_meas;
+         std::vector<std::vector<SatStatePtr>> all_sat_states;
+@@ -77,4 +79,4 @@ class GNSSLIInitializer
+         static constexpr double   CONVERGENCE_EPSILON = 1e-5;
+ };
+ 
+-// #endif
+\ No newline at end of file
++// #endif
+diff --git a/src/GNSS_Processing_fg.cpp b/src/GNSS_Processing_fg.cpp
+index b5165ba..6d9e006 100755
+--- a/src/GNSS_Processing_fg.cpp
++++ b/src/GNSS_Processing_fg.cpp
+@@ -338,7 +338,9 @@ bool GNSSProcess::GNSSLIAlign()
+         curr_gnss_ephem_buf.push_back(gnss_ephem_buf[i]);
+     }
+ 
+-    GNSSLIInitializer gnss_li_initializer(curr_gnss_meas_buf, curr_gnss_ephem_buf, p_assign->latest_gnss_iono_params);
++    GNSSLIInitializer gnss_li_initializer(
++        curr_gnss_meas_buf, curr_gnss_ephem_buf, p_assign->latest_gnss_iono_params,
++        pvt_time.empty() ? Eigen::Vector3d::Zero() : first_xyz_ecef_pvt);
+ 
+     // 1. get a rough global location
+     Eigen::Matrix<double, 7, 1> rough_xyzt;
+@@ -435,7 +437,9 @@ bool GNSSProcess::GNSSLIAlign()
+         curr_gnss_ephem_buf.push_back(gnss_ephem_buf[i]);
+       // }
+ 
+-      GNSSLIInitializer gnss_li_initializer(curr_gnss_meas_buf, curr_gnss_ephem_buf, p_assign->latest_gnss_iono_params);
++      GNSSLIInitializer gnss_li_initializer(
++          curr_gnss_meas_buf, curr_gnss_ephem_buf, p_assign->latest_gnss_iono_params,
++          pvt_time.empty() ? Eigen::Vector3d::Zero() : first_xyz_ecef_pvt);
+ 
+       // 1. get a rough global location
+       Eigen::Matrix<double, 7, 1> rough_xyzt;
+@@ -495,33 +499,18 @@ bool GNSSProcess::GNSSLIAlign()
+       para_rcv_dt[4*i] = rough_xyzt(3+dt_idx);
+     }
+ 
+-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_in (new pcl::PointCloud<pcl::PointXYZ>(wind_size+1, 1));
+-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_out (new pcl::PointCloud<pcl::PointXYZ>(wind_size+1, 1));
+-
+-    // Fill in the CloudIn data
+-    // for (auto& point : *cloud_in)
++    Eigen::Matrix<double, 3, Eigen::Dynamic> local_points(3, wind_size + 1);
++    Eigen::Matrix<double, 3, Eigen::Dynamic> ecef_points(3, wind_size + 1);
+     for (size_t i = 0; i < wind_size + 1; i++)
+     {
+-      cloud_in->points[i].x = pos_window[i](0);
+-      cloud_in->points[i].y = pos_window[i](1);
+-      cloud_in->points[i].z = pos_window[i](2);
+-      cloud_out->points[i].x = pos_ecef_window[i](0);
+-      cloud_out->points[i].y = pos_ecef_window[i](1);
+-      cloud_out->points[i].z = pos_ecef_window[i](2);
++      local_points.col(i) = pos_window[i];
++      ecef_points.col(i) = pos_ecef_window[i];
+     }
+-    pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
+-    icp.setInputSource(cloud_in);
+-    icp.setInputTarget(cloud_out);
+-    
+-    pcl::PointCloud<pcl::PointXYZ> Final;
+-    icp.align(Final);
+-
+-    std::cout << "ICP has " << (icp.hasConverged()?"converged":"not converged") << ", score: " << icp.getFitnessScore() << std::endl;
+-    // std::cout << icp.getFinalTransformation() << std::endl;
+-    // Eigen::Vector3d pos_trans;
+-    // Eigen::Matrix3d rot_trans;
+-    // TrajAlign(local_traj, enu_traj, pos_trans, rot_trans);
+-    if (!icp.hasConverged())
++    // GNSS and local poses are already time-associated. A direct rigid
++    // least-squares alignment is deterministic and avoids PCL/VTK's optional
++    // registration stack in the standalone build.
++    Eigen::Matrix4d sim_trans = Eigen::umeyama(local_points, ecef_points, false);
++    if (!sim_trans.allFinite())
+     {
+         std::cerr << "Fail to obtain a coarse location.\n";
+         for (uint32_t i = 0; i < (wind_size); ++i)
+@@ -542,7 +531,6 @@ bool GNSSProcess::GNSSLIAlign()
+         return false;
+     }
+     
+-    Eigen::Matrix4d sim_trans = icp.getFinalTransformation().cast<double>();
+     // Eigen::Vector3d pos_nmea(nmea_meas_[0]->pose.pose.position.x, nmea_meas_[0]->pose.pose.position.y, nmea_meas_[0]->pose.pose.position.z);
+     // Eigen::Vector3d pos_nmea(nmea_meas_[0]->pose.pose.position.x, nmea_meas_[0]->pose.pose.position.y, nmea_meas_[0]->pose.pose.position.z);
+     anc_ecef = sim_trans.block<3, 1>(0, 3); // icp.getFinalTransformation().template block<3, 1>(0, 3); // pos_trans; // pos_nmea - pos_window[0]; //
+@@ -1204,4 +1192,4 @@ void GNSSProcess::SetInit()
+     p_assign->initialEstimate.insert(C(0), gtsam::Vector1(para_rcv_ddt[0])); // para_rcv_ddt[wind_size]
+     id_accumulate += 4;
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/src/GNSS_Processing_fg.h b/src/GNSS_Processing_fg.h
+index 7701008..6632dd9 100755
+--- a/src/GNSS_Processing_fg.h
++++ b/src/GNSS_Processing_fg.h
+@@ -38,7 +38,6 @@
+ #include "GNSS_Initialization.h"
+ #include "GNSS_Assignment.h"
+ 
+-#include <pcl/registration/icp.h>
+ using namespace gnss_comm;
+ 
+ #define WINDOW_SIZE (10) // should be 0
+@@ -146,4 +145,4 @@ class GNSSProcess
+     Eigen::Matrix3d rot_pos;
+ };
+ 
+-// # endif
+\ No newline at end of file
++// # endif
+diff --git a/standalone/ligo_adapter.cpp b/standalone/ligo_adapter.cpp
+new file mode 100644
+index 0000000..e4d4e8f
+--- /dev/null
++++ b/standalone/ligo_adapter.cpp
+@@ -0,0 +1,156 @@
++#include "ligo_adapter.hpp"
++
++#include <slam_benchmark/calibration.hpp>
++
++#include <spdlog/spdlog.h>
++#include <yaml-cpp/yaml.h>
++
++#include <chrono>
++#include <cmath>
++#include <stdexcept>
++
++namespace {
++
++template <typename T>
++T parameter(const YAML::Node& root, const char* key, T fallback) {
++    return root[key] ? root[key].as<T>() : fallback;
++}
++
++slam_benchmark::TimestampNs nanoseconds(double value) {
++    return static_cast<slam_benchmark::TimestampNs>(std::llround(value * 1e9));
++}
++
++}  // namespace
++
++slam_benchmark::InitializationResult LigoAdapter::initialize(
++    std::span<const slam_benchmark::SensorDefinition> sensors,
++    const std::filesystem::path& config_path,
++    slam_benchmark::ResultSink& sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++        sensors, {.lidar = true, .imu = true, .gnss = true, .point_time = true,
++                  .all_gnss = true});
++    if (!compatibility) return compatibility;
++    const auto lidar = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Imu);
++    const auto gnss = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Gnss);
++    if (lidar == sensors.end() || imu == sensors.end() || gnss == sensors.end())
++        throw std::runtime_error("LIGO requires LiDAR, IMU and GNSS");
++
++    sink_ = &sink;
++    const YAML::Node root = YAML::LoadFile(config_path.string());
++    LigoLioBridge::Options lio_options;
++    lio_options.scan_voxel_size = parameter(root, "filter_size_scan_m", 0.2);
++    lio_options.map_voxel_size = parameter(root, "map_voxel_size_m", 0.5);
++    lio_options.max_iterations = parameter(root, "max_iterations", 4);
++    lio_options.estimate_extrinsics = parameter(root, "estimate_extrinsics", false);
++    const auto lidar_from_imu =
++        slam_benchmark::target_from_source(imu->calibration, lidar->calibration);
++    lio_options.lidar_rotation = {lidar_from_imu[0], lidar_from_imu[1],
++                                  lidar_from_imu[2], lidar_from_imu[4],
++                                  lidar_from_imu[5], lidar_from_imu[6],
++                                  lidar_from_imu[8], lidar_from_imu[9],
++                                  lidar_from_imu[10]};
++    lio_options.lidar_translation = {lidar_from_imu[3], lidar_from_imu[7],
++                                     lidar_from_imu[11]};
++
++    LigoGnssBridge::Options gnss_options;
++    const auto receiver_from_imu =
++        slam_benchmark::target_from_source(imu->calibration, gnss->calibration);
++    gnss_options.receiver_translation = {receiver_from_imu[3], receiver_from_imu[7],
++                                         receiver_from_imu[11]};
++    gnss_options.sample_period_s = parameter(root, "gnss_sample_period_s", 0.1);
++    gnss_options.local_time_difference_s =
++        parameter(root, "gnss_local_time_difference_s", 18.0);
++    gnss_options.initialization_window_size =
++        parameter(root, "gnss_initialization_window_size", 10);
++    gnss_options.graph_window_size = parameter(root, "gnss_graph_window_size", 30);
++    gnss_options.pseudorange_std_threshold_m =
++        parameter(root, "gnss_pseudorange_std_threshold_m", 30.0);
++    gnss_options.doppler_std_threshold_hz =
++        parameter(root, "gnss_doppler_std_threshold_hz", 30.0);
++    gnss_options.carrier_phase_std_threshold_cycles =
++        parameter(root, "gnss_carrier_phase_std_threshold_cycles", 30.0);
++    gnss_options.elevation_threshold_deg =
++        parameter(root, "gnss_elevation_threshold_deg", 30.0);
++    gnss_options.default_ionosphere_parameters =
++        parameter(root, "gnss_default_ionosphere_parameters",
++                  std::vector<double>{0.1118e-7, 0.2235e-7, -0.4172e-6, 0.6557e-6,
++                                      0.1249e6, -0.4424e6, 0.1507e7, -0.2621e6});
++    gnss_.initialize(gnss_options);
++    lio_.initialize(
++        lio_options, [this](const LigoState& state) { accept_lio_state(state); },
++        [this](double timestamp, const char* stage, double duration) {
++            sink_->report_timing({nanoseconds(timestamp), stage, duration});
++        });
++    spdlog::info("LIGO initialized with {} selected sensor streams",
++                 compatibility.selected_sensor_ids.size());
++    return compatibility;
++}
++
++void LigoAdapter::process(const slam_benchmark::SensorSample& sample) {
++    if (const auto* imu = std::get_if<slam_benchmark::ImuSample>(&sample.payload)) {
++        lio_.add_imu({static_cast<double>(sample.timestamp_ns) * 1e-9,
++                      imu->angular_velocity_rad_s, imu->linear_acceleration_m_s2});
++        return;
++    }
++    if (const auto* cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload)) {
++        if (cloud->points.size() != cloud->point_time_offset_ns.size())
++            throw std::runtime_error("point/time array size mismatch");
++        const auto started = std::chrono::steady_clock::now();
++        LigoCloud input;
++        input.timestamp_s = static_cast<double>(sample.timestamp_ns) * 1e-9;
++        input.points.reserve(cloud->points.size());
++        for (std::size_t index = 0; index < cloud->points.size(); ++index) {
++            const auto& point = cloud->points[index];
++            input.points.push_back({point.x, point.y, point.z, point.intensity,
++                                    static_cast<double>(cloud->point_time_offset_ns[index]) *
++                                        1e-9});
++        }
++        lio_.add_cloud(std::move(input));
++        sink_->report_timing(
++            {sample.timestamp_ns, "lidar_preprocess",
++             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
++                                                        started)
++                 .count()});
++        return;
++    }
++
++    const auto started = std::chrono::steady_clock::now();
++    gnss_.input(sample);
++    sink_->report_timing(
++        {sample.timestamp_ns, "gnss_preprocess",
++         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
++             .count()});
++}
++
++void LigoAdapter::accept_lio_state(const LigoState& state) {
++    local_states_.push_back(state);
++    gnss_.update_lio_state(state);
++    if (const auto global = gnss_.global_state(state)) sink_->report_realtime_pose(pose(*global));
++}
++
++slam_benchmark::Pose LigoAdapter::pose(const LigoState& state) const {
++    return {nanoseconds(state.timestamp_s), state.position, state.rotation_xyzw};
++}
++
++void LigoAdapter::finalize() {
++    lio_.finish();
++    if (!gnss_.ready()) {
++        throw std::runtime_error(
++            "LIGO GNSS initialization failed: raw observation epochs=" +
++            std::to_string(gnss_.observation_epochs()) +
++            ", ephemerides=" + std::to_string(gnss_.ephemerides()));
++    }
++    slam_benchmark::Trajectory trajectory;
++    trajectory.reserve(local_states_.size());
++    for (const auto& local : local_states_) {
++        if (const auto global = gnss_.global_state(local)) trajectory.push_back(pose(*global));
++    }
++    if (trajectory.empty())
++        throw std::runtime_error("LIGO produced no globally referenced poses");
++    spdlog::info("LIGO GNSS fusion completed: {} observation epochs, {} ephemerides, "
++                 "{} optimized epochs, {} trajectory poses",
++                 gnss_.observation_epochs(), gnss_.ephemerides(), gnss_.optimized_epochs(),
++                 trajectory.size());
++    sink_->report_final_trajectory(trajectory);
++}
+diff --git a/standalone/ligo_adapter.hpp b/standalone/ligo_adapter.hpp
+new file mode 100644
+index 0000000..30fc815
+--- /dev/null
++++ b/standalone/ligo_adapter.hpp
+@@ -0,0 +1,28 @@
++#pragma once
++
++#include "ligo_gnss_bridge.hpp"
++#include "ligo_lio_bridge.hpp"
++
++#include <slam_benchmark/algorithm.hpp>
++
++#include <vector>
++
++class LigoAdapter final : public slam_benchmark::SlamAlgorithm {
++public:
++    [[nodiscard]] std::string_view name() const noexcept override { return "ligo"; }
++    slam_benchmark::InitializationResult initialize(
++        std::span<const slam_benchmark::SensorDefinition> sensors,
++        const std::filesystem::path& config_path,
++        slam_benchmark::ResultSink& sink) override;
++    void process(const slam_benchmark::SensorSample& sample) override;
++    void finalize() override;
++
++private:
++    void accept_lio_state(const LigoState& state);
++    [[nodiscard]] slam_benchmark::Pose pose(const LigoState& state) const;
++
++    slam_benchmark::ResultSink* sink_{};
++    LigoLioBridge lio_;
++    LigoGnssBridge gnss_;
++    std::vector<LigoState> local_states_;
++};
+diff --git a/standalone/ligo_gnss_bridge.cpp b/standalone/ligo_gnss_bridge.cpp
+new file mode 100644
+index 0000000..e359f6c
+--- /dev/null
++++ b/standalone/ligo_gnss_bridge.cpp
+@@ -0,0 +1,224 @@
++#include "ligo_gnss_bridge.hpp"
++
++#include "GNSS_Processing_fg.h"
++
++#include <gnss_comm/gnss_utility.hpp>
++#include <gtsam/inference/Symbol.h>
++
++#include <Eigen/Geometry>
++
++#include <algorithm>
++#include <cmath>
++#include <stdexcept>
++
++namespace {
++
++gnss_comm::gtime_t time(const slam_benchmark::GnssTime& value) {
++    return gnss_comm::gpst2time(value.week, value.seconds_of_week);
++}
++
++state_output to_upstream(const LigoState& input) {
++    state_output output;
++    output.pos << input.position[0], input.position[1], input.position[2];
++    const Eigen::Quaterniond rotation(input.rotation_xyzw[3], input.rotation_xyzw[0],
++                                      input.rotation_xyzw[1], input.rotation_xyzw[2]);
++    output.rot = rotation.normalized().toRotationMatrix();
++    output.vel << input.velocity[0], input.velocity[1], input.velocity[2];
++    output.omg << input.angular_velocity[0], input.angular_velocity[1],
++        input.angular_velocity[2];
++    output.acc << input.acceleration[0], input.acceleration[1], input.acceleration[2];
++    output.bg << input.gyro_bias[0], input.gyro_bias[1], input.gyro_bias[2];
++    output.ba << input.accel_bias[0], input.accel_bias[1], input.accel_bias[2];
++    output.gravity << input.gravity[0], input.gravity[1], input.gravity[2];
++    return output;
++}
++
++gnss_comm::ObsPtr observation(const slam_benchmark::GnssObservation& source) {
++    auto output = std::make_shared<gnss_comm::Obs>();
++    output->time = time(source.time);
++    output->sat = source.satellite;
++    output->freqs = source.frequencies_hz;
++    output->CN0 = source.carrier_to_noise_db_hz;
++    output->LLI = source.lost_lock_indicators;
++    output->code = source.codes;
++    output->psr = source.pseudoranges_m;
++    output->psr_std = source.pseudorange_std_m;
++    output->cp = source.carrier_phases_cycles;
++    output->cp_std = source.carrier_phase_std_cycles;
++    output->dopp = source.doppler_hz;
++    output->dopp_std = source.doppler_std_hz;
++    output->status = source.tracking_status;
++    return output;
++}
++
++gnss_comm::EphemPtr ephemeris(const slam_benchmark::GnssEphemeris& source) {
++    auto output = std::make_shared<gnss_comm::Ephem>();
++    output->sat = source.satellite;
++    output->ttr = time(source.transmission_time);
++    output->toe = time(source.ephemeris_reference_time);
++    output->toc = time(source.clock_reference_time);
++    output->toe_tow = source.ephemeris_reference_tow_s;
++    output->week = source.week;
++    output->iode = source.issue_of_data_ephemeris;
++    output->iodc = source.issue_of_data_clock;
++    output->health = source.health;
++    output->code = source.code;
++    output->ura = source.user_range_accuracy_m;
++    output->A = source.semi_major_axis_m;
++    output->e = source.eccentricity;
++    output->i0 = source.inclination_rad;
++    output->omg = source.argument_of_perigee_rad;
++    output->OMG0 = source.ascending_node_longitude_rad;
++    output->M0 = source.mean_anomaly_rad;
++    output->delta_n = source.mean_motion_difference_rad_s;
++    output->OMG_dot = source.ascending_node_rate_rad_s;
++    output->i_dot = source.inclination_rate_rad_s;
++    output->cuc = source.latitude_correction_cos_rad;
++    output->cus = source.latitude_correction_sin_rad;
++    output->crc = source.radius_correction_cos_m;
++    output->crs = source.radius_correction_sin_m;
++    output->cic = source.inclination_correction_cos_rad;
++    output->cis = source.inclination_correction_sin_rad;
++    output->af0 = source.clock_bias_s;
++    output->af1 = source.clock_drift_s_s;
++    output->af2 = source.clock_drift_rate_s_s2;
++    output->tgd[0] = source.group_delay_0_s;
++    output->tgd[1] = source.group_delay_1_s;
++    output->A_dot = source.semi_major_axis_rate_m_s;
++    output->n_dot = source.mean_motion_rate_rad_s2;
++    return output;
++}
++
++gnss_comm::GloEphemPtr ephemeris(const slam_benchmark::GnssGlonassEphemeris& source) {
++    auto output = std::make_shared<gnss_comm::GloEphem>();
++    output->sat = source.satellite;
++    output->ttr = time(source.transmission_time);
++    output->toe = time(source.ephemeris_reference_time);
++    output->freqo = source.frequency_channel;
++    output->iode = source.issue_of_data;
++    output->health = source.health;
++    output->age = source.age_days;
++    output->ura = source.user_range_accuracy_m;
++    std::copy(source.position_m.begin(), source.position_m.end(), output->pos);
++    std::copy(source.velocity_m_s.begin(), source.velocity_m_s.end(), output->vel);
++    std::copy(source.acceleration_m_s2.begin(), source.acceleration_m_s2.end(), output->acc);
++    output->tau_n = source.clock_bias_s;
++    output->gamma = source.relative_frequency_bias;
++    output->delta_tau_n = source.inter_frequency_delay_s;
++    return output;
++}
++
++}  // namespace
++
++class LigoGnssBridge::Impl {
++public:
++    void initialize(const Options& options) {
++        process_ = std::make_unique<GNSSProcess>();
++        process_->Tex_imu_r << options.receiver_translation[0],
++            options.receiver_translation[1], options.receiver_translation[2];
++        process_->gravity_init << options.gravity[0], options.gravity[1], options.gravity[2];
++        process_->gnss_sample_period = options.sample_period_s;
++        process_->diff_t_gnss_local = options.local_time_difference_s;
++        process_->wind_size = std::clamp(options.initialization_window_size, 1, WINDOW_SIZE);
++        process_->delete_thred = std::max(options.graph_window_size,
++                                          process_->wind_size + 1);
++        process_->p_assign->gnss_psr_std_threshold = options.pseudorange_std_threshold_m;
++        process_->p_assign->gnss_dopp_std_threshold = options.doppler_std_threshold_hz;
++        process_->p_assign->gnss_cp_std_threshold =
++            options.carrier_phase_std_threshold_cycles / 0.004;
++        process_->p_assign->gnss_elevation_threshold = options.elevation_threshold_deg;
++        process_->p_assign->pvt_is_gt = false;
++        process_->p_assign->initNoises();
++        process_->sqrt_lidar.setIdentity();
++        process_->inputIonoParams(0.0, options.default_ionosphere_parameters);
++    }
++
++    void update_lio_state(const LigoState& state) { local_state_ = state; }
++
++    void input(const slam_benchmark::SensorSample& sample) {
++        if (!process_) throw std::logic_error("LIGO GNSS bridge is not initialized");
++        if (const auto* value = std::get_if<slam_benchmark::GnssEphemeris>(&sample.payload)) {
++            process_->p_assign->inputEphem(ephemeris(*value));
++            ++ephemerides_;
++        } else if (const auto* value =
++                       std::get_if<slam_benchmark::GnssGlonassEphemeris>(&sample.payload)) {
++            process_->p_assign->inputEphem(ephemeris(*value));
++            ++ephemerides_;
++        } else if (const auto* value =
++                       std::get_if<slam_benchmark::GnssIonosphereParameters>(&sample.payload)) {
++            process_->inputIonoParams(static_cast<double>(value->source_timestamp_ns) * 1e-9,
++                                      value->values);
++        } else if (const auto* value =
++                       std::get_if<slam_benchmark::GnssReceiverPvt>(&sample.payload)) {
++            process_->inputpvt(gnss_comm::time2sec(time(value->time)), value->latitude_deg,
++                               value->longitude_deg, value->altitude_m,
++                               value->carrier_solution == 1, value->differential_solution);
++        } else if (const auto* value = std::get_if<slam_benchmark::GnssFix>(&sample.payload)) {
++            process_->inputlla(static_cast<double>(sample.timestamp_ns) * 1e-9,
++                               value->latitude_deg, value->longitude_deg, value->altitude_m);
++        } else if (const auto* value =
++                       std::get_if<slam_benchmark::GnssObservations>(&sample.payload)) {
++            if (!local_state_ || value->observations.empty()) return;
++            std::vector<gnss_comm::ObsPtr> observations;
++            observations.reserve(value->observations.size());
++            for (const auto& source : value->observations)
++                observations.push_back(observation(source));
++            state_output state = to_upstream(*local_state_);
++            process_->processGNSS(observations, state);
++            ++observation_epochs_;
++            if (process_->gnss_ready) {
++                process_->sqrt_lidar.setIdentity();
++                process_->p_assign->process_feat_num = 100;
++                process_->norm_vec_num = 100;
++                if (process_->Evaluate(state)) ++optimized_epochs_;
++            }
++        }
++    }
++
++    bool ready() const { return process_ && process_->gnss_ready; }
++
++    std::optional<LigoState> global_state(const LigoState& local) {
++        if (!ready() || process_->pvt_time.empty()) return std::nullopt;
++        using gtsam::symbol_shorthand::E;
++        using gtsam::symbol_shorthand::P;
++        if (!process_->p_assign->isamCurrentEstimate.exists(P(0)) ||
++            !process_->p_assign->isamCurrentEstimate.exists(E(0))) return std::nullopt;
++        const Eigen::Matrix3d enu_from_local =
++            process_->p_assign->isamCurrentEstimate.at<gtsam::Rot3>(P(0)).matrix();
++        const Eigen::Vector3d anchor =
++            process_->p_assign->isamCurrentEstimate.at<gtsam::Vector3>(E(0));
++        Eigen::Vector3d position(local.position[0], local.position[1], local.position[2]);
++        // Benchmark trajectories are expressed relative to their first global
++        // anchor. Keep LIGO's GNSS-derived orientation while removing the large
++        // absolute ECEF translation before reporting the ENU position.
++        position = gnss_comm::ecef2enu(gnss_comm::ecef2geo(anchor),
++                                       enu_from_local * position);
++        const Eigen::Quaterniond local_rotation(local.rotation_xyzw[3], local.rotation_xyzw[0],
++                                                local.rotation_xyzw[1], local.rotation_xyzw[2]);
++        const Eigen::Quaterniond global_rotation(enu_from_local * local_rotation.toRotationMatrix());
++        LigoState output = local;
++        output.position = {position[0], position[1], position[2]};
++        output.rotation_xyzw = {global_rotation.x(), global_rotation.y(), global_rotation.z(),
++                                global_rotation.w()};
++        return output;
++    }
++
++    std::unique_ptr<GNSSProcess> process_;
++    std::optional<LigoState> local_state_;
++    std::size_t observation_epochs_{};
++    std::size_t ephemerides_{};
++    std::size_t optimized_epochs_{};
++};
++
++LigoGnssBridge::LigoGnssBridge() : impl_(std::make_unique<Impl>()) {}
++LigoGnssBridge::~LigoGnssBridge() = default;
++void LigoGnssBridge::initialize(const Options& options) { impl_->initialize(options); }
++void LigoGnssBridge::update_lio_state(const LigoState& state) { impl_->update_lio_state(state); }
++void LigoGnssBridge::input(const slam_benchmark::SensorSample& sample) { impl_->input(sample); }
++bool LigoGnssBridge::ready() const { return impl_->ready(); }
++std::optional<LigoState> LigoGnssBridge::global_state(const LigoState& state) {
++    return impl_->global_state(state);
++}
++std::size_t LigoGnssBridge::observation_epochs() const { return impl_->observation_epochs_; }
++std::size_t LigoGnssBridge::ephemerides() const { return impl_->ephemerides_; }
++std::size_t LigoGnssBridge::optimized_epochs() const { return impl_->optimized_epochs_; }
+diff --git a/standalone/ligo_gnss_bridge.hpp b/standalone/ligo_gnss_bridge.hpp
+new file mode 100644
+index 0000000..c329fe4
+--- /dev/null
++++ b/standalone/ligo_gnss_bridge.hpp
+@@ -0,0 +1,45 @@
++#pragma once
++
++#include "ligo_state.hpp"
++
++#include <slam_benchmark/types.hpp>
++
++#include <array>
++#include <memory>
++#include <optional>
++#include <vector>
++
++class LigoGnssBridge {
++public:
++    struct Options {
++        std::array<double, 3> receiver_translation{};
++        std::array<double, 3> gravity{0.0, 0.0, -9.81};
++        std::vector<double> default_ionosphere_parameters;
++        double sample_period_s{0.1};
++        double local_time_difference_s{18.0};
++        int initialization_window_size{10};
++        int graph_window_size{30};
++        double pseudorange_std_threshold_m{30.0};
++        double doppler_std_threshold_hz{30.0};
++        double carrier_phase_std_threshold_cycles{30.0};
++        double elevation_threshold_deg{30.0};
++    };
++
++    LigoGnssBridge();
++    ~LigoGnssBridge();
++    LigoGnssBridge(const LigoGnssBridge&) = delete;
++    LigoGnssBridge& operator=(const LigoGnssBridge&) = delete;
++
++    void initialize(const Options& options);
++    void update_lio_state(const LigoState& state);
++    void input(const slam_benchmark::SensorSample& sample);
++    [[nodiscard]] bool ready() const;
++    [[nodiscard]] std::optional<LigoState> global_state(const LigoState& local_state);
++    [[nodiscard]] std::size_t observation_epochs() const;
++    [[nodiscard]] std::size_t ephemerides() const;
++    [[nodiscard]] std::size_t optimized_epochs() const;
++
++private:
++    class Impl;
++    std::unique_ptr<Impl> impl_;
++};
+diff --git a/standalone/ligo_lio_bridge.cpp b/standalone/ligo_lio_bridge.cpp
+new file mode 100644
+index 0000000..5474b7b
+--- /dev/null
++++ b/standalone/ligo_lio_bridge.cpp
+@@ -0,0 +1,113 @@
++#include "ligo_lio_bridge.hpp"
++
++#include "fast_lio_engine.hpp"
++
++#include <algorithm>
++#include <cmath>
++#include <deque>
++#include <optional>
++#include <stdexcept>
++#include <utility>
++
++class LigoLioBridge::Impl {
++public:
++    void initialize(const Options& options, LigoStateCallback state_callback,
++                    LigoTimingCallback timing_callback) {
++        state_callback_ = std::move(state_callback);
++        FastLioEngine::Options engine_options;
++        engine_options.scan_voxel_size = options.scan_voxel_size;
++        engine_options.map_voxel_size = options.map_voxel_size;
++        engine_options.max_iterations = options.max_iterations;
++        engine_options.estimate_extrinsics = options.estimate_extrinsics;
++        engine_options.lidar_rotation <<
++            options.lidar_rotation[0], options.lidar_rotation[1], options.lidar_rotation[2],
++            options.lidar_rotation[3], options.lidar_rotation[4], options.lidar_rotation[5],
++            options.lidar_rotation[6], options.lidar_rotation[7], options.lidar_rotation[8];
++        engine_options.lidar_translation << options.lidar_translation[0],
++            options.lidar_translation[1], options.lidar_translation[2];
++        engine_.set_pose_callback([this](double timestamp, const state_ikfom& state) {
++            LigoState output;
++            output.timestamp_s = timestamp;
++            output.position = {state.pos[0], state.pos[1], state.pos[2]};
++            const auto q = state.rot.coeffs();
++            output.rotation_xyzw = {q[0], q[1], q[2], q[3]};
++            output.velocity = {state.vel[0], state.vel[1], state.vel[2]};
++            output.gyro_bias = {state.bg[0], state.bg[1], state.bg[2]};
++            output.accel_bias = {state.ba[0], state.ba[1], state.ba[2]};
++            output.gravity = {state.grav[0], state.grav[1], state.grav[2]};
++            if (last_imu_) {
++                output.angular_velocity = last_imu_->angular_velocity;
++                output.acceleration = last_imu_->linear_acceleration;
++            }
++            if (state_callback_) state_callback_(output);
++        });
++        engine_.set_timing_callback(std::move(timing_callback));
++        engine_.initialize(engine_options);
++    }
++
++    void add_imu(const LigoImu& input) {
++        last_imu_ = input;
++        auto imu = std::make_shared<ImuData>();
++        imu->header.stamp.seconds = input.timestamp_s;
++        imu->angular_velocity = {input.angular_velocity[0], input.angular_velocity[1],
++                                 input.angular_velocity[2]};
++        imu->linear_acceleration = {input.linear_acceleration[0],
++                                    input.linear_acceleration[1],
++                                    input.linear_acceleration[2]};
++        imu_queue_.push_back(std::move(imu));
++        drain();
++    }
++
++    void add_cloud(LigoCloud input) {
++        MeasureGroup measures;
++        measures.lidar_beg_time = input.timestamp_s;
++        measures.lidar->reserve(input.points.size());
++        double maximum_offset = 0.0;
++        for (const auto& source : input.points) {
++            PointType point;
++            point.x = source.x;
++            point.y = source.y;
++            point.z = source.z;
++            point.intensity = source.intensity;
++            point.normal_x = point.normal_y = point.normal_z = 0.0F;
++            point.curvature = static_cast<float>(source.offset_s * 1000.0);
++            maximum_offset = std::max(maximum_offset, source.offset_s);
++            measures.lidar->push_back(point);
++        }
++        measures.lidar_end_time = measures.lidar_beg_time + maximum_offset;
++        lidar_queue_.push_back(std::move(measures));
++        drain();
++    }
++
++    void drain() {
++        while (!lidar_queue_.empty() && !imu_queue_.empty() &&
++               imu_queue_.back()->header.stamp.toSec() >= lidar_queue_.front().lidar_end_time) {
++            MeasureGroup measures = std::move(lidar_queue_.front());
++            lidar_queue_.pop_front();
++            while (!imu_queue_.empty() &&
++                   imu_queue_.front()->header.stamp.toSec() <= measures.lidar_end_time) {
++                measures.imu.push_back(imu_queue_.front());
++                imu_queue_.pop_front();
++            }
++            if (!measures.imu.empty()) engine_.process(measures);
++        }
++    }
++
++    void finish() { drain(); }
++
++    FastLioEngine engine_;
++    std::deque<ImuData::ConstPtr> imu_queue_;
++    std::deque<MeasureGroup> lidar_queue_;
++    std::optional<LigoImu> last_imu_;
++    LigoStateCallback state_callback_;
++};
++
++LigoLioBridge::LigoLioBridge() : impl_(std::make_unique<Impl>()) {}
++LigoLioBridge::~LigoLioBridge() = default;
++void LigoLioBridge::initialize(const Options& options, LigoStateCallback state_callback,
++                               LigoTimingCallback timing_callback) {
++    impl_->initialize(options, std::move(state_callback), std::move(timing_callback));
++}
++void LigoLioBridge::add_imu(const LigoImu& imu) { impl_->add_imu(imu); }
++void LigoLioBridge::add_cloud(LigoCloud cloud) { impl_->add_cloud(std::move(cloud)); }
++void LigoLioBridge::finish() { impl_->finish(); }
+diff --git a/standalone/ligo_lio_bridge.hpp b/standalone/ligo_lio_bridge.hpp
+new file mode 100644
+index 0000000..d7d66d5
+--- /dev/null
++++ b/standalone/ligo_lio_bridge.hpp
+@@ -0,0 +1,33 @@
++#pragma once
++
++#include "ligo_state.hpp"
++
++#include <array>
++#include <memory>
++
++class LigoLioBridge {
++public:
++    struct Options {
++        double scan_voxel_size{0.2};
++        double map_voxel_size{0.5};
++        int max_iterations{4};
++        bool estimate_extrinsics{};
++        std::array<double, 9> lidar_rotation{1, 0, 0, 0, 1, 0, 0, 0, 1};
++        std::array<double, 3> lidar_translation{};
++    };
++
++    LigoLioBridge();
++    ~LigoLioBridge();
++    LigoLioBridge(const LigoLioBridge&) = delete;
++    LigoLioBridge& operator=(const LigoLioBridge&) = delete;
++
++    void initialize(const Options& options, LigoStateCallback state_callback,
++                    LigoTimingCallback timing_callback);
++    void add_imu(const LigoImu& imu);
++    void add_cloud(LigoCloud cloud);
++    void finish();
++
++private:
++    class Impl;
++    std::unique_ptr<Impl> impl_;
++};
+diff --git a/standalone/ligo_state.hpp b/standalone/ligo_state.hpp
+new file mode 100644
+index 0000000..b8c39b5
+--- /dev/null
++++ b/standalone/ligo_state.hpp
+@@ -0,0 +1,40 @@
++#pragma once
++
++#include <array>
++#include <cstdint>
++#include <functional>
++#include <vector>
++
++struct LigoState {
++    double timestamp_s{};
++    std::array<double, 3> position{};
++    std::array<double, 4> rotation_xyzw{0.0, 0.0, 0.0, 1.0};
++    std::array<double, 3> velocity{};
++    std::array<double, 3> angular_velocity{};
++    std::array<double, 3> acceleration{};
++    std::array<double, 3> gyro_bias{};
++    std::array<double, 3> accel_bias{};
++    std::array<double, 3> gravity{0.0, 0.0, -9.81};
++};
++
++struct LigoImu {
++    double timestamp_s{};
++    std::array<double, 3> angular_velocity{};
++    std::array<double, 3> linear_acceleration{};
++};
++
++struct LigoPoint {
++    float x{};
++    float y{};
++    float z{};
++    float intensity{};
++    double offset_s{};
++};
++
++struct LigoCloud {
++    double timestamp_s{};
++    std::vector<LigoPoint> points;
++};
++
++using LigoStateCallback = std::function<void(const LigoState&)>;
++using LigoTimingCallback = std::function<void(double, const char*, double)>;
+diff --git a/standalone/main.cpp b/standalone/main.cpp
+new file mode 100644
+index 0000000..18da819
+--- /dev/null
++++ b/standalone/main.cpp
+@@ -0,0 +1,8 @@
++#include "ligo_adapter.hpp"
++
++#include <slam_benchmark/application.hpp>
++
++int main(int argc, char** argv) {
++    LigoAdapter algorithm;
++    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
++}

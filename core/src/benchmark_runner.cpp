@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <iomanip>
 #include <optional>
 #include <sstream>
@@ -14,6 +15,30 @@
 
 namespace slam_benchmark {
 namespace {
+
+std::string output_position_limit_message(const double limit_meters) {
+    std::ostringstream out;
+    out << "输出位置超过 " << std::fixed << std::setprecision(1) << limit_meters
+        << " m，算法判定失败";
+    return out.str();
+}
+
+class OutputPositionLimitExceeded final : public std::runtime_error {
+public:
+    explicit OutputPositionLimitExceeded(const double limit_meters)
+        : std::runtime_error(output_position_limit_message(limit_meters)) {}
+};
+
+void validate_pose_position(const Pose& pose, const double limit_meters) {
+    const double squared_distance =
+        pose.translation_m[0] * pose.translation_m[0] +
+        pose.translation_m[1] * pose.translation_m[1] +
+        pose.translation_m[2] * pose.translation_m[2];
+    if (!std::isfinite(squared_distance) ||
+        squared_distance > limit_meters * limit_meters) {
+        throw OutputPositionLimitExceeded{limit_meters};
+    }
+}
 
 std::string pose_row(const Pose& pose) {
     std::ostringstream out;
@@ -28,6 +53,10 @@ std::size_t payload_items(const SensorPayload& payload) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, PointCloud>) return value.points.size();
         if constexpr (std::is_same_v<T, ImageFrame>) return value.data.size();
+        if constexpr (std::is_same_v<T, GnssObservations>)
+            return value.observations.size();
+        if constexpr (std::is_same_v<T, GnssIonosphereParameters>)
+            return value.values.size();
         return 1;
     }, payload);
 }
@@ -38,7 +67,12 @@ SensorType payload_type(const SensorPayload& payload) {
         if constexpr (std::is_same_v<T, PointCloud>) return SensorType::Lidar;
         if constexpr (std::is_same_v<T, ImuSample>) return SensorType::Imu;
         if constexpr (std::is_same_v<T, ImageFrame>) return SensorType::Camera;
-        if constexpr (std::is_same_v<T, GnssFix>) return SensorType::Gnss;
+        if constexpr (std::is_same_v<T, GnssFix> ||
+                      std::is_same_v<T, GnssObservations> ||
+                      std::is_same_v<T, GnssEphemeris> ||
+                      std::is_same_v<T, GnssGlonassEphemeris> ||
+                      std::is_same_v<T, GnssIonosphereParameters> ||
+                      std::is_same_v<T, GnssReceiverPvt>) return SensorType::Gnss;
         return SensorType::WheelSpeed;
     }, payload);
 }
@@ -65,6 +99,7 @@ public:
                       "peak_memory_mb,run_mode,status,reason") {}
 
     BenchmarkOptions options;
+    double max_output_position_m{kDefaultMaxOutputPositionMeters};
     CsvWriter message_csv;
     CsvWriter realtime_pose_csv;
     CsvWriter final_trajectory_csv;
@@ -83,6 +118,7 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
                                       const BagDefinition& bag,
                                       const std::filesystem::path& algorithm_config) {
     BenchmarkSummary summary;
+    impl_->max_output_position_m = bag.max_output_position_m;
     const auto write_unsupported = [this](const InitializationResult& result) {
         std::ostringstream row;
         row << "0,0,0,0,0,0,0," << to_string(impl_->options.run_mode)
@@ -114,7 +150,13 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
 
     auto available_sensors = inspected_sensors;
     std::erase_if(available_sensors,
-                  [](const SensorDefinition& sensor) { return !sensor.available; });
+                  [](const SensorDefinition& sensor) {
+                      return !sensor.enabled || !sensor.available;
+                  });
+    std::stable_sort(available_sensors.begin(), available_sensors.end(),
+                     [](const SensorDefinition& left, const SensorDefinition& right) {
+                         return left.priority > right.priority;
+                     });
     spdlog::info("initializing {} on {}", algorithm.name(), bag.name);
     summary.initialization =
         algorithm.initialize(available_sensors, algorithm_config, *this);
@@ -126,94 +168,126 @@ BenchmarkSummary BenchmarkRunner::run(SlamAlgorithm& algorithm,
     }
 
     BagDefinition inspected_bag = bag;
-    inspected_bag.sensors = std::move(available_sensors);
-    spdlog::info("running {} on {}", algorithm.name(), bag.name);
-    reader.read(inspected_bag, [&](SensorSample&& sample) {
-        if (impl_->options.run_mode == RunMode::Realtime) {
-            if (!first_message_timestamp) {
-                first_message_timestamp = sample.timestamp_ns;
-                replay_start = std::chrono::steady_clock::now();
+    if (summary.initialization.selected_sensor_ids.empty()) {
+        inspected_bag.sensors = std::move(available_sensors);
+    } else {
+        inspected_bag.sensors.clear();
+        for (const auto& sensor : available_sensors) {
+            if (std::ranges::find(summary.initialization.selected_sensor_ids, sensor.id) !=
+                summary.initialization.selected_sensor_ids.end()) {
+                inspected_bag.sensors.push_back(sensor);
+                spdlog::info("selected {} input for {}: {} (id={}, priority={})",
+                             to_string(sensor.type), algorithm.name(), sensor.name,
+                             sensor.id, sensor.priority);
             }
-            const TimestampNs relative_timestamp =
-                sample.timestamp_ns >= *first_message_timestamp
-                    ? sample.timestamp_ns - *first_message_timestamp
-                    : 0;
-            std::this_thread::sleep_until(
-                replay_start + std::chrono::nanoseconds(relative_timestamp));
         }
-        impl_->message_csv.row(std::to_string(sample.sensor_id) + ',' +
-                               to_string(payload_type(sample.payload)) + ',' +
-                               std::to_string(sample.timestamp_ns) + ',' +
-                               std::to_string(payload_items(sample.payload)));
-
-        const double process_cpu_start = ProcessMonitor::process_cpu_time_seconds();
-        const auto process_start = std::chrono::steady_clock::now();
-        algorithm.process(sample);
-        const auto process_end = std::chrono::steady_clock::now();
-        const double process_cpu_end = ProcessMonitor::process_cpu_time_seconds();
-        const double duration_ms =
-            std::chrono::duration<double, std::milli>(process_end - process_start).count();
-        summary.algorithm_process_time_ms += duration_ms;
-        summary.algorithm_cpu_time_ms +=
-            1000.0 * std::max(0.0, process_cpu_end - process_cpu_start);
-        ++summary.message_count;
-        report_timing({sample.timestamp_ns, "total", duration_ms});
-
-        if (process_end - last_cpu_sample >= impl_->options.cpu_sample_period) {
-            const CpuUsage usage = monitor.sample();
-            const double elapsed_ms =
-                std::chrono::duration<double, std::milli>(process_end - wall_start).count();
-            std::ostringstream row;
-            row << std::setprecision(10) << elapsed_ms << ',' << usage.core_percent << ','
-                << usage.normalized_percent << ',' << usage.resident_memory_mb;
-            impl_->cpu_csv.row(row.str());
-            cpu_sum += usage.normalized_percent;
-            memory_sum += usage.resident_memory_mb;
-            peak_memory_mb = std::max(peak_memory_mb, usage.resident_memory_mb);
-            ++cpu_count;
-            last_cpu_sample = process_end;
-        }
-    });
-
-    const auto finalize_start = std::chrono::steady_clock::now();
-    algorithm.finalize();
-    const auto wall_end = std::chrono::steady_clock::now();
-    report_timing({0, "finalize", std::chrono::duration<double, std::milli>(
-                                      wall_end - finalize_start).count()});
-    summary.wall_time_ms =
-        std::chrono::duration<double, std::milli>(wall_end - wall_start).count();
-    if (cpu_count == 0) {
-        const CpuUsage usage = monitor.sample();
-        std::ostringstream row;
-        row << std::setprecision(10) << summary.wall_time_ms << ',' << usage.core_percent << ','
-            << usage.normalized_percent << ',' << usage.resident_memory_mb;
-        impl_->cpu_csv.row(row.str());
-        cpu_sum = usage.normalized_percent;
-        memory_sum = usage.resident_memory_mb;
-        peak_memory_mb = usage.resident_memory_mb;
-        cpu_count = 1;
     }
-    summary.mean_cpu_normalized_percent = cpu_count == 0 ? 0.0 : cpu_sum / cpu_count;
-    summary.mean_memory_mb = memory_sum / static_cast<double>(cpu_count);
-    summary.peak_memory_mb = peak_memory_mb;
+    spdlog::info("running {} on {}", algorithm.name(), bag.name);
+    const auto finish_summary = [&](std::string_view status, std::string_view reason,
+                                    std::chrono::steady_clock::time_point wall_end) {
+        summary.wall_time_ms =
+            std::chrono::duration<double, std::milli>(wall_end - wall_start).count();
+        if (cpu_count == 0) {
+            const CpuUsage usage = monitor.sample();
+            std::ostringstream cpu_row;
+            cpu_row << std::setprecision(10) << summary.wall_time_ms << ','
+                    << usage.core_percent << ',' << usage.normalized_percent << ','
+                    << usage.resident_memory_mb;
+            impl_->cpu_csv.row(cpu_row.str());
+            cpu_sum = usage.normalized_percent;
+            memory_sum = usage.resident_memory_mb;
+            peak_memory_mb = usage.resident_memory_mb;
+            cpu_count = 1;
+        }
+        summary.mean_cpu_normalized_percent = cpu_sum / static_cast<double>(cpu_count);
+        summary.mean_memory_mb = memory_sum / static_cast<double>(cpu_count);
+        summary.peak_memory_mb = peak_memory_mb;
 
-    std::ostringstream row;
-    row << std::setprecision(10) << summary.message_count << ',' << summary.wall_time_ms << ','
-        << summary.algorithm_process_time_ms << ',' << summary.algorithm_cpu_time_ms << ','
-        << summary.mean_cpu_normalized_percent << ',' << summary.mean_memory_mb << ','
-        << summary.peak_memory_mb << ','
-        << to_string(impl_->options.run_mode) << ",completed,";
-    impl_->summary_csv.row(row.str());
+        std::ostringstream row;
+        row << std::setprecision(10) << summary.message_count << ',' << summary.wall_time_ms << ','
+            << summary.algorithm_process_time_ms << ',' << summary.algorithm_cpu_time_ms << ','
+            << summary.mean_cpu_normalized_percent << ',' << summary.mean_memory_mb << ','
+            << summary.peak_memory_mb << ',' << to_string(impl_->options.run_mode) << ','
+            << status << ',' << csv_escape(reason);
+        impl_->summary_csv.row(row.str());
+    };
+
+    try {
+        reader.read(inspected_bag, [&](SensorSample&& sample) {
+            if (impl_->options.run_mode == RunMode::Realtime) {
+                if (!first_message_timestamp) {
+                    first_message_timestamp = sample.timestamp_ns;
+                    replay_start = std::chrono::steady_clock::now();
+                }
+                const TimestampNs relative_timestamp =
+                    sample.timestamp_ns >= *first_message_timestamp
+                        ? sample.timestamp_ns - *first_message_timestamp
+                        : 0;
+                std::this_thread::sleep_until(
+                    replay_start + std::chrono::nanoseconds(relative_timestamp));
+            }
+            impl_->message_csv.row(std::to_string(sample.sensor_id) + ',' +
+                                   to_string(payload_type(sample.payload)) + ',' +
+                                   std::to_string(sample.timestamp_ns) + ',' +
+                                   std::to_string(payload_items(sample.payload)));
+
+            const double process_cpu_start = ProcessMonitor::process_cpu_time_seconds();
+            const auto process_start = std::chrono::steady_clock::now();
+            algorithm.process(sample);
+            const auto process_end = std::chrono::steady_clock::now();
+            const double process_cpu_end = ProcessMonitor::process_cpu_time_seconds();
+            const double duration_ms = std::chrono::duration<double, std::milli>(
+                                           process_end - process_start).count();
+            summary.algorithm_process_time_ms += duration_ms;
+            summary.algorithm_cpu_time_ms +=
+                1000.0 * std::max(0.0, process_cpu_end - process_cpu_start);
+            ++summary.message_count;
+            report_timing({sample.timestamp_ns, "total", duration_ms});
+
+            if (process_end - last_cpu_sample >= impl_->options.cpu_sample_period) {
+                const CpuUsage usage = monitor.sample();
+                const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                                              process_end - wall_start).count();
+                std::ostringstream row;
+                row << std::setprecision(10) << elapsed_ms << ',' << usage.core_percent << ','
+                    << usage.normalized_percent << ',' << usage.resident_memory_mb;
+                impl_->cpu_csv.row(row.str());
+                cpu_sum += usage.normalized_percent;
+                memory_sum += usage.resident_memory_mb;
+                peak_memory_mb = std::max(peak_memory_mb, usage.resident_memory_mb);
+                ++cpu_count;
+                last_cpu_sample = process_end;
+            }
+        });
+
+        const auto finalize_start = std::chrono::steady_clock::now();
+        algorithm.finalize();
+        const auto wall_end = std::chrono::steady_clock::now();
+        report_timing({0, "finalize", std::chrono::duration<double, std::milli>(
+                                          wall_end - finalize_start).count()});
+        finish_summary("completed", "", wall_end);
+    } catch (const OutputPositionLimitExceeded& error) {
+        summary.failed = true;
+        summary.failure_reason = error.what();
+        finish_summary("failed", summary.failure_reason, std::chrono::steady_clock::now());
+        spdlog::error("{} on {} failed: {}", algorithm.name(), bag.name,
+                      summary.failure_reason);
+        return summary;
+    }
+
     spdlog::info("finished {} messages in {:.3f} ms", summary.message_count,
                  summary.wall_time_ms);
     return summary;
 }
 
 void BenchmarkRunner::report_realtime_pose(const Pose& pose) {
+    validate_pose_position(pose, impl_->max_output_position_m);
     impl_->realtime_pose_csv.row(pose_row(pose));
 }
 
 void BenchmarkRunner::report_final_trajectory(std::span<const Pose> trajectory) {
+    for (const Pose& pose : trajectory)
+        validate_pose_position(pose, impl_->max_output_position_m);
     for (const Pose& pose : trajectory) impl_->final_trajectory_csv.row(pose_row(pose));
 }
 

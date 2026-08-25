@@ -8,6 +8,9 @@
 #include <cstddef>
 #include <cstring>
 #include <filesystem>
+#include <algorithm>
+#include <array>
+#include <sstream>
 #include <string_view>
 #include <stdexcept>
 #include <type_traits>
@@ -71,9 +74,91 @@ std::vector<std::byte> point_cloud_cdr() {
     return serialization::serialize_cdr(cloud);
 }
 
+template <typename T>
+void append_ros1(std::vector<std::byte>& data, const T& value) {
+    static_assert(std::is_trivially_copyable_v<T>);
+    const auto offset = data.size();
+    data.resize(offset + sizeof(T));
+    std::memcpy(data.data() + offset, &value, sizeof(T));
+}
+
+template <typename T>
+void append_ros1_vector(std::vector<std::byte>& data,
+                        std::initializer_list<T> values) {
+    append_ros1(data, static_cast<std::uint32_t>(values.size()));
+    for (const auto value : values) append_ros1(data, value);
+}
+
+std::vector<std::byte> gnss_observations_ros1() {
+    std::vector<std::byte> data;
+    append_ros1(data, std::uint32_t{1});  // one satellite
+    append_ros1(data, std::uint32_t{2200});
+    append_ros1(data, 123.5);
+    append_ros1(data, std::uint32_t{7});
+    append_ros1_vector<double>(data, {1575.42e6});
+    append_ros1_vector<double>(data, {45.0});
+    append_ros1_vector<std::uint8_t>(data, {0});
+    append_ros1_vector<std::uint8_t>(data, {1});
+    append_ros1_vector<double>(data, {20'000'001.0});
+    append_ros1_vector<double>(data, {0.5});
+    append_ros1_vector<double>(data, {100.0});
+    append_ros1_vector<double>(data, {0.01});
+    append_ros1_vector<double>(data, {-1000.0});
+    append_ros1_vector<double>(data, {0.1});
+    append_ros1_vector<std::uint8_t>(data, {3});
+    return data;
+}
+
+void probe_gnss_dataset(const std::filesystem::path& manifest_path,
+                        const std::string& bag_name) {
+    const auto manifest = load_dataset_manifest(manifest_path);
+    BagDefinition bag = find_bag(manifest, bag_name);
+    std::erase_if(bag.sensors, [](const SensorDefinition& sensor) {
+        return sensor.type != SensorType::Gnss;
+    });
+    RosbagDatasetReader reader;
+    bag.sensors = reader.inspect(bag);
+    std::array<bool, 5> expected{};
+    for (const auto& sensor : bag.sensors) {
+        if (!sensor.available) continue;
+        const auto& message_type = bag.sensor_inputs.at(sensor.id).message_type;
+        if (message_type.ends_with("GnssMeasMsg")) expected[0] = true;
+        if (message_type.ends_with("GnssEphemMsg")) expected[1] = true;
+        if (message_type.ends_with("GnssGloEphemMsg")) expected[2] = true;
+        if (message_type.ends_with("StampedFloat64Array")) expected[3] = true;
+        if (message_type.ends_with("GnssPVTSolnMsg")) expected[4] = true;
+    }
+    std::erase_if(bag.sensors, [](const SensorDefinition& sensor) {
+        return !sensor.available;
+    });
+    std::array<std::size_t, 5> counts{};
+    reader.read(bag, [&](SensorSample&& sample) {
+        if (std::holds_alternative<GnssObservations>(sample.payload)) ++counts[0];
+        if (std::holds_alternative<GnssEphemeris>(sample.payload)) ++counts[1];
+        if (std::holds_alternative<GnssGlonassEphemeris>(sample.payload)) ++counts[2];
+        if (std::holds_alternative<GnssIonosphereParameters>(sample.payload)) ++counts[3];
+        if (std::holds_alternative<GnssReceiverPvt>(sample.payload)) ++counts[4];
+    });
+    bool missing = false;
+    for (std::size_t index = 0; index < counts.size(); ++index)
+        missing = missing || (expected[index] && counts[index] == 0);
+    if (missing) {
+        std::ostringstream reason;
+        reason << "GNSS probe counts observations=" << counts[0]
+               << ", ephemeris=" << counts[1] << ", glonass=" << counts[2]
+               << ", ionosphere=" << counts[3] << ", pvt=" << counts[4];
+        throw std::runtime_error(reason.str());
+    }
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 3) {
+        probe_gnss_dataset(argv[1], argv[2]);
+        return 0;
+    }
+    expect(argc == 1);
     const auto path = std::filesystem::temp_directory_path() / "slam_benchmark_gnss.mcap";
     {
         rosbag_io::WriterOptions options;
@@ -99,18 +184,17 @@ int main() {
     sensor.id = 5;
     sensor.name = "gnss";
     sensor.type = SensorType::Gnss;
-    sensor.topic = "/fix";
-    sensor.message_type = "sensor_msgs/msg/NavSatFix";
     SensorDefinition lidar;
     lidar.id = 6;
     lidar.name = "lidar";
     lidar.type = SensorType::Lidar;
-    lidar.topic = "/points";
-    lidar.message_type = "sensor_msgs/msg/PointCloud2";
     lidar.point_time_field = "time";
     lidar.intensity_field = "reflectivity";
     lidar.point_time_to_nanoseconds = 1e9;
-    BagDefinition bag{"sensors", path, {sensor, lidar}};
+    BagDefinition bag{
+        "sensors", path, {sensor, lidar},
+        {{5, {"/fix", "sensor_msgs/msg/NavSatFix"}},
+         {6, {"/points", "sensor_msgs/msg/PointCloud2"}}}};
     RosbagDatasetReader reader;
     const auto inspected = reader.inspect(bag);
     expect(inspected.size() == 2);
@@ -143,8 +227,45 @@ int main() {
     });
     expect(count == 2);
 
+    const auto raw_gnss_path =
+        std::filesystem::temp_directory_path() / "slam_benchmark_raw_gnss.mcap";
+    {
+        rosbag_io::WriterOptions options;
+        options.format = rosbag_io::BagFormat::Mcap;
+        options.compression = rosbag_io::Compression::None;
+        rosbag_io::Writer writer(raw_gnss_path.string(), options);
+        rosbag_io::TopicMetadata observations_topic;
+        observations_topic.name = "/observations";
+        observations_topic.type = "gnss_comm/GnssMeasMsg";
+        observations_topic.serialization_format = "ros1";
+        writer.add_topic(observations_topic);
+        writer.write({.topic_name = "/observations",
+                      .receive_timestamp = 125000000000ULL,
+                      .send_timestamp = 125000000000ULL,
+                      .data = gnss_observations_ros1()});
+        writer.close();
+    }
+    SensorDefinition observations_sensor;
+    observations_sensor.id = 7;
+    observations_sensor.name = "raw GNSS observations";
+    observations_sensor.type = SensorType::Gnss;
+    BagDefinition raw_gnss_bag{
+        "raw_gnss", raw_gnss_path, {observations_sensor},
+        {{7, {"/observations", "gnss_comm/GnssMeasMsg"}}}};
+    const auto inspected_raw_gnss = reader.inspect(raw_gnss_bag);
+    expect(inspected_raw_gnss.front().available);
+    reader.read(raw_gnss_bag, [](SensorSample&& sample) {
+        const auto& observations = std::get<GnssObservations>(sample.payload);
+        expect(observations.observations.size() == 1);
+        expect(observations.observations.front().satellite == 7);
+        expect(observations.observations.front().pseudoranges_m.front() ==
+               20'000'001.0);
+    });
+
     lidar.intensity_field = "missing_intensity";
-    BagDefinition missing_intensity{"missing_intensity", path, {lidar}};
+    BagDefinition missing_intensity{
+        "missing_intensity", path, {lidar},
+        {{6, {"/points", "sensor_msgs/msg/PointCloud2"}}}};
     missing_intensity.sensors = reader.inspect(missing_intensity);
     expect(!missing_intensity.sensors[0].provides_intensity);
     expect(!check_dataset_compatibility(
@@ -155,4 +276,5 @@ int main() {
     });
 
     std::filesystem::remove(path);
+    std::filesystem::remove(raw_gnss_path);
 }

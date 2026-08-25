@@ -9,7 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from project import download_path, repository_for, selected_algorithms
+from project import (ROOT, DependencyRepository, dependency_repositories,
+                     download_path, repository_for, selected_algorithms)
 
 
 def run(command: list[str], cwd: Path | None = None) -> None:
@@ -17,8 +18,7 @@ def run(command: list[str], cwd: Path | None = None) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
-def download(name: str, refresh: bool) -> None:
-    repository = repository_for(name)
+def clone(repository, destination: Path, refresh: bool) -> None:
     source = repository.url
     configured_local_path = (
         os.environ.get(repository.local_path_env, "")
@@ -32,7 +32,6 @@ def download(name: str, refresh: bool) -> None:
     if not source:
         variable = repository.local_path_env or "the configured local path"
         raise RuntimeError(f"no upstream source is available; set {variable}")
-    destination = download_path(name)
     if destination.exists() and not (destination / ".git").is_dir():
         raise RuntimeError(f"refusing to overwrite non-git directory: {destination}")
     created = not destination.exists()
@@ -54,6 +53,34 @@ def download(name: str, refresh: bool) -> None:
     elif not created:
         run(["git", "checkout", "--detach", "HEAD"], destination)
     run(["git", "submodule", "update", "--init", "--recursive", "--depth", "1"], destination)
+
+
+def apply_dependency_patches(name: str, dependency: DependencyRepository,
+                             destination: Path) -> None:
+    for relative in dependency.patches:
+        patch = ROOT / "algorithm" / name / relative
+        if not patch.is_file():
+            raise RuntimeError(f"dependency patch does not exist: {patch}")
+        forward = subprocess.run(
+            ["git", "apply", "--check", str(patch)], cwd=destination,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if forward.returncode == 0:
+            run(["git", "apply", str(patch)], destination)
+            continue
+        reverse = subprocess.run(
+            ["git", "apply", "--reverse", "--check", str(patch)], cwd=destination,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if reverse.returncode != 0:
+            raise RuntimeError(f"{patch} does not apply to {destination}")
+        print(f"{patch}: already applied")
+
+
+def download(name: str, refresh: bool) -> None:
+    clone(repository_for(name), download_path(name), refresh)
+    for dependency in dependency_repositories(name):
+        destination = ROOT / "algorithm" / name / "source" / dependency.directory
+        clone(dependency.repository, destination, refresh)
+        apply_dependency_patches(name, dependency, destination)
 
 
 def main() -> int:

@@ -317,8 +317,8 @@ index 0000000..d879c65
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
-+                                         &slam_benchmark::SensorDefinition::type);
++    const auto lidar = compatibility.selected_sensor(
++        sensors, slam_benchmark::SensorType::Lidar);
 +    if (lidar == sensors.end()) throw std::runtime_error("VoxelMap requires a LiDAR");
 +    sink_ = &sink;
 +    lidar_id_ = lidar->id;
@@ -364,7 +364,7 @@ index 0000000..d879c65
 +                 options.scan_filter_size_m, options.map_voxel_size_m,
 +                 options.max_iterations, parallel_threads);
 +    spdlog::info("VoxelMap standalone adapter initialized");
-+    return {};
++    return compatibility;
 +}
 +
 +void VoxelMapAdapter::process(const slam_benchmark::SensorSample& sample) {

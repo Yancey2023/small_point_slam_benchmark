@@ -488,10 +488,10 @@ index 0000000..fda0785
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
-+                                         &slam_benchmark::SensorDefinition::type);
-+    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
-+                                       &slam_benchmark::SensorDefinition::type);
++    const auto lidar = compatibility.selected_sensor(sensors,
++                                                      slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors,
++                                                    slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
 +        throw std::runtime_error("Point-LIO requires one LiDAR and one IMU");
 +    sink_ = &sink;
@@ -531,7 +531,7 @@ index 0000000..fda0785
 +    G_m_s2 = kf_input.x_.gravity.norm();
 +    process_covariance_ = process_noise_cov_input();
 +    spdlog::info("Point-LIO standalone adapter initialized");
-+    return {};
++    return compatibility;
 +}
 +
 +void PointLioAdapter::process(const slam_benchmark::SensorSample& sample) {

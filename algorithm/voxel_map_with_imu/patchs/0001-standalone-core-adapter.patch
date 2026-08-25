@@ -318,10 +318,10 @@ index 0000000..fd5f846
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
-+                                         &slam_benchmark::SensorDefinition::type);
-+    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
-+                                       &slam_benchmark::SensorDefinition::type);
++    const auto lidar = compatibility.selected_sensor(sensors,
++                                                      slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors,
++                                                    slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
 +        throw std::runtime_error("VoxelMap requires one LiDAR and one IMU");
 +    sink_ = &sink;
@@ -374,7 +374,7 @@ index 0000000..fd5f846
 +                 "iterations={}, compute threads={}", options.scan_filter_size_m,
 +                 options.map_voxel_size_m, options.max_iterations, parallel_threads);
 +    spdlog::info("VoxelMap (with imu) standalone adapter initialized");
-+    return {};
++    return compatibility;
 +}
 +
 +void VoxelMapAdapter::process(const slam_benchmark::SensorSample& sample) {

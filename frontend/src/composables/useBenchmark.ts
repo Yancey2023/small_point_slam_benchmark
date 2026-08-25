@@ -17,6 +17,7 @@ export function useBenchmark() {
   const error = ref<string | null>(null)
   let selectionsInitialized = false
   let stopObserving: (() => void) | null = null
+  let resultsRefreshVersion = 0
 
   const canRun = computed(
     () =>
@@ -71,10 +72,14 @@ export function useBenchmark() {
   }
 
   async function refreshResults(): Promise<void> {
+    const version = ++resultsRefreshVersion
     try {
-      results.value = (await fetchResults()).results
+      const refreshed = await fetchResults()
+      if (version === resultsRefreshVersion) results.value = refreshed.results
     } catch (reason) {
-      error.value = reason instanceof Error ? reason.message : String(reason)
+      if (version === resultsRefreshVersion) {
+        error.value = reason instanceof Error ? reason.message : String(reason)
+      }
     }
   }
 

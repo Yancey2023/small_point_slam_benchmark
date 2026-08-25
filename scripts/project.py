@@ -33,6 +33,13 @@ class Repository:
     local_path_env: str | None = None
 
 
+@dataclass(frozen=True)
+class DependencyRepository:
+    repository: Repository
+    directory: str
+    patches: tuple[str, ...] = ()
+
+
 def load_yaml(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as stream:
         value = yaml.safe_load(stream)
@@ -47,8 +54,17 @@ def algorithm_manifest(name: str) -> dict[str, Any]:
     return load_yaml(ROOT / "algorithm" / name / "manifest.yaml")
 
 
+def source_owner(name: str) -> str:
+    """Resolve an algorithm profile that reuses another adapter source tree."""
+    owner = str(algorithm_manifest(name).get("shared_source", name))
+    if owner not in SUPPORTED_ALGORITHMS:
+        raise ValueError(f"{name} has unsupported shared_source: {owner}")
+    return owner
+
+
 def repository_for(name: str) -> Repository:
-    raw = algorithm_manifest(name).get("repository")
+    owner = source_owner(name)
+    raw = algorithm_manifest(owner).get("repository")
     if not isinstance(raw, dict):
         raise ValueError(f"algorithm/{name}/manifest.yaml has no repository mapping")
     repository = Repository(
@@ -66,6 +82,40 @@ def repository_for(name: str) -> Repository:
     return repository
 
 
+def dependency_repositories(name: str) -> tuple[DependencyRepository, ...]:
+    owner = source_owner(name)
+    raw_dependencies = algorithm_manifest(owner).get("dependencies", [])
+    if not isinstance(raw_dependencies, list):
+        raise ValueError(f"algorithm/{name}/manifest.yaml dependencies must be a list")
+    result: list[DependencyRepository] = []
+    for raw in raw_dependencies:
+        if not isinstance(raw, dict):
+            raise ValueError(f"algorithm/{name}/manifest.yaml has an invalid dependency")
+        # Existing manifests may list system/package dependencies for
+        # documentation only. A pinned ref opts a dependency into source
+        # download and patch management.
+        if "ref" not in raw:
+            if "directory" in raw or "patches" in raw:
+                raise ValueError(
+                    f"algorithm/{name}/manifest.yaml managed dependency needs ref")
+            continue
+        url = str(raw.get("url", ""))
+        directory = str(raw.get("directory", Path(url.removesuffix(".git")).name))
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", directory):
+            raise ValueError(f"unsafe dependency directory: {directory!r}")
+        patches = raw.get("patches", [])
+        if not isinstance(patches, list) or not all(isinstance(item, str) for item in patches):
+            raise ValueError(f"invalid dependency patches for {directory}")
+        for patch in patches:
+            path = Path(patch)
+            if path.is_absolute() or ".." in path.parts:
+                raise ValueError(f"unsafe dependency patch: {patch!r}")
+        result.append(DependencyRepository(
+            Repository(str(raw["name"]), url, str(raw["ref"])),
+            directory, tuple(patches)))
+    return tuple(result)
+
+
 def selected_algorithms(names: list[str]) -> list[str]:
     result = list(SUPPORTED_ALGORITHMS) if not names else names
     invalid = sorted(set(result) - set(SUPPORTED_ALGORITHMS))
@@ -75,12 +125,14 @@ def selected_algorithms(names: list[str]) -> list[str]:
 
 
 def download_path(name: str) -> Path:
-    return ROOT / "algorithm_downloads" / name / repository_for(name).name
+    owner = source_owner(name)
+    return ROOT / "algorithm_downloads" / owner / repository_for(owner).name
 
 
 def source_path(name: str) -> Path:
-    return ROOT / "algorithm" / name / "source" / repository_for(name).name
+    owner = source_owner(name)
+    return ROOT / "algorithm" / owner / "source" / repository_for(owner).name
 
 
 def patch_directory(name: str) -> Path:
-    return ROOT / "algorithm" / name / "patchs"
+    return ROOT / "algorithm" / source_owner(name) / "patchs"

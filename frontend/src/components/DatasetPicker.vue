@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import type { DatasetCatalogItem } from '../../shared/contracts'
 
@@ -9,19 +9,46 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: string[]] }>()
-const availableIds = computed(() =>
-  props.datasets.filter((dataset) => dataset.sourceAvailable).map((dataset) => dataset.id),
+const selectedDatasetName = ref<string | null>(null)
+const datasetGroups = computed(() => {
+  const groups = new Map<string, DatasetCatalogItem[]>()
+  for (const dataset of props.datasets) {
+    const bags = groups.get(dataset.datasetName) ?? []
+    bags.push(dataset)
+    groups.set(dataset.datasetName, bags)
+  }
+  return [...groups].map(([name, bags]) => ({ name, bags }))
+})
+const activeGroup = computed(() => datasetGroups.value
+  .find((group) => group.name === selectedDatasetName.value) ?? null)
+const activeAvailableIds = computed(() => activeGroup.value?.bags
+  .filter((bag) => bag.sourceAvailable)
+  .map((bag) => bag.id) ?? [])
+const allActiveSelected = computed(() =>
+  activeAvailableIds.value.length > 0 &&
+  activeAvailableIds.value.every((id) => props.modelValue.includes(id)),
 )
-const allSelected = computed(() =>
-  availableIds.value.length > 0 && availableIds.value.every((id) => props.modelValue.includes(id)),
+
+watch(
+  datasetGroups,
+  (groups) => {
+    if (!groups.some((group) => group.name === selectedDatasetName.value)) {
+      selectedDatasetName.value = groups[0]?.name ?? null
+    }
+  },
+  { immediate: true },
 )
 
 function toggle(id: string, checked: boolean, current: string[]): void {
   emit('update:modelValue', checked ? [...current, id] : current.filter((item) => item !== id))
 }
 
-function toggleAll(): void {
-  emit('update:modelValue', allSelected.value ? [] : availableIds.value)
+function toggleActiveBags(): void {
+  const activeIds = new Set(activeAvailableIds.value)
+  const otherSelections = props.modelValue.filter((id) => !activeIds.has(id))
+  emit('update:modelValue', allActiveSelected.value
+    ? otherSelections
+    : [...otherSelections, ...activeAvailableIds.value])
 }
 </script>
 
@@ -31,43 +58,77 @@ function toggleAll(): void {
       <span class="step-badge">1</span>
       <div>
         <h2 id="dataset-title">挑选数据集</h2>
-        <p>可以一次安排多组数据，任务会依次运行</p>
+        <p>先选择数据集，再勾选该数据集中的 bag</p>
       </div>
       <div class="heading-actions">
-        <button type="button" @click="toggleAll">{{ allSelected ? '清空' : '全选' }}</button>
         <span class="selection-count">{{ modelValue.length }} 已选</span>
       </div>
     </div>
 
-    <div v-if="datasets.length" class="dataset-list">
-      <label
-        v-for="dataset in datasets"
-        :key="dataset.id"
-        class="dataset-option"
-        :class="{ selected: modelValue.includes(dataset.id), unavailable: !dataset.sourceAvailable }"
-      >
-        <input
-          type="checkbox"
-          :checked="modelValue.includes(dataset.id)"
-          :disabled="!dataset.sourceAvailable"
-          @change="toggle(dataset.id, ($event.target as HTMLInputElement).checked, modelValue)"
-        />
-        <span class="checkmark" aria-hidden="true">✓</span>
-        <span class="dataset-icon" aria-hidden="true">⌁</span>
-        <span class="dataset-copy">
-          <strong>{{ dataset.datasetName }}</strong>
-          <span>{{ dataset.bagName }}</span>
+    <div v-if="datasets.length" class="hierarchy">
+      <div class="level-label"><span>1</span> 数据集</div>
+      <div class="dataset-menu" role="tablist" aria-label="选择数据集">
+        <button
+          v-for="group in datasetGroups"
+          :key="group.name"
+          type="button"
+          role="tab"
+          :aria-selected="selectedDatasetName === group.name"
+          :class="{ active: selectedDatasetName === group.name }"
+          @click="selectedDatasetName = group.name"
+        >
+          <strong>{{ group.name }}</strong>
           <small>
-            {{ dataset.sensorTypes.join(' + ') }}
-            <template v-if="dataset.expectedMessages">
-              · {{ dataset.expectedMessages.toLocaleString() }} 条消息
+            {{ group.bags.length }} 个 bag
+            <template v-if="group.bags.some((bag) => modelValue.includes(bag.id))">
+              · {{ group.bags.filter((bag) => modelValue.includes(bag.id)).length }} 已选
             </template>
           </small>
-        </span>
-        <span class="availability" :class="{ ready: dataset.sourceAvailable }">
-          {{ dataset.sourceAvailable ? '已就绪' : '缺少文件' }}
-        </span>
-      </label>
+        </button>
+      </div>
+
+      <div class="bag-heading">
+        <div class="level-label"><span>2</span> Bag</div>
+        <button type="button" @click="toggleActiveBags">
+          {{ allActiveSelected ? '清空当前' : '全选当前' }}
+        </button>
+      </div>
+      <div class="bag-list">
+        <label
+          v-for="dataset in activeGroup?.bags ?? []"
+          :key="dataset.id"
+          class="bag-option"
+          :class="{ selected: modelValue.includes(dataset.id), unavailable: !dataset.sourceAvailable }"
+        >
+          <input
+            type="checkbox"
+            :checked="modelValue.includes(dataset.id)"
+            :disabled="!dataset.sourceAvailable"
+            @change="toggle(dataset.id, ($event.target as HTMLInputElement).checked, modelValue)"
+          />
+          <span class="checkmark" aria-hidden="true">✓</span>
+          <span class="bag-icon" aria-hidden="true">⌁</span>
+          <span class="bag-copy">
+            <strong>{{ dataset.bagName }}</strong>
+            <span class="sensor-list" aria-label="传感器清单">
+              <span
+                v-for="sensor in dataset.sensorNames ?? dataset.sensorTypes"
+                :key="sensor"
+              >{{ sensor }}</span>
+            </span>
+            <small>
+              {{ dataset.sensorTypes.join(' + ') }}
+              <template v-if="dataset.hasGroundTruth"> · GT</template>
+              <template v-if="dataset.expectedMessages">
+                · {{ dataset.expectedMessages.toLocaleString() }} 条消息
+              </template>
+            </small>
+          </span>
+          <span class="availability" :class="{ ready: dataset.sourceAvailable }">
+            {{ dataset.sourceAvailable ? '已就绪' : '缺少文件' }}
+          </span>
+        </label>
+      </div>
     </div>
     <p v-else class="empty">还没有发现数据集 manifest。</p>
   </section>
@@ -121,14 +182,19 @@ function toggleAll(): void {
   font-weight: 700;
 }
 .heading-actions { display: flex; align-items: center; gap: 7px; margin-left: auto; }
-.heading-actions button { padding: 6px 9px; border: 0; border-radius: 9px; color: #5d7480; background: #e5edee; cursor: pointer; font-size: 11px; font-weight: 800; }
-
-.dataset-list {
-  display: grid;
-  gap: 10px;
-}
-
-.dataset-option {
+.hierarchy { display: grid; gap: 12px; }
+.level-label { display: flex; align-items: center; gap: 7px; color: #68797f; font-size: 11px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.level-label span { display: grid; width: 19px; height: 19px; place-items: center; border-radius: 7px; color: #557789; background: #e2ecef; font-size: 10px; }
+.dataset-menu { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.dataset-menu button { display: grid; gap: 2px; padding: 11px 13px; border: 1px solid #dfe5e3; border-radius: 14px; color: var(--ink); background: #fbfcfa; cursor: pointer; text-align: left; }
+.dataset-menu button:hover { border-color: #adc3cd; }
+.dataset-menu button.active { border-color: #91afbd; background: #edf4f5; box-shadow: 0 6px 16px rgba(82, 111, 128, .08); }
+.dataset-menu strong { font-size: 13px; }
+.dataset-menu small { color: var(--ink-muted); font-size: 10px; }
+.bag-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+.bag-heading > button { padding: 6px 9px; border: 0; border-radius: 9px; color: #5d7480; background: #e5edee; cursor: pointer; font-size: 11px; font-weight: 800; }
+.bag-list { display: grid; gap: 8px; }
+.bag-option {
   position: relative;
   display: flex;
   min-height: 76px;
@@ -142,18 +208,18 @@ function toggleAll(): void {
   transition: 160ms ease;
 }
 
-.dataset-option:hover:not(.unavailable) {
+.bag-option:hover:not(.unavailable) {
   border-color: #adc3cd;
   transform: translateY(-1px);
 }
 
-.dataset-option.selected {
+.bag-option.selected {
   border-color: #91afbd;
   background: #f0f5f6;
   box-shadow: 0 8px 22px rgba(82, 111, 128, 0.1);
 }
 
-.dataset-option.unavailable {
+.bag-option.unavailable {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -188,7 +254,7 @@ input:checked + .checkmark {
   background: #66899a;
 }
 
-.dataset-icon {
+.bag-icon {
   display: grid;
   width: 43px;
   height: 43px;
@@ -201,23 +267,23 @@ input:checked + .checkmark {
   font-weight: 700;
 }
 
-.dataset-copy {
+.bag-copy {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-.dataset-copy strong,
-.dataset-copy span,
-.dataset-copy small {
+.bag-copy strong,
+.bag-copy small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dataset-copy strong { font-size: 14px; }
-.dataset-copy span { color: var(--ink-soft); font-size: 13px; }
-.dataset-copy small { color: var(--ink-muted); font-size: 11px; }
+.bag-copy strong { font-size: 14px; }
+.bag-copy small { color: var(--ink-muted); font-size: 11px; }
+.sensor-list { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0; }
+.sensor-list span { padding: 3px 6px; border-radius: 7px; color: #526f80; background: #e8eff1; font-size: 9px; font-weight: 700; line-height: 1.2; }
 
 .availability {
   margin-left: auto;

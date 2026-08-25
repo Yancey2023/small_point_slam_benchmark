@@ -48,8 +48,9 @@ slam_benchmark::InitializationResult Adapter::initialize(
 }
 ```
 
-只使用 LiDAR 的算法不要声明不需要的 IMU/GNSS/逐点时间/强度。需要原始 GNSS 的算法应设置
-`.gnss = true`，依赖强度观测的算法应设置 `.intensity = true`。配置损坏、内部不变量失败等
+只使用 LiDAR 的算法不要声明不需要的 IMU/GNSS/逐点时间/强度。只需要一个优先 GNSS
+输入的算法设置 `.gnss = true`；需要原始观测、星历、PVT 等完整 GNSS 输入组的算法同时设置
+`.all_gnss = true`。依赖强度观测的算法应设置 `.intensity = true`。配置损坏、内部不变量失败等
 程序错误仍应抛异常，与数据集不兼容区分开。
 
 ## 传感器外参
@@ -94,6 +95,10 @@ python scripts/patch_algorithms.py apply <name>
 python scripts/patch_algorithms.py generate <name>
 python scripts/patch_algorithms.py check <name>
 ```
+
+manifest 中声明的第三方 `dependencies` 会由下载脚本按固定 commit 放入算法的 `source`
+目录；如依赖本身需要编译器兼容修复，可声明 `directory` 和 `patches`。算法主仓库的移植
+差异仍只由 `patch_algorithms.py` 管理。
 
 `generate` 使用 `git diff --no-index --binary`，生成标准 Git patch，并把两棵工作目录前缀
 归一化成 `a/` 和 `b/`。因此 patch 可直接在上游仓库根目录用 `git apply` 检查和应用。

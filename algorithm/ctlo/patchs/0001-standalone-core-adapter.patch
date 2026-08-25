@@ -250,9 +250,9 @@ index 0000000..8ed17e3
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = std::ranges::find(
-+        sensors, slam_benchmark::SensorType::Lidar,
-+        &slam_benchmark::SensorDefinition::type);
++    const auto lidar = compatibility.selected_sensor(
++        sensors,
++        slam_benchmark::SensorType::Lidar);
 +    if (lidar == sensors.end()) {
 +        throw std::runtime_error("CTLO requires one LiDAR");
 +    }
@@ -280,7 +280,7 @@ index 0000000..8ed17e3
 +    });
 +    spdlog::info("CTLO standalone adapter initialized with {} OpenMP compute threads",
 +                 parallel_threads);
-+    return {};
++    return compatibility;
 +}
 +
 +void CtloAdapter::process(const slam_benchmark::SensorSample& sample) {

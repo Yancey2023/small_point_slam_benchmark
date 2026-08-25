@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import type { Readable } from 'node:stream'
@@ -14,6 +14,7 @@ interface InternalJob extends RunJob {
   configPath: string
   executablePath: string
   absoluteOutputDirectory: string
+  executionOutputDirectory: string
 }
 
 interface InternalRun {
@@ -33,10 +34,37 @@ function publicSnapshot(run: InternalRun): RunSnapshot {
     ...run.snapshot,
     jobs: run.jobs.map(
       ({ manifestPath: _manifest, configPath: _config, executablePath: _executable,
-        absoluteOutputDirectory: _output, ...job }) => ({ ...job }),
+        absoluteOutputDirectory: _output, executionOutputDirectory: _execution, ...job }) => ({ ...job }),
     ),
     logs: [...run.snapshot.logs],
   }
+}
+
+async function exists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function promoteResultDirectory(
+  stagedDirectory: string,
+  outputDirectory: string,
+  backupSuffix: string,
+): Promise<void> {
+  const backupDirectory = `${outputDirectory}.backup-${backupSuffix}`
+  await rm(backupDirectory, { force: true, recursive: true })
+  const hadPreviousResult = await exists(outputDirectory)
+  if (hadPreviousResult) await rename(outputDirectory, backupDirectory)
+  try {
+    await rename(stagedDirectory, outputDirectory)
+  } catch (error) {
+    if (hadPreviousResult) await rename(backupDirectory, outputDirectory)
+    throw error
+  }
+  if (hadPreviousResult) await rm(backupDirectory, { force: true, recursive: true })
 }
 
 async function countCsvRows(filePath: string): Promise<number> {
@@ -92,6 +120,45 @@ export async function readRunCompatibility(outputDirectory: string): Promise<{
   }
 }
 
+async function readRunOutcome(outputDirectory: string): Promise<{
+  status: string | null
+  reason: string | null
+}> {
+  try {
+    const [header = '', row = ''] = (await readFile(
+      path.join(outputDirectory, 'summary.csv'),
+      'utf8',
+    )).split(/\r?\n/)
+    const headers = parseCsvRow(header)
+    const values = parseCsvRow(row)
+    return {
+      status: values[headers.indexOf('status')] || null,
+      reason: values[headers.indexOf('reason')]?.trim() || null,
+    }
+  } catch {
+    return { status: null, reason: null }
+  }
+}
+
+async function keepFailureSummaryOnly(outputDirectory: string): Promise<void> {
+  const entries = await readdir(outputDirectory, { withFileTypes: true })
+  await Promise.all(entries
+    .filter((entry) => entry.name !== 'summary.csv')
+    .map((entry) => rm(path.join(outputDirectory, entry.name), {
+      force: true,
+      recursive: entry.isDirectory(),
+    })))
+}
+
+export async function promoteFailedResultDirectory(
+  stagedDirectory: string,
+  outputDirectory: string,
+  backupSuffix: string,
+): Promise<void> {
+  await keepFailureSummaryOnly(stagedDirectory)
+  await promoteResultDirectory(stagedDirectory, outputDirectory, backupSuffix)
+}
+
 export class RunManager {
   private readonly runs = new Map<string, InternalRun>()
 
@@ -118,12 +185,13 @@ export class RunManager {
         if (!algorithm) throw new Error(`未知算法：${algorithmId}`)
         if (!algorithm.executablePath) throw new Error(`${algorithm.name} 尚未构建`)
         const relativeOutput = relativeResultDirectory(
-          catalog.datasets.values(),
           dataset,
-          algorithm.id,
+          algorithm.name,
         )
+        const jobId = randomUUID()
+        const absoluteOutputDirectory = path.join(this.projectRoot, relativeOutput)
         jobs.push({
-          id: randomUUID(),
+          id: jobId,
           datasetId,
           datasetName: dataset.datasetName,
           bagName: dataset.bagName,
@@ -143,7 +211,8 @@ export class RunManager {
           manifestPath: dataset.manifestPath,
           configPath: algorithm.configPath,
           executablePath: algorithm.executablePath,
-          absoluteOutputDirectory: path.join(this.projectRoot, relativeOutput),
+          absoluteOutputDirectory,
+          executionOutputDirectory: `${absoluteOutputDirectory}.running-${jobId}`,
         })
       }
     }
@@ -261,7 +330,8 @@ export class RunManager {
   }
 
   private async executeJob(run: InternalRun, job: InternalJob): Promise<void> {
-    await mkdir(job.absoluteOutputDirectory, { recursive: true })
+    await rm(job.executionOutputDirectory, { force: true, recursive: true })
+    await mkdir(job.executionOutputDirectory, { recursive: true })
     job.status = 'running'
     job.startedAt = new Date().toISOString()
     run.snapshot.logs.push(
@@ -273,7 +343,7 @@ export class RunManager {
       '--dataset-manifest', job.manifestPath,
       '--bag', job.bagName,
       '--config', job.configPath,
-      '--output', job.absoluteOutputDirectory,
+      '--output', job.executionOutputDirectory,
       '--run-mode', job.runMode,
     ]
     const child = spawn(job.executablePath, args, {
@@ -285,7 +355,7 @@ export class RunManager {
     child.stdout.on('data', (chunk: Buffer) => this.appendLog(run, 'out', chunk))
     child.stderr.on('data', (chunk: Buffer) => this.appendLog(run, 'err', chunk))
 
-    const sensorCsv = path.join(job.absoluteOutputDirectory, 'sensor_messages.csv')
+    const sensorCsv = path.join(job.executionOutputDirectory, 'sensor_messages.csv')
     const progressTimer = setInterval(() => {
       void countCsvRows(sensorCsv).then((count) => {
         job.processedMessages = count
@@ -304,15 +374,42 @@ export class RunManager {
     run.child = null
     job.processedMessages = await countCsvRows(sensorCsv)
     job.completedAt = new Date().toISOString()
+    const outcome = await readRunOutcome(job.executionOutputDirectory)
 
     if (run.cancellationRequested) {
       job.status = 'cancelled'
+      await rm(job.executionOutputDirectory, { force: true, recursive: true })
+    } else if (outcome.status === 'failed') {
+      job.status = 'failed'
+      job.error = outcome.reason ?? '算法运行失败'
+      try {
+        await promoteFailedResultDirectory(
+          job.executionOutputDirectory, job.absoluteOutputDirectory, job.id,
+        )
+      } catch (reason) {
+        job.error = `无法保存失败状态：${reason instanceof Error ? reason.message : String(reason)}`
+        await rm(job.executionOutputDirectory, { force: true, recursive: true })
+      }
+      run.snapshot.logs.push(`${job.algorithmName} 运行失败：${job.error}`)
     } else if (exit.error || exit.code !== 0) {
       job.status = 'failed'
       job.error = exit.error?.message ?? `进程退出码 ${String(exit.code)}`
       run.snapshot.logs.push(`${job.algorithmName} 运行失败：${job.error}`)
+      await rm(job.executionOutputDirectory, { force: true, recursive: true })
     } else {
-      const compatibility = await readRunCompatibility(job.absoluteOutputDirectory)
+      const compatibility = await readRunCompatibility(job.executionOutputDirectory)
+      try {
+        await promoteResultDirectory(
+          job.executionOutputDirectory, job.absoluteOutputDirectory, job.id,
+        )
+      } catch (reason) {
+        job.status = 'failed'
+        job.error = reason instanceof Error ? reason.message : String(reason)
+        run.snapshot.logs.push(`${job.algorithmName} 无法发布运行结果：${job.error}`)
+        await rm(job.executionOutputDirectory, { force: true, recursive: true })
+        this.update(run)
+        return
+      }
       if (compatibility.unsupported) {
         job.status = 'skipped'
         job.compatibilityReason = compatibility.reason ?? '数据集不满足算法输入要求'

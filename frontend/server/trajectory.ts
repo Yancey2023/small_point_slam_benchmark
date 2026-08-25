@@ -36,7 +36,7 @@ export function summarizeTrajectory(points: TrajectoryPoint[], maxPoints = 2_000
   }
 }
 
-export async function readTrajectory(filePath: string): Promise<TrajectoryResponse> {
+export async function readTrajectoryPoints(filePath: string): Promise<TrajectoryPoint[]> {
   const input = createReadStream(filePath, { encoding: 'utf8' })
   const lines = createInterface({ input, crlfDelay: Infinity })
   const points: TrajectoryPoint[] = []
@@ -54,5 +54,37 @@ export async function readTrajectory(filePath: string): Promise<TrajectoryRespon
       points.push({ timestampNs, x, y, z })
     }
   }
-  return summarizeTrajectory(points)
+  return points
+}
+
+export async function readGroundTruthPoints(filePath: string): Promise<TrajectoryPoint[]> {
+  const input = createReadStream(filePath, { encoding: 'utf8' })
+  const lines = createInterface({ input, crlfDelay: Infinity })
+  const points: TrajectoryPoint[] = []
+  for await (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const [rawTimestamp, rawX, rawY, rawZ] = line.split(/\s+/)
+    const timestampSeconds = Number(rawTimestamp)
+    const x = Number(rawX)
+    const y = Number(rawY)
+    const z = Number(rawZ)
+    if ([timestampSeconds, x, y, z].every(Number.isFinite)) {
+      points.push({
+        timestampNs: Math.round(timestampSeconds * 1e9).toString(),
+        x,
+        y,
+        z,
+      })
+    }
+  }
+  return points
+}
+
+export async function readTrajectory(filePath: string): Promise<TrajectoryResponse> {
+  return summarizeTrajectory(await readTrajectoryPoints(filePath))
+}
+
+export async function readGroundTruth(filePath: string): Promise<TrajectoryResponse> {
+  return summarizeTrajectory(await readGroundTruthPoints(filePath))
 }

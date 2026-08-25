@@ -31,7 +31,7 @@ describe('runtime catalog', () => {
       writeFile(path.join(datasetDirectory, 'bag.mcap'), ''),
       writeFile(
         path.join(datasetDirectory, 'manifest.yaml'),
-        'name: Dynamic\nbags:\n  - name: sequence\n    path: bag.mcap\n    sensors:\n      - {id: 1, type: lidar}\n',
+        'name: Dynamic\nbags:\n  - name: sequence\n    path: bag.mcap\n    sensors:\n      - {id: 1, name: Primary LiDAR, type: lidar}\n    sensor_inventory:\n      - {id: 1, name: Primary LiDAR, type: lidar}\n      - {id: 2, name: RGB Camera, type: camera}\n      - {id: 3, name: Wheel Odometry, type: wheel_speed, enabled: false}\n',
       ),
       writeFile(
         path.join(root, 'algorithm', 'brand_new', 'manifest.yaml'),
@@ -47,6 +47,12 @@ describe('runtime catalog', () => {
     const catalog = await loadCatalog(root, buildDirectory)
 
     expect(catalog.response.datasets.map((item) => item.bagName)).toEqual(['sequence'])
+    expect(catalog.response.datasets[0]?.hasGroundTruth).toBe(false)
+    expect(catalog.response.datasets[0]).toMatchObject({
+      sensorTypes: ['lidar', 'camera'],
+      sensorNames: ['Primary LiDAR', 'RGB Camera'],
+    })
+    expect(catalog.response.datasets[0]?.sensorNames).not.toContain('Wheel Odometry')
     expect(catalog.response.algorithms).toMatchObject([{
       id: 'brand_new',
       name: 'Brand New',

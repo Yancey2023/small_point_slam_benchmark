@@ -145,10 +145,10 @@ index 0000000..1845f26
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
-+                                         &slam_benchmark::SensorDefinition::type);
-+    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
-+                                       &slam_benchmark::SensorDefinition::type);
++    const auto lidar = compatibility.selected_sensor(sensors,
++                                                      slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors,
++                                                    slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
 +        throw std::runtime_error("Faster-LIO requires one LiDAR and one IMU");
 +
@@ -189,7 +189,7 @@ index 0000000..1845f26
 +    engine_.initialize(options);
 +    spdlog::info("Faster-LIO standalone adapter initialized with {} compute threads",
 +                 parallel_threads);
-+    return {};
++    return compatibility;
 +}
 +
 +void FasterLioAdapter::process(const slam_benchmark::SensorSample& sample) {

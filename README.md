@@ -11,7 +11,7 @@ core/                     # 静态公共库：数据、运行、计时、CPU/内
 datasets/<source>/        # 数据集清单；data/ 不进入 Git
 algorithm/<algorithm>/    # 上游信息、配置、Git patch
 algorithm_downloads/      # 原始上游仓库，不进入 Git
-results/<dataset>/<algo>/ # 原始和分析 CSV，不进入 Git
+results/<dataset>-<bag>-<algorithm>/ # 原始和分析 CSV，不进入 Git
 scripts/                  # 下载、patch、运行、分析、校验
 frontend/                 # Vue/Vite 本地 benchmark 工作台
 doc/                      # 架构和移植说明
@@ -22,10 +22,11 @@ doc/                      # 架构和移植说明
 不满足输入要求的组合会在网页中标记为“已跳过”并显示原因，不会崩溃或产生误导性结果。
 
 当前可执行算法包括 FAST-LIO2、Point-LIO、VoxelMap、VoxelMap (with imu)、Super-LIO、
-KISS-ICP、Faster-LIO、Small Point LIO、CTLO、CT-LIO、DLIO、PV-LIO、BIEVR-LIO 和 COIN-LIO。
+KISS-ICP、Faster-LIO、Small Point LIO、CTLO、CT-LIO、DLIO、PV-LIO、BIEVR-LIO、COIN-LIO
+和 LIGO。
 此外还支持尚未公开源码、通过本地 Git 工作树提供的 Small Point SLAM。
-LIGO 已登记固定上游和 manifest，但其所需的原始 GNSS 观测尚未进入 core，因此暂不提供
-可执行程序；具体输入约束见 [移植状态](doc/port_status.md)。
+LIGO 的原始 GNSS 观测、星历、电离层参数及接收机 PVT 由 `rosbag_io` 解码并转换为 core
+自有类型，算法适配层不接触 ROS 消息或话题。具体状态见 [移植状态](doc/port_status.md)。
 
 ## 构建 core
 
@@ -34,6 +35,9 @@ LIGO 已登记固定上游和 manifest，但其所需的原始 GNSS 观测尚未
 ```text
 /home/yancey/cpp/navigation/3rdparty/rosbag_io
 ```
+
+当前 `rosbag_io` 源码直接提供 `gnss_comm` 的结构化解码 API；ROS wire-format 解析位于
+`rosbag_io`，不会放入 benchmark core。
 
 Linux 与 Windows 使用相同的 CMake 流程：
 
@@ -63,6 +67,14 @@ ctest --preset algorithms
 ```sh
 python scripts/download_algorithms.py fast_lio
 python scripts/patch_algorithms.py apply fast_lio
+```
+
+LIGO 复用已移植的 FAST-LIO 前端，并由自己的 manifest 下载固定版本的 GTSAM 与
+`gnss_comm`；单独准备 LIGO 时使用：
+
+```sh
+python scripts/download_algorithms.py fast_lio ligo
+python scripts/patch_algorithms.py apply fast_lio ligo
 ```
 
 开发适配时修改忽略目录 `algorithm/fast_lio/source/FAST_LIO`，之后生成 Git patch：
@@ -100,7 +112,7 @@ pnpm install
 pnpm dev
 ```
 
-打开 `http://127.0.0.1:5173`，即可勾选数据集和算法、查看实时消息进度，并按单个数据集、多种算法查看 XY/XZ/YZ 轨迹投影，以及按指标筛选的性能横向条形图。服务会自动扫描 `results` 并复用之前运行的结果；性能面板除总耗时、CPU 和常驻内存外，还可以比较各类传感器消息处理与通用 LIO 阶段。平均、P95、峰值和累积耗时由一个统一开关切换，默认显示累积耗时；调用次数作为独立指标。服务默认从
+打开 `http://127.0.0.1:5173`，即可勾选数据集和算法、查看实时消息进度，并按单个数据集、多种算法查看 XY/XZ/YZ 轨迹投影，以及按指标筛选的性能横向条形图。带 ground truth 的数据集会在轨迹图中叠加真值，并在精度面板逐算法给出 SE(3) 对齐后的 ATE RMSE 或失败原因。服务会自动扫描 `results` 并复用之前运行的结果；性能面板除总耗时、CPU 和常驻内存外，还可以比较各类传感器消息处理与通用 LIO 阶段。平均、P95、峰值和累积耗时由一个统一开关切换，默认显示累积耗时；调用次数作为独立指标。服务默认从
 `build/algorithms` 查找算法，找不到时会自动选择 `build` 下最新的同名可执行文件；也可以通过环境变量
 `BENCHMARK_BUILD_DIR` 指定其他构建目录。
 
@@ -113,7 +125,7 @@ pnpm start:web
 
 生产服务默认监听 `http://127.0.0.1:4174`。为了保持 CPU 数据可比较，网页任务采用单队列顺序执行。
 
-用于 GitHub Pages 的静态版本复用同一套轨迹和性能组件，但不提供本地任务启动功能。它读取的
+用于 GitHub Pages 的静态版本复用同一套轨迹、性能和精度组件，但不提供本地任务启动功能。它读取的
 不是原始 CSV，而是已经完成轨迹抽样和性能统计的版本化 JSON：
 
 ```sh

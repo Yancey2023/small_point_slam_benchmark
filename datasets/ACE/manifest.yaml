@@ -10,6 +10,7 @@ bags:
       - id: 1
         name: mid360_lidar
         type: lidar
+        enabled: true
         topic: /livox/lidar
         message_type: livox_ros_driver2/msg/CustomMsg
         units:
@@ -20,6 +21,7 @@ bags:
       - id: 2
         name: mid360_imu
         type: imu
+        enabled: true
         topic: /livox/imu
         message_type: sensor_msgs/msg/Imu
         units:

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 
 import AlgorithmPicker from '@/components/AlgorithmPicker.vue'
+import AccuracyPanel from '@/components/AccuracyPanel.vue'
 import DatasetPicker from '@/components/DatasetPicker.vue'
 import HelpTip from '@/components/HelpTip.vue'
 import PerformancePanel from '@/components/PerformancePanel.vue'
@@ -118,6 +119,12 @@ const selectedModeInfo = computed(() =>
         <ResultPanel
           v-if="hasResults"
           class="results"
+          :datasets="catalog.datasets"
+          :results="results"
+        />
+        <AccuracyPanel
+          v-if="hasResults"
+          class="accuracy"
           :results="results"
         />
         <p v-else-if="isStaticReport" class="static-empty">
@@ -147,7 +154,7 @@ main { position: relative; z-index: 1; width: min(1180px, calc(100% - 40px)); ma
 .loading-grid span { height: 340px; border-radius: var(--radius-xl); background: #e8eceb; animation: pulse 1.2s ease-in-out infinite alternate; }
 @keyframes pulse { to { opacity: .48; } }
 
-.workspace-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(310px, 0.72fr); align-items: stretch; gap: 18px; }
+.workspace-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(310px, 0.72fr); align-items: start; gap: 18px; }
 .selection-column { display: grid; gap: 16px; }
 .status-column { min-width: 0; }
 .launch-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 19px 20px; border: 1px solid var(--line-soft); border-radius: 22px; background: #f8f9f7; box-shadow: var(--shadow-card); }
@@ -177,6 +184,7 @@ main { position: relative; z-index: 1; width: min(1180px, calc(100% - 40px)); ma
 .ready-list i { display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: #8ec4b4; }
 .results { margin-top: 18px; }
 .performance { margin-top: 18px; }
+.accuracy { margin-top: 18px; }
 .static-empty { margin: 0; padding: 48px 24px; border: 1px dashed var(--line-soft); border-radius: var(--radius-xl); color: var(--ink-muted); background: #f8faf8; text-align: center; }
 footer { display: flex; width: min(1180px, calc(100% - 40px)); justify-content: center; margin: 0 auto; padding: 34px 0 26px; color: #879098; font-size: 10px; }
 

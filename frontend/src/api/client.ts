@@ -1,5 +1,6 @@
 import type {
   CatalogResponse,
+  AccuracyResponse,
   ResultsResponse,
   CreateRunRequest,
   PerformanceResponse,
@@ -68,6 +69,19 @@ export async function fetchResultTrajectory(resultId: string): Promise<Trajector
   return request(`/api/results/${encodeURIComponent(resultId)}/trajectory`)
 }
 
+export async function fetchDatasetGroundTruth(datasetId: string): Promise<TrajectoryResponse> {
+  if (isStaticReport) {
+    const report = await loadStaticReport()
+    const groundTruth = report.groundTruth?.[datasetId] ?? report.results
+      .filter((item) => item.datasetId === datasetId)
+      .map((item) => item.trajectory?.groundTruth)
+      .find((trajectory): trajectory is TrajectoryResponse => Boolean(trajectory))
+    if (!groundTruth) throw new Error('静态报告中没有该数据集的 Ground truth')
+    return groundTruth
+  }
+  return request(`/api/datasets/${encodeURIComponent(datasetId)}/ground-truth`)
+}
+
 export async function fetchResultPerformance(resultId: string): Promise<PerformanceResponse> {
   if (isStaticReport) {
     const result = (await loadStaticReport()).results.find((item) => item.id === resultId)
@@ -75,6 +89,15 @@ export async function fetchResultPerformance(resultId: string): Promise<Performa
     return result.performance
   }
   return request(`/api/results/${encodeURIComponent(resultId)}/performance`)
+}
+
+export async function fetchResultAccuracy(resultId: string): Promise<AccuracyResponse> {
+  if (isStaticReport) {
+    const result = (await loadStaticReport()).results.find((item) => item.id === resultId)
+    if (!result?.accuracy) throw new Error('静态报告中没有该精度结果')
+    return result.accuracy
+  }
+  return request(`/api/results/${encodeURIComponent(resultId)}/accuracy`)
 }
 
 export function observeRun(

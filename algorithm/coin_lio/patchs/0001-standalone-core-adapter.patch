@@ -1122,10 +1122,10 @@ index 0000000..f8db5da
 +        sensors, {.lidar = true, .imu = true, .point_time = true,
 +                  .intensity = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
-+                                         &slam_benchmark::SensorDefinition::type);
-+    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
-+                                       &slam_benchmark::SensorDefinition::type);
++    const auto lidar = compatibility.selected_sensor(sensors,
++                                                      slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors,
++                                                    slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
 +        throw std::runtime_error("COIN-LIO requires one LiDAR and one IMU");
 +
@@ -1225,7 +1225,7 @@ index 0000000..f8db5da
 +    engine_.initialize(options);
 +    spdlog::info("COIN-LIO using {} OpenMP compute threads", parallel_threads);
 +    spdlog::info("COIN-LIO standalone adapter initialized");
-+    return {};
++    return compatibility;
 +}
 +
 +void CoinLioAdapter::process(const slam_benchmark::SensorSample& sample) {

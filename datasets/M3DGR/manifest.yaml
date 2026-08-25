@@ -1,0 +1,440 @@
+schema_version: 1
+name: M3DGR (only mid360)
+description: M3DGR multi-sensor ground robot dataset; algorithms automatically receive the highest-priority compatible sensor of every required type.
+download_url: ""
+sensor_definitions:
+  mid360_lidar: &mid360_lidar
+    id: 1
+    name: Livox MID-360 LiDAR
+    type: lidar
+    enabled: true
+    priority: 100
+    topic: /livox/mid360/lidar
+    message_type: livox_ros_driver2/CustomMsg
+    units: {point_time: ns, distance: m}
+    calibration:
+      body_from_sensor: [1, 0, 0, -0.011, 0, 1, 0, -0.02329, 0, 0, 1, 0.04412, 0, 0, 0, 1]
+  mid360_imu: &mid360_imu
+    id: 2
+    name: Livox MID-360 built-in IMU
+    type: imu
+    enabled: true
+    priority: 100
+    topic: /livox/mid360/imu
+    message_type: sensor_msgs/Imu
+    units: {angular_velocity: rad/s, acceleration: g}
+    calibration:
+      body_from_sensor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+  avia_lidar: &avia_lidar
+    id: 3
+    name: Livox Avia LiDAR
+    type: lidar
+    enabled: false
+    priority: 90
+    topic: /livox/avia/lidar
+    message_type: livox_ros_driver/CustomMsg
+    units: {point_time: ns, distance: m}
+    calibration:
+      body_from_sensor: [0.849802, -0.0398291, -0.525594, 0.248632, 0.0393196, 0.999153, -0.0121414, -0.0658454, 0.525632, -0.0103484, 0.850649, -0.386989, 0, 0, 0, 1]
+  avia_imu: &avia_imu
+    id: 4
+    name: Livox Avia built-in IMU
+    type: imu
+    enabled: false
+    priority: 90
+    topic: /livox/avia/imu
+    message_type: sensor_msgs/Imu
+    units: {angular_velocity: rad/s, acceleration: m/s^2}
+    calibration:
+      body_from_sensor: [0.849802, -0.0398291, -0.525594, 0.199237301966, 0.0393196, 0.999153, -0.0121414, -0.09106817588, 0.525632, -0.0103484, 0.850649, -0.384482437416, 0, 0, 0, 1]
+  d435i_imu: &d435i_imu
+    id: 5
+    name: Intel RealSense D435i IMU
+    type: imu
+    enabled: false
+    priority: 50
+    topic: /camera/imu
+    message_type: sensor_msgs/Imu
+    units: {angular_velocity: rad/s, acceleration: m/s^2}
+    calibration:
+      body_from_sensor: [0.0981574, 0.514299, 0.851975, 0.035263, -0.995106, 0.0409386, 0.0899349, -0.02749981, 0.0113748, -0.856633, 0.515801, -0.415899, 0, 0, 0, 1]
+  d435i_rgb: &d435i_rgb
+    id: 6
+    name: Intel RealSense D435i RGB camera
+    type: camera
+    enabled: false
+    priority: 100
+    topic: /camera/color/image_raw/compressed
+    message_type: sensor_msgs/CompressedImage
+    calibration:
+      body_from_sensor: [0.0722207, 0.5210047, 0.850493, 0.06333267, -0.9973866, 0.039482, 0.060508, -0.06135468, -0.0020542, -0.8526402, 0.5224945, -0.39508869, 0, 0, 0, 1]
+      intrinsics: [607.79772949218, 607.83526613281, 328.79772949218, 245.53321838378]
+      distortion: [0, 0, 0, 0]
+      resolution: [640, 480]
+  d435i_depth: &d435i_depth
+    id: 7
+    name: Intel RealSense D435i aligned depth camera
+    type: camera
+    enabled: false
+    priority: 90
+    topic: /camera/aligned_depth_to_color/image_raw/compressedDepth
+    message_type: sensor_msgs/CompressedImage
+    calibration:
+      body_from_sensor: [0.0722207, 0.5210047, 0.850493, 0.06333267, -0.9973866, 0.039482, 0.060508, -0.06135468, -0.0020542, -0.8526402, 0.5224945, -0.39508869, 0, 0, 0, 1]
+      intrinsics: [607.79772949218, 607.83526613281, 328.79772949218, 245.53321838378]
+      distortion: [0, 0, 0, 0]
+      resolution: [640, 480]
+  wheel_odometry: &wheel_odometry
+    id: 8
+    name: Wheel odometry
+    type: wheel_speed
+    enabled: false
+    priority: 100
+    topic: /odom
+    message_type: nav_msgs/Odometry
+    units: {distance: m, angular_velocity: rad/s}
+    calibration:
+      body_from_sensor: [0.867274657442, -0.0632959621752, -0.493789456075, 0.3360676055, 0.0481275598214, 0.997898632123, -0.0433850715864, -1.00187983115, 0.495498481169, 0.0138618799444, 0.868498277378, -0.337619348615, 0, 0, 0, 1]
+  cv_camera: &cv_camera
+    id: 9
+    name: Auxiliary CV camera
+    type: camera
+    enabled: false
+    priority: 80
+    topic: /cv_camera/image_raw/compressed
+    message_type: sensor_msgs/CompressedImage
+    calibration:
+      body_from_sensor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+      status: unavailable
+  ublox_gnss: &ublox_gnss
+    id: 10
+    name: u-blox GNSS receiver
+    type: gnss
+    enabled: false
+    priority: 100
+    topic: /ublox_driver/receiver_lla
+    message_type: sensor_msgs/NavSatFix
+    calibration:
+      body_from_sensor: [1, 0, 0, -0.2845022446, 0, 1, 0, 0.0007966806, 0, 0, 1, -0.2111267974, 0, 0, 0, 1]
+  ublox_raw_observations: &ublox_raw_observations
+    id: 11
+    name: u-blox raw satellite observations
+    type: gnss
+    enabled: false
+    priority: 90
+    topic: /ublox_driver/range_meas
+    message_type: gnss_comm/GnssMeasMsg
+    calibration:
+      body_from_sensor: [1, 0, 0, -0.2845022446, 0, 1, 0, 0.0007966806, 0, 0, 1, -0.2111267974, 0, 0, 0, 1]
+  ublox_ephemeris: &ublox_ephemeris
+    id: 12
+    name: u-blox broadcast ephemeris
+    type: gnss
+    enabled: false
+    priority: 80
+    topic: /ublox_driver/ephem
+    message_type: gnss_comm/GnssEphemMsg
+    calibration:
+      body_from_sensor: [1, 0, 0, -0.2845022446, 0, 1, 0, 0.0007966806, 0, 0, 1, -0.2111267974, 0, 0, 0, 1]
+  ublox_glonass_ephemeris: &ublox_glonass_ephemeris
+    id: 13
+    name: u-blox GLONASS ephemeris
+    type: gnss
+    enabled: false
+    priority: 70
+    topic: /ublox_driver/glo_ephem
+    message_type: gnss_comm/GnssGloEphemMsg
+    calibration:
+      body_from_sensor: [1, 0, 0, -0.2845022446, 0, 1, 0, 0.0007966806, 0, 0, 1, -0.2111267974, 0, 0, 0, 1]
+  ublox_ionosphere: &ublox_ionosphere
+    id: 14
+    name: u-blox ionosphere parameters
+    type: gnss
+    enabled: false
+    priority: 60
+    topic: /ublox_driver/iono_params
+    message_type: gnss_comm/StampedFloat64Array
+    calibration:
+      body_from_sensor: [1, 0, 0, -0.2845022446, 0, 1, 0, 0.0007966806, 0, 0, 1, -0.2111267974, 0, 0, 0, 1]
+  ublox_receiver_pvt: &ublox_receiver_pvt
+    id: 15
+    name: u-blox receiver PVT
+    type: gnss
+    enabled: false
+    priority: 50
+    topic: /ublox_driver/receiver_pvt
+    message_type: gnss_comm/GnssPVTSolnMsg
+    calibration:
+      body_from_sensor: [1, 0, 0, -0.2845022446, 0, 1, 0, 0.0007966806, 0, 0, 1, -0.2111267974, 0, 0, 0, 1]
+bags:
+  - name: LiDAR Degeneration / Corridor01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/LiDAR_Degeneration/Corridor01.bag
+    message_count: 80513
+    sensors: &base_with_cv
+      [*mid360_lidar, *mid360_imu, *avia_lidar, *avia_imu, *d435i_imu,
+       *d435i_rgb, *d435i_depth, *wheel_odometry, *cv_camera]
+    sensor_inventory: *base_with_cv
+
+  - name: LiDAR Degeneration / Corridor02
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/LiDAR_Degeneration/Corridor02.bag
+    message_count: 61606
+    sensors: *base_with_cv
+    sensor_inventory: *base_with_cv
+
+  - name: LiDAR Degeneration / Elevator01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/LiDAR_Degeneration/Elevator01.bag
+    message_count: 146960
+    sensors: *base_with_cv
+    sensor_inventory: *base_with_cv
+
+  - name: GNSS Denied / GNSS-denial01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/GNSS_Denied/GNSS-denial01.bag
+    message_count: 128024
+    sensors: &base_with_cv_gnss
+      [*mid360_lidar, *mid360_imu, *avia_lidar, *avia_imu, *d435i_imu,
+       *d435i_rgb, *d435i_depth, *wheel_odometry, *cv_camera, *ublox_gnss,
+       *ublox_raw_observations, *ublox_ephemeris, *ublox_glonass_ephemeris,
+       *ublox_ionosphere, *ublox_receiver_pvt]
+    sensor_inventory: *base_with_cv_gnss
+
+  - name: GNSS Denied / GNSS-denial02
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/GNSS_Denied/GNSS-denial02.bag
+    message_count: 157571
+    sensors: *base_with_cv_gnss
+    sensor_inventory: *base_with_cv_gnss
+
+  - name: Standard / Outdoor01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Standard/Outdoor01.bag
+    ground_truth: &tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Standard/Outdoor01.txt
+      format: tum
+      max_time_difference_ms: 100
+    sensors: *base_with_cv_gnss
+    sensor_inventory: *base_with_cv_gnss
+
+  - name: Standard / Outdoor04
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Standard/Outdoor04.bag
+    message_count: 164411
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Standard/Outdoor04.txt
+    sensors: *base_with_cv_gnss
+    sensor_inventory: *base_with_cv_gnss
+
+  - name: Visual Challenge / indoor / Dark03
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Dark03.bag
+    message_count: 35704
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Dark03.txt
+    sensors: &base_sensors
+      [*mid360_lidar, *mid360_imu, *avia_lidar, *avia_imu, *d435i_imu,
+       *d435i_rgb, *d435i_depth, *wheel_odometry]
+    sensor_inventory: *base_sensors
+
+  - name: Visual Challenge / indoor / Dark04
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Dark04.bag
+    message_count: 33949
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Dark04.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Visual Challenge / indoor / Dynamic01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Dynamic01.bag
+    message_count: 36784
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Dynamic01.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Visual Challenge / indoor / Dynamic02
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Dynamic02.bag
+    message_count: 31539
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Dynamic02.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Visual Challenge / indoor / Occlusion01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Occlusion01.bag
+    message_count: 29917
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Occlusion01.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Visual Challenge / indoor / Occlusion02
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Occlusion02.bag
+    message_count: 30271
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Occlusion02.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Visual Challenge / indoor / Varying-illu01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Varying-illu01.bag
+    message_count: 32358
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Varying-illu01.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Visual Challenge / indoor / Varying-illu02
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Varying-illu02.bag
+    message_count: 30765
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/indoor/Varying-illu02.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Visual Challenge / outdoor / Dark01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Dark01.bag
+    message_count: 43300
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Dark01.txt
+    sensors: &base_with_gnss
+      [*mid360_lidar, *mid360_imu, *avia_lidar, *avia_imu, *d435i_imu,
+       *d435i_rgb, *d435i_depth, *wheel_odometry, *ublox_gnss,
+       *ublox_raw_observations, *ublox_ephemeris, *ublox_glonass_ephemeris,
+       *ublox_ionosphere, *ublox_receiver_pvt]
+    sensor_inventory: *base_with_gnss
+
+  - name: Visual Challenge / outdoor / Dark02
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Dark02.bag
+    message_count: 149148
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Dark02.txt
+    sensors: *base_with_gnss
+    sensor_inventory: *base_with_gnss
+
+  - name: Visual Challenge / outdoor / Dynamic03
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Dynamic03.bag
+    message_count: 59749
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Dynamic03.txt
+    sensors: *base_with_gnss
+    sensor_inventory: *base_with_gnss
+
+  - name: Visual Challenge / outdoor / Dynamic04
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Dynamic04.bag
+    message_count: 80824
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Dynamic04.txt
+    sensors: *base_with_gnss
+    sensor_inventory: *base_with_gnss
+
+  - name: Visual Challenge / outdoor / Occlusion03
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Occlusion03.bag
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Occlusion03.txt
+    sensors: *base_with_gnss
+    sensor_inventory: *base_with_gnss
+
+  - name: Visual Challenge / outdoor / Occlusion04
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Occlusion04.bag
+    message_count: 113977
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Occlusion04.txt
+    sensors: *base_with_gnss
+    sensor_inventory: *base_with_gnss
+
+  - name: Visual Challenge / outdoor / Varying-illu03
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Varying-illu03.bag
+    message_count: 215758
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Varying-illu03.txt
+    sensors: *base_with_cv_gnss
+    sensor_inventory: *base_with_cv_gnss
+
+  - name: Visual Challenge / outdoor / Varying-illu04
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Varying-illu04.bag
+    message_count: 140279
+    sensors: *base_with_cv_gnss
+    sensor_inventory: *base_with_cv_gnss
+
+  - name: Visual Challenge / outdoor / Varying-illu05
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Varying-illu05.bag
+    message_count: 103200
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Visual_Challenge/outdoor/Varying-illu05.txt
+    sensors: *base_with_cv_gnss
+    sensor_inventory: *base_with_cv_gnss
+
+  - name: Wheel Slippage / indoor / Sha-turn01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/indoor/Sha-turn01.bag
+    message_count: 29182
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/indoor/Sha-turn01.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Wheel Slippage / indoor / Sha-turn02
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/indoor/Sha-turn02.bag
+    message_count: 21100
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/indoor/Sha-turn02.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Wheel Slippage / indoor / Wheel-float01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/indoor/Wheel-float01.bag
+    message_count: 25889
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/indoor/Wheel-float01.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Wheel Slippage / indoor / Wheel-float02
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/indoor/Wheel-float02.bag
+    message_count: 31475
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/indoor/Wheel-float02.txt
+    sensors: *base_sensors
+    sensor_inventory: *base_sensors
+
+  - name: Wheel Slippage / outdoor / Grass01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/outdoor/Grass01.bag
+    message_count: 60450
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/outdoor/Grass01_fixed.txt
+    sensors: *base_with_cv_gnss
+    sensor_inventory: *base_with_cv_gnss
+
+  - name: Wheel Slippage / outdoor / Grass02
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/outdoor/Grass02.bag
+    message_count: 36315
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/outdoor/Grass02.txt
+    sensors: *base_with_cv_gnss
+    sensor_inventory: *base_with_cv_gnss
+
+  - name: Wheel Slippage / outdoor / Z-Rough-Road01
+    path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/outdoor/Z-Rough-Road01.bag
+    message_count: 112061
+    ground_truth:
+      <<: *tum_gt
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/Wheel_Slippage/outdoor/Z-Rough-Road01.txt
+    sensors: *base_with_cv_gnss
+    sensor_inventory: *base_with_cv_gnss

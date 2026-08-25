@@ -535,8 +535,8 @@ index 0000000..540e2f2
 +    return root[key] ? root[key].as<T>() : fallback;
 +}
 +
-+void load_parameters(const YAML::Node& root,
-+                     std::span<const slam_benchmark::SensorDefinition> sensors) {
++void load_parameters(const YAML::Node& root, std::span<const slam_benchmark::SensorDefinition> sensors,
++                     const slam_benchmark::InitializationResult& compatibility) {
 +    using namespace LI2Sup;
 +    g_time_eva = false;
 +    g_save_map = false;
@@ -565,10 +565,10 @@ index 0000000..540e2f2
 +    g_lidar_imu = BASIC::SE3{};
 +    g_odom_robo = BASIC::SE3{};
 +    g_lidar_robo_yaw = BASIC::M3::Identity();
-+    const auto lidar = std::ranges::find(sensors, slam_benchmark::SensorType::Lidar,
-+                                         &slam_benchmark::SensorDefinition::type);
-+    const auto imu = std::ranges::find(sensors, slam_benchmark::SensorType::Imu,
-+                                       &slam_benchmark::SensorDefinition::type);
++    const auto lidar = compatibility.selected_sensor(
++        sensors, slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(
++        sensors, slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
 +        throw std::runtime_error("Super-LIO requires one LiDAR and one IMU");
 +    BASIC::M3 rotation;
@@ -605,7 +605,7 @@ index 0000000..540e2f2
 +    tbb_control_ = std::make_unique<tbb::global_control>(
 +        tbb::global_control::max_allowed_parallelism,
 +        static_cast<std::size_t>(parallel_threads));
-+    load_parameters(root, sensors);
++    load_parameters(root, sensors, compatibility);
 +    algorithm_.setPoseCallback([this](const LI2Sup::NavState& state) { accept_pose(state); });
 +    algorithm_.setTimingCallback([this](const char* stage, double time, double duration) {
 +        sink_->report_timing({nanoseconds(time), stage, duration});
@@ -613,7 +613,7 @@ index 0000000..540e2f2
 +    algorithm_.init();
 +    spdlog::info("Super-LIO standalone adapter initialized with {} compute threads",
 +                 parallel_threads);
-+    return {};
++    return compatibility;
 +}
 +
 +void SuperLioAdapter::process(const slam_benchmark::SensorSample& sample) {

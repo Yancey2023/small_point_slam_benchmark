@@ -1,6 +1,16 @@
 algorithm: ligo
+gnss_mode: raw_observations
 filter_size_scan_m: 0.2
 filter_size_map_m: 0.2
 map_voxel_size_m: 0.5
 max_iterations: 4
 estimate_extrinsics: false
+gnss_sample_period_s: 0.1
+gnss_local_time_difference_s: 18.0
+gnss_initialization_window_size: 10
+gnss_graph_window_size: 30
+gnss_pseudorange_std_threshold_m: 30.0
+gnss_doppler_std_threshold_hz: 30.0
+gnss_carrier_phase_std_threshold_cycles: 30.0
+gnss_elevation_threshold_deg: 30.0
+gnss_default_ionosphere_parameters: [1.118e-8, 2.235e-8, -4.172e-7, 6.557e-7, 124900.0, -442400.0, 1507000.0, -262100.0]

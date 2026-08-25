@@ -7,6 +7,7 @@ const props = defineProps<{ run: RunSnapshot }>()
 defineEmits<{ cancel: [] }>()
 
 const logElement = ref<HTMLElement | null>(null)
+const jobListElement = ref<HTMLElement | null>(null)
 const activeJob = computed(() => props.run.jobs.find((job) => job.status === 'running'))
 const isActive = computed(() => ['queued', 'running'].includes(props.run.status))
 
@@ -26,6 +27,36 @@ watch(
     if (logElement.value) logElement.value.scrollTop = logElement.value.scrollHeight
   },
 )
+
+watch(
+  () => activeJob.value?.id,
+  async () => {
+    await nextTick()
+    jobListElement.value
+      ?.querySelector<HTMLElement>('.job-row.active')
+      ?.scrollIntoView({ block: 'nearest' })
+  },
+  { immediate: true },
+)
+
+function middleParts(value: string, maximumSuffixLength = 18): {
+  prefix: string
+  suffix: string
+} {
+  const characters = [...value]
+  const suffixLength = Math.min(
+    maximumSuffixLength,
+    Math.max(1, Math.ceil(characters.length * 0.55)),
+  )
+  return {
+    prefix: characters.slice(0, -suffixLength).join(''),
+    suffix: characters.slice(-suffixLength).join(''),
+  }
+}
+
+function datasetLabel(datasetName: string, bagName: string): string {
+  return `${datasetName}/${bagName}`
+}
 </script>
 
 <template>
@@ -38,9 +69,24 @@ watch(
 
     <span class="eyebrow">RUN STATUS</span>
     <h2>{{ stateCopy[run.status] }}</h2>
-    <p v-if="activeJob" class="current-job">
-      {{ activeJob.datasetName }} / {{ activeJob.algorithmName }} · {{ activeJob.runModeName }}
-    </p>
+    <div v-if="activeJob" class="current-job">
+      <span
+        class="middle-value"
+        :title="datasetLabel(activeJob.datasetName, activeJob.bagName)"
+      >
+        <span class="middle-prefix">
+          {{ middleParts(datasetLabel(activeJob.datasetName, activeJob.bagName)).prefix }}
+        </span>
+        <span class="middle-suffix">
+          {{ middleParts(datasetLabel(activeJob.datasetName, activeJob.bagName)).suffix }}
+        </span>
+      </span>
+      <strong class="middle-value" :title="activeJob.algorithmName">
+        <span class="middle-prefix">{{ middleParts(activeJob.algorithmName, 14).prefix }}</span>
+        <span class="middle-suffix">{{ middleParts(activeJob.algorithmName, 14).suffix }}</span>
+      </strong>
+      <small>{{ activeJob.runModeName }}</small>
+    </div>
     <p v-else class="current-job">
       {{ run.completedJobs }} / {{ run.totalJobs }} 个任务已结束
     </p>
@@ -52,21 +98,47 @@ watch(
       <strong>{{ run.progress.toFixed(1) }}%</strong>
     </div>
 
-    <div class="job-list">
-      <div v-for="job in run.jobs" :key="job.id" class="job-row">
+    <div ref="jobListElement" class="job-list">
+      <div
+        v-for="job in run.jobs"
+        :key="job.id"
+        class="job-row"
+        :class="{ active: job.id === activeJob?.id }"
+      >
         <span class="job-state" :class="job.status">
           {{ job.status === 'completed' ? '✓' : job.status === 'skipped' ? '–' : job.status === 'failed' ? '!' : '•' }}
         </span>
-        <span class="job-name">{{ job.datasetName }} · {{ job.algorithmName }}</span>
-        <span class="job-progress">
-          <template v-if="job.status === 'running' && job.expectedMessages">
-            {{ job.processedMessages.toLocaleString() }} / {{ job.expectedMessages.toLocaleString() }}
-          </template>
-          <template v-else-if="job.status === 'skipped'">
-            {{ job.compatibilityReason ?? stateCopy[job.status] }}
-          </template>
-          <template v-else>{{ stateCopy[job.status] }}</template>
-        </span>
+        <div class="job-body">
+          <div class="job-identity">
+            <span
+              class="job-dataset middle-value"
+              :title="datasetLabel(job.datasetName, job.bagName)"
+            >
+              <span class="middle-prefix">
+                {{ middleParts(datasetLabel(job.datasetName, job.bagName)).prefix }}
+              </span>
+              <span class="middle-suffix">
+                {{ middleParts(datasetLabel(job.datasetName, job.bagName)).suffix }}
+              </span>
+            </span>
+            <strong class="job-algorithm middle-value" :title="job.algorithmName">
+              <span class="middle-prefix">{{ middleParts(job.algorithmName, 14).prefix }}</span>
+              <span class="middle-suffix">{{ middleParts(job.algorithmName, 14).suffix }}</span>
+            </strong>
+          </div>
+          <span class="job-progress">
+            <template v-if="job.status === 'running' && job.expectedMessages">
+              {{ job.processedMessages.toLocaleString() }} / {{ job.expectedMessages.toLocaleString() }}
+            </template>
+            <template v-else-if="job.status === 'skipped'">
+              {{ job.compatibilityReason ?? stateCopy[job.status] }}
+            </template>
+            <template v-else-if="job.status === 'failed'">
+              {{ job.error ?? stateCopy[job.status] }}
+            </template>
+            <template v-else>{{ stateCopy[job.status] }}</template>
+          </span>
+        </div>
       </div>
     </div>
 
@@ -134,7 +206,21 @@ watch(
 
 .eyebrow { color: #718790; font-size: 10px; font-weight: 900; letter-spacing: 0.18em; }
 h2 { margin: 7px 0 3px; font-size: 22px; }
-.current-job { margin: 0; color: var(--ink-muted); font-size: 13px; text-align: center; }
+.current-job {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 2px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  text-align: center;
+}
+.current-job span, .current-job strong { min-width: 0; }
+.current-job strong { color: #40575f; font-size: 13px; }
+.current-job small { font-size: 9px; }
+.middle-value { display: flex; min-width: 0; justify-content: center; white-space: nowrap; }
+.middle-prefix { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.middle-suffix { flex: 0 0 auto; }
 
 .progress-row {
   display: grid;
@@ -154,17 +240,28 @@ h2 { margin: 7px 0 3px; font-size: 22px; }
 }
 .progress-row strong { color: #597481; font-size: 13px; text-align: right; }
 
-.job-list { display: grid; width: 100%; gap: 7px; }
+.job-list {
+  display: grid;
+  width: 100%;
+  max-height: clamp(240px, 42vh, 440px);
+  gap: 7px;
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
 .job-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
   gap: 8px;
   padding: 8px 10px;
+  border: 1px solid transparent;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.72);
   font-size: 11px;
 }
+.job-row.active { border-color: #b8cbd3; background: #f1f6f7; }
 .job-state {
   display: grid;
   width: 20px;
@@ -179,9 +276,19 @@ h2 { margin: 7px 0 3px; font-size: 22px; }
 .job-state.completed { color: #568c7d; background: #dcf4ec; }
 .job-state.skipped { color: #8a7650; background: #f5ecd8; }
 .job-state.failed { color: #a85e62; background: #ffe1e1; }
-.job-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.job-body {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+.job-identity { display: grid; min-width: 0; gap: 2px; }
+.job-dataset, .job-algorithm { min-width: 0; justify-content: flex-start; }
+.job-dataset { color: var(--ink-muted); font-size: 9px; }
+.job-algorithm { color: #40575f; font-size: 11px; }
 .job-progress {
-  max-width: 280px;
+  max-width: 220px;
   overflow: hidden;
   color: var(--ink-muted);
   text-overflow: ellipsis;
@@ -208,5 +315,11 @@ h2 { margin: 7px 0 3px; font-size: 22px; }
   background: transparent;
   cursor: pointer;
   font-weight: 700;
+}
+
+@media (max-width: 560px) {
+  .progress-card { padding: 24px 18px 20px; }
+  .job-body { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .job-progress { max-width: 100%; white-space: normal; }
 }
 </style>

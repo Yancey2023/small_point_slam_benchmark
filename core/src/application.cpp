@@ -71,6 +71,10 @@ int run_benchmark_main(int argc, char** argv, SlamAlgorithm& algorithm) {
             spdlog::warn("dataset is not compatible with {}: {}", algorithm.name(),
                          summary.initialization.reason);
         }
+        if (summary.failed) {
+            spdlog::critical("benchmark failed: {}", summary.failure_reason);
+            return 1;
+        }
         return 0;
 #else
         (void)algorithm;

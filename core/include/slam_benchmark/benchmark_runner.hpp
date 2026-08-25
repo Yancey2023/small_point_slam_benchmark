@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <string>
 
 namespace slam_benchmark {
 
@@ -24,6 +25,8 @@ struct BenchmarkOptions {
 
 struct BenchmarkSummary {
     InitializationResult initialization;
+    bool failed{};
+    std::string failure_reason;
     std::uint64_t message_count{};
     double wall_time_ms{};
     double algorithm_process_time_ms{};

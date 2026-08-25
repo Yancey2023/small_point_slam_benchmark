@@ -65,8 +65,10 @@ SensorDefinition parse_sensor(const YAML::Node& node) {
     sensor.id = node["id"].as<SensorId>();
     sensor.name = node["name"].as<std::string>();
     sensor.type = parse_sensor_type(node["type"].as<std::string>());
-    sensor.topic = node["topic"].as<std::string>();
-    sensor.message_type = node["message_type"].as<std::string>("");
+    sensor.enabled = node["enabled"].as<bool>(true);
+    sensor.available = sensor.enabled;
+    if (!sensor.enabled) sensor.availability_reason = "传感器已在 manifest 中禁用";
+    sensor.priority = node["priority"].as<int>(0);
     sensor.point_time_field = node["point_time_field"].as<std::string>("time");
     sensor.intensity_field = node["intensity_field"].as<std::string>("intensity");
 
@@ -79,6 +81,15 @@ SensorDefinition parse_sensor(const YAML::Node& node) {
         sensor.calibration.intrinsics = calibration["intrinsics"].as<std::vector<double>>();
     if (calibration && calibration["distortion"])
         sensor.calibration.distortion = calibration["distortion"].as<std::vector<double>>();
+    if (calibration && calibration["resolution"]) {
+        const auto resolution = fixed_array<2>(
+            calibration["resolution"], std::array<double, 2>{},
+            "calibration.resolution");
+        if (resolution[0] <= 0 || resolution[1] <= 0)
+            throw std::runtime_error("calibration.resolution must be positive");
+        sensor.calibration.image_width = static_cast<std::uint32_t>(resolution[0]);
+        sensor.calibration.image_height = static_cast<std::uint32_t>(resolution[1]);
+    }
 
     const auto units = node["units"];
     sensor.point_time_to_nanoseconds = unit_scale(units, "point_time", "ns");
@@ -113,6 +124,11 @@ DatasetManifest load_dataset_manifest(const std::filesystem::path& path) {
         bag.path = bag_node["path"].as<std::string>();
         if (bag.path.is_relative()) bag.path = path.parent_path() / bag.path;
         bag.path = bag.path.lexically_normal();
+        bag.max_output_position_m =
+            bag_node["max_output_position_m"].as<double>(kDefaultMaxOutputPositionMeters);
+        if (!std::isfinite(bag.max_output_position_m) || bag.max_output_position_m <= 0.0)
+            throw std::runtime_error("bag " + bag.name +
+                                     " max_output_position_m must be a positive number");
 
         std::set<SensorId> ids;
         std::set<std::string> topics;
@@ -121,10 +137,14 @@ DatasetManifest load_dataset_manifest(const std::filesystem::path& path) {
             throw std::runtime_error("bag " + bag.name + " has no sensors");
         for (const auto& sensor_node : sensors) {
             auto sensor = parse_sensor(sensor_node);
+            const auto topic = sensor_node["topic"].as<std::string>();
+            const auto message_type = sensor_node["message_type"].as<std::string>();
             if (!ids.insert(sensor.id).second)
                 throw std::runtime_error("duplicate sensor id in bag " + bag.name);
-            if (!topics.insert(sensor.topic).second)
+            if (!topics.insert(topic).second)
                 throw std::runtime_error("duplicate sensor topic in bag " + bag.name);
+            bag.sensor_inputs.emplace(
+                sensor.id, SensorInputBinding{topic, message_type});
             bag.sensors.push_back(std::move(sensor));
         }
         manifest.bags.push_back(std::move(bag));

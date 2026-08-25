@@ -1,10 +1,14 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { readRunCompatibility } from './run-manager.js'
+import {
+  promoteFailedResultDirectory,
+  promoteResultDirectory,
+  readRunCompatibility,
+} from './run-manager.js'
 
 const temporaryDirectories: string[] = []
 
@@ -28,5 +32,62 @@ describe('readRunCompatibility', () => {
       unsupported: true,
       reason: '缺少 GNSS, GPS',
     })
+  })
+})
+
+describe('promoteResultDirectory', () => {
+  it('replaces only the selected result after the staged run succeeds', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'slam-result-promotion-'))
+    temporaryDirectories.push(directory)
+    const output = path.join(directory, 'dataset-bag-algorithm')
+    const staged = `${output}.running-job`
+    await Promise.all([mkdir(output), mkdir(staged)])
+    await Promise.all([
+      writeFile(path.join(output, 'summary.csv'), 'old'),
+      writeFile(path.join(staged, 'summary.csv'), 'new'),
+      writeFile(path.join(directory, 'unrelated.csv'), 'keep'),
+    ])
+
+    await promoteResultDirectory(staged, output, 'job')
+
+    await expect(readFile(path.join(output, 'summary.csv'), 'utf8')).resolves.toBe('new')
+    await expect(readFile(path.join(directory, 'unrelated.csv'), 'utf8')).resolves.toBe('keep')
+  })
+
+  it('restores the previous result when the staged directory cannot be published', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'slam-result-rollback-'))
+    temporaryDirectories.push(directory)
+    const output = path.join(directory, 'dataset-bag-algorithm')
+    await mkdir(output)
+    await writeFile(path.join(output, 'summary.csv'), 'old')
+
+    await expect(promoteResultDirectory(
+      path.join(directory, 'missing-staged-result'), output, 'job',
+    )).rejects.toThrow()
+
+    await expect(readFile(path.join(output, 'summary.csv'), 'utf8')).resolves.toBe('old')
+  })
+})
+
+describe('promoteFailedResultDirectory', () => {
+  it('replaces a previous successful result with only the failure summary', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'slam-failed-result-'))
+    temporaryDirectories.push(directory)
+    const output = path.join(directory, 'dataset-bag-algorithm')
+    const staged = `${output}.running-job`
+    await Promise.all([mkdir(output), mkdir(staged)])
+    await Promise.all([
+      writeFile(path.join(output, 'final_trajectory.csv'), 'old trajectory'),
+      writeFile(path.join(output, 'timings.csv'), 'old timings'),
+      writeFile(path.join(staged, 'summary.csv'), 'run_mode,status,reason\nfull_speed,failed,发散\n'),
+      writeFile(path.join(staged, 'realtime_pose.csv'), 'partial trajectory'),
+      writeFile(path.join(staged, 'cpu.csv'), 'partial performance'),
+    ])
+
+    await promoteFailedResultDirectory(staged, output, 'job')
+
+    await expect(readdir(output)).resolves.toEqual(['summary.csv'])
+    await expect(readFile(path.join(output, 'summary.csv'), 'utf8'))
+      .resolves.toContain(',failed,发散')
   })
 })

@@ -5,11 +5,17 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
-from project import ROOT, load_yaml, selected_algorithms
+from project import ROOT, algorithm_manifest, load_yaml, selected_algorithms
+
+
+def path_segment(value: object) -> str:
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", str(value).strip())
+    return safe or "unnamed"
 
 
 def executable_path(build: Path, algorithm: str) -> Path:
@@ -46,7 +52,20 @@ def main() -> int:
     args = parser.parse_args()
     try:
         dataset = load_yaml(args.dataset_manifest)
-        output = args.output or ROOT / "results" / str(dataset["name"]) / args.algorithm
+        bags = dataset.get("bags")
+        if not isinstance(bags, list):
+            raise ValueError("dataset manifest bags must be a list")
+        bag = next((item for item in bags
+                    if isinstance(item, dict) and str(item.get("name")) == args.bag), None)
+        if bag is None:
+            raise ValueError(f"bag not found in dataset manifest: {args.bag}")
+        algorithm_name = algorithm_manifest(args.algorithm)["name"]
+        result_name = "-".join((
+            path_segment(dataset["name"]),
+            path_segment(bag["name"]),
+            path_segment(algorithm_name),
+        ))
+        output = args.output or ROOT / "results" / result_name
         output.mkdir(parents=True, exist_ok=True)
         executable = executable_path(args.build_dir, args.algorithm)
         config = args.config or ROOT / "algorithm" / args.algorithm / "configs" / "default.yaml"

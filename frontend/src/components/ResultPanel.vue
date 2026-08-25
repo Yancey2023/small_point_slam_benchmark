@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
-import type { BenchmarkResult, TrajectoryResponse } from '../../shared/contracts'
-import { fetchResultTrajectory } from '@/api/client'
+import type {
+  BenchmarkResult,
+  DatasetCatalogItem,
+  TrajectoryResponse,
+} from '../../shared/contracts'
+import { fetchDatasetGroundTruth, fetchResultTrajectory } from '@/api/client'
 import HelpTip from '@/components/HelpTip.vue'
 import TrajectoryPlot from '@/components/TrajectoryPlot.vue'
 import { algorithmColor } from '@/presentation'
 
 const props = defineProps<{
+  datasets: DatasetCatalogItem[]
   results: BenchmarkResult[]
 }>()
 
@@ -15,18 +20,72 @@ const availableResults = computed(() => props.results.filter((result) => result.
 const selectedDatasetId = ref<string | null>(null)
 const selectedAlgorithmIds = ref<string[]>([])
 const trajectories = ref<Record<string, TrajectoryResponse>>({})
+const groundTruths = ref<Record<string, TrajectoryResponse>>({})
 const trajectoryVersions = ref<Record<string, string>>({})
 const loadingJobIds = ref(new Set<string>())
+const loadingGroundTruthIds = ref(new Set<string>())
 const errors = ref<Record<string, string>>({})
+const groundTruthErrors = ref<Record<string, string>>({})
 let knownAlgorithmIds = new Set<string>()
 
 const dashByDataset = ['', '9 5', '2 5', '12 4 2 4']
 
-const datasetOptions = computed(() => uniqueOptions('datasetId', 'datasetName'))
-const algorithmOptions = computed(() => uniqueOptions('algorithmId', 'algorithmName'))
+const datasetOptions = computed(() => {
+  const options = new Map<string, { id: string; label: string; hasGroundTruth: boolean }>()
+  for (const job of availableResults.value) {
+    options.set(job.datasetId, {
+      id: job.datasetId,
+      label: `${job.datasetName}/${job.bagName}`,
+      hasGroundTruth: job.hasGroundTruth,
+    })
+  }
+  for (const dataset of props.datasets) {
+    if (!dataset.hasGroundTruth) continue
+    options.set(dataset.id, {
+      id: dataset.id,
+      label: `${dataset.datasetName}/${dataset.bagName}`,
+      hasGroundTruth: true,
+    })
+  }
+  return [...options.values()]
+})
+const algorithmOptions = computed(() => {
+  // Options are scoped to the selected dataset so runs that failed there can be
+  // flagged next to the algorithm name instead of silently disappearing.
+  const byId = new Map<string, {
+    label: string
+    hasTrajectory: boolean
+    failureReason: string | null
+  }>()
+  for (const job of props.results) {
+    if (job.datasetId !== selectedDatasetId.value) continue
+    const entry = byId.get(job.algorithmId) ?? {
+      label: job.algorithmName,
+      hasTrajectory: false,
+      failureReason: null,
+    }
+    entry.label = job.algorithmName
+    if (job.hasTrajectory) entry.hasTrajectory = true
+    if (!entry.failureReason && job.status === 'failed') {
+      entry.failureReason = job.failureReason ?? '算法运行失败'
+    }
+    byId.set(job.algorithmId, entry)
+  }
+  return [...byId]
+    .filter(([, info]) => info.hasTrajectory || info.failureReason !== null)
+    .map(([id, info]) => ({
+      id,
+      label: info.label,
+      failed: !info.hasTrajectory,
+      reason: !info.hasTrajectory ? info.failureReason : null,
+    }))
+})
+const selectableAlgorithmIds = computed(() =>
+  algorithmOptions.value.filter((algorithm) => !algorithm.failed).map((algorithm) => algorithm.id),
+)
 const allAlgorithmsSelected = computed(() =>
-  algorithmOptions.value.length > 0 &&
-  algorithmOptions.value.every((algorithm) => selectedAlgorithmIds.value.includes(algorithm.id)),
+  selectableAlgorithmIds.value.length > 0 &&
+  selectableAlgorithmIds.value.every((id) => selectedAlgorithmIds.value.includes(id)),
 )
 const selectedJobs = computed(() =>
   availableResults.value.filter(
@@ -35,31 +94,41 @@ const selectedJobs = computed(() =>
       selectedAlgorithmIds.value.includes(job.algorithmId),
   ),
 )
+const selectedGroundTruth = computed(() => selectedDatasetId.value
+  ? groundTruths.value[selectedDatasetId.value]
+  : undefined)
 const selectedSeries = computed(() =>
-  selectedJobs.value.flatMap((job) => {
-    const trajectory = trajectories.value[job.id]
-    if (!trajectory) return []
-    const datasetIndex = datasetOptions.value.findIndex((item) => item.id === job.datasetId)
-    return [{
-      id: job.id,
-      label: `${job.datasetName} · ${job.algorithmName} · ${job.runModeName}`,
-      color: algorithmColor(job.algorithmId),
-      dash: dashByDataset[datasetIndex % dashByDataset.length],
-      trajectory,
-    }]
-  }),
+  [
+    ...(selectedGroundTruth.value ? [{
+      id: `ground-truth:${selectedDatasetId.value}`,
+      label: 'Ground truth',
+      color: '#263a43',
+      dash: '7 4',
+      trajectory: selectedGroundTruth.value,
+    }] : []),
+    ...selectedJobs.value.flatMap((job) => {
+      const trajectory = trajectories.value[job.id]
+      if (!trajectory) return []
+      const datasetIndex = datasetOptions.value.findIndex((item) => item.id === job.datasetId)
+      return [{
+        id: job.id,
+        label: `${job.datasetName}/${job.bagName} · ${job.algorithmName} · ${job.runModeName}`,
+        color: algorithmColor(job.algorithmId),
+        dash: dashByDataset[datasetIndex % dashByDataset.length],
+        trajectory,
+      }]
+    }),
+  ],
 )
 
-function uniqueOptions(idKey: 'datasetId' | 'algorithmId', labelKey: 'datasetName' | 'algorithmName') {
-  const options = new Map<string, string>()
-  for (const job of availableResults.value) options.set(job[idKey], job[labelKey])
-  return [...options].map(([id, label]) => ({ id, label }))
-}
+const selectedTrajectoryJobs = computed(() =>
+  availableResults.value.filter((job) => job.datasetId === selectedDatasetId.value),
+)
 
 watch(
-  availableResults,
-  (jobs) => {
-    const datasetIds = new Set(jobs.map((job) => job.datasetId))
+  [datasetOptions, selectedTrajectoryJobs],
+  ([datasets, jobs]) => {
+    const datasetIds = new Set(datasets.map((dataset) => dataset.id))
     const algorithmIds = new Set(jobs.map((job) => job.algorithmId))
     if (!selectedDatasetId.value || !datasetIds.has(selectedDatasetId.value)) {
       selectedDatasetId.value = datasetIds.values().next().value ?? null
@@ -70,6 +139,15 @@ watch(
       knownAlgorithmIds,
     )
     knownAlgorithmIds = algorithmIds
+  },
+  { immediate: true },
+)
+
+watch(
+  selectedDatasetId,
+  (datasetId) => {
+    const dataset = datasetOptions.value.find((item) => item.id === datasetId)
+    if (datasetId && dataset?.hasGroundTruth) void loadGroundTruth(datasetId)
   },
   { immediate: true },
 )
@@ -113,6 +191,26 @@ async function loadJob(result: BenchmarkResult): Promise<void> {
   }
 }
 
+async function loadGroundTruth(datasetId: string): Promise<void> {
+  if (groundTruths.value[datasetId] || loadingGroundTruthIds.value.has(datasetId)) return
+  loadingGroundTruthIds.value = new Set(loadingGroundTruthIds.value).add(datasetId)
+  try {
+    const groundTruth = await fetchDatasetGroundTruth(datasetId)
+    groundTruths.value = { ...groundTruths.value, [datasetId]: groundTruth }
+    const { [datasetId]: _removed, ...remainingErrors } = groundTruthErrors.value
+    groundTruthErrors.value = remainingErrors
+  } catch (reason) {
+    groundTruthErrors.value = {
+      ...groundTruthErrors.value,
+      [datasetId]: reason instanceof Error ? reason.message : String(reason),
+    }
+  } finally {
+    const remaining = new Set(loadingGroundTruthIds.value)
+    remaining.delete(datasetId)
+    loadingGroundTruthIds.value = remaining
+  }
+}
+
 function toggle(selection: string[], id: string): string[] {
   return selection.includes(id) ? selection.filter((item) => item !== id) : [...selection, id]
 }
@@ -120,7 +218,7 @@ function toggle(selection: string[], id: string): string[] {
 function toggleAllAlgorithms(): void {
   selectedAlgorithmIds.value = allAlgorithmsSelected.value
     ? []
-    : algorithmOptions.value.map((algorithm) => algorithm.id)
+    : selectableAlgorithmIds.value
 }
 
 function meters(value: number): string {
@@ -143,6 +241,7 @@ function meters(value: number): string {
         <p>数据集单选、算法多选，并可切换 XY、XZ、YZ 投影</p>
       </div>
       <div class="endpoint-legend">
+        <span class="ground-truth" /> Ground truth
         <span class="hollow" /> 起点
         <span class="solid" /> 终点
       </div>
@@ -172,13 +271,18 @@ function meters(value: number): string {
             v-for="algorithm in algorithmOptions"
             :key="algorithm.id"
             type="button"
-            :aria-pressed="selectedAlgorithmIds.includes(algorithm.id)"
-            :class="{ active: selectedAlgorithmIds.includes(algorithm.id) }"
+            :disabled="algorithm.failed"
+            :aria-pressed="!algorithm.failed && selectedAlgorithmIds.includes(algorithm.id)"
+            :class="{ active: !algorithm.failed && selectedAlgorithmIds.includes(algorithm.id) }"
+            :title="algorithm.reason ?? undefined"
             @click="selectedAlgorithmIds = toggle(selectedAlgorithmIds, algorithm.id)"
           >
-            <span class="checkmark">{{ selectedAlgorithmIds.includes(algorithm.id) ? '✓' : '' }}</span>
+            <span class="checkmark">{{ !algorithm.failed && selectedAlgorithmIds.includes(algorithm.id) ? '✓' : '' }}</span>
             <span class="tab-dot" :style="{ background: algorithmColor(algorithm.id) }" />
-            <span>{{ algorithm.label }}</span>
+            <span class="algorithm-label">
+              <span class="name-text">{{ algorithm.label }}</span>
+              <span v-if="algorithm.failed" class="failed-tag">失败</span>
+            </span>
           </button>
         </fieldset>
       </aside>
@@ -197,15 +301,24 @@ function meters(value: number): string {
           </div>
         </div>
 
-        <div v-if="loadingJobIds.size" class="loading-note">正在读取轨迹…</div>
+        <div v-if="loadingJobIds.size || loadingGroundTruthIds.size" class="loading-note">
+          正在读取轨迹…
+        </div>
         <p v-for="(message, jobId) in errors" :key="jobId" class="plot-error">{{ message }}</p>
+        <p
+          v-if="selectedDatasetId && groundTruthErrors[selectedDatasetId]"
+          class="plot-error"
+        >{{ groundTruthErrors[selectedDatasetId] }}</p>
         <TrajectoryPlot v-if="selectedSeries.length" :series="selectedSeries" />
-        <div v-else-if="!loadingJobIds.size" class="plot-placeholder">
-          请选择至少一个数据集和算法
+        <div
+          v-else-if="!loadingJobIds.size && !loadingGroundTruthIds.size"
+          class="plot-placeholder"
+        >
+          请选择至少一个算法，或选择带 Ground truth 的数据集
         </div>
       </div>
     </div>
-    <p v-else class="empty">完成至少一个任务后即可查看轨迹。</p>
+    <p v-else class="empty">当前没有算法轨迹或 Ground truth 可供显示。</p>
   </section>
 </template>
 
@@ -223,6 +336,7 @@ h2 { margin: 0 0 3px; font-size: 23px; }
 .results-heading p { margin: 0; color: var(--ink-muted); font-size: 13px; }
 .endpoint-legend { display: flex; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 11px; }
 .endpoint-legend span { width: 9px; height: 9px; border: 2px solid #6f8791; border-radius: 50%; }
+.endpoint-legend .ground-truth { width: 20px; height: 0; border: 0; border-top: 2px dashed #263a43; border-radius: 0; }
 .endpoint-legend .solid { margin-left: 7px; background: #6f8791; }
 
 .result-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; }
@@ -264,9 +378,13 @@ legend button { flex: none; padding: 4px 7px; border: 0; border-radius: 7px; col
   text-align: left;
 }
 .result-filters fieldset:last-child > button { grid-template-columns: 21px 9px minmax(0, 1fr); }
-.result-filters fieldset > button:hover { background: #f0f3f1; }
+.result-filters fieldset > button:hover:not(:disabled) { background: #f0f3f1; }
 .result-filters fieldset > button.active { border-color: #cbd7d5; background: #f4f7f5; }
 .result-filters fieldset > button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-filters fieldset > button:disabled { cursor: not-allowed; opacity: 0.62; }
+.algorithm-label { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.failed-tag { flex: none; padding: 2px 6px; border-radius: 999px; color: #a85e62; background: #f9e9ea; font-size: 9px; font-weight: 800; }
 .checkmark { display: grid; width: 20px; height: 20px; place-items: center; border: 1.5px solid #b8c4c5; border-radius: 7px; color: #fff; font-size: 11px; }
 .active .checkmark { border-color: #607c89; background: #607c89; }
 .tab-dot { width: 9px; height: 9px; border-radius: 50%; }

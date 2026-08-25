@@ -1,6 +1,7 @@
 schema_version: 1
-name: Small Point SLAM
-description: Generalized point-wise SLAM using N LiDARs plus one optional IMU, camera and wheel-speed source.
+name: Small Point SLAM (lio mode)
+shared_source: small_point_slam
+description: Generalized LIO-only Small Point SLAM profile using every compatible LiDAR and at most one optional IMU.
 authors: [Yingjie Huang]
 license: Proprietary
 repository:
@@ -15,11 +16,10 @@ dependencies:
   - {name: small_gicp, url: https://github.com/koide3/small_gicp.git}
   - {name: unordered_dense, url: https://github.com/martinus/unordered_dense.git}
 paper: {}
-sensors: [lidar, imu, camera, wheel_speed]
+sensors: [lidar, imu]
 timing_stages:
   - lidar_preprocess
   - imu_preprocess
-  - image_preprocess
   - downsampling
   - state_propagation
   - map_search

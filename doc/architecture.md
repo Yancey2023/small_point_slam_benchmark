@@ -18,9 +18,11 @@ raw CSV + process CPU / resident-memory samples
 
 ## core 接口
 
-- `SensorDefinition`：稳定的传感器 ID、类型、话题、内参、畸变、4x4 外参，以及 reader
-  从实际 bag 探测到的话题/逐点时间/强度可用性。
-- `SensorSample`：纳秒消息时间戳与 `PointCloud/Imu/Image/Gnss/WheelSpeed` variant。
+- `SensorDefinition`：算法可见的稳定传感器 ID、类型、内参、畸变、4x4 外参，以及 reader
+  从实际 bag 探测到的逐点时间/强度可用性；不包含 topic 或 ROS 消息类型。
+- `SensorSample`：纳秒消息时间戳与 benchmark 自有的
+  `PointCloud/Imu/Image/Gnss/WheelSpeed` variant。GNSS 包含定位、原始观测、广播星历、
+  GLONASS 星历、电离层参数和接收机 PVT 等结构化类型，不包含 ROS 序列化字节。
 - `PointCloud`：点数据与等长的 `point_time_offset_ns` 数组，时间相对消息时间戳。
 - `SlamAlgorithm`：初始化并返回数据集兼容性、按时间顺序处理消息、结束处理。
 - `ResultSink`：实时位姿、最终轨迹和任意命名的阶段耗时。
@@ -35,7 +37,8 @@ raw CSV + process CPU / resident-memory samples
 所在目录解析，因此 Windows 和 Linux 不需要不同版本。每个 bag 的 sensor 条目必须有
 唯一 ID 和唯一 topic。
 
-reader 会在算法初始化前读取各配置话题的第一条实际消息。PointCloud2 会检查配置的逐点
+topic 和 ROS message type 只存在于 dataset manifest 与 reader 的输入绑定中，不进入算法
+初始化接口。reader 会在算法初始化前读取各配置数据流的第一条实际消息。PointCloud2 会检查配置的逐点
 时间和强度字段，Livox `CustomMsg` 则提供 `offset_time` 与 `reflectivity`。缺失字段在统一
 点云中填零，使不依赖该字段的 LiDAR-only 算法仍可运行；需要去畸变或强度观测的算法会由
 `initialize` 返回不兼容，runner 不再读取整包，也不会调用 `process/finalize`。

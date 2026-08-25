@@ -38,7 +38,13 @@ const hiddenMetricIds = new Set([
   'message_count',
 ])
 
-const datasetOptions = computed(() => uniqueOptions('datasetId', 'datasetName'))
+const datasetOptions = computed(() => {
+  const options = new Map<string, string>()
+  for (const job of availableResults.value) {
+    options.set(job.datasetId, `${job.datasetName}/${job.bagName}`)
+  }
+  return [...options].map(([id, label]) => ({ id, label }))
+})
 const algorithmOptions = computed(() => uniqueOptions('algorithmId', 'algorithmName'))
 const allAlgorithmsSelected = computed(() =>
   algorithmOptions.value.length > 0 &&
@@ -97,7 +103,9 @@ const charts = computed(() =>
       if (!metric) return []
       return [{
         id: job.id,
-        label: `${job.datasetName} · ${job.algorithmName} · ${job.runModeName}`,
+        // The dataset is already selected above the chart. Repeating its long
+        // name here leaves too little room for the algorithm being compared.
+        label: `${job.algorithmName} · ${job.runModeName}`,
         value: metric.value,
         color: algorithmColor(job.algorithmId),
         lowerIsBetter: metric.lowerIsBetter,
