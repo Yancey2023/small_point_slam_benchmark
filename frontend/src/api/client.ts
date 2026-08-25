@@ -1,6 +1,7 @@
 import type {
   CatalogResponse,
   AccuracyResponse,
+  EndPoseResponse,
   ResultsResponse,
   CreateRunRequest,
   PerformanceResponse,
@@ -80,6 +81,15 @@ export async function fetchDatasetGroundTruth(datasetId: string): Promise<Trajec
     return groundTruth
   }
   return request(`/api/datasets/${encodeURIComponent(datasetId)}/ground-truth`)
+}
+
+export async function fetchDatasetEndPose(datasetId: string): Promise<EndPoseResponse> {
+  if (isStaticReport) {
+    const endPose = (await loadStaticReport()).endPoses?.[datasetId]
+    if (!endPose) throw new Error('静态报告中没有该数据集的真实终点')
+    return endPose
+  }
+  return request(`/api/datasets/${encodeURIComponent(datasetId)}/end-pose`)
 }
 
 export async function fetchResultPerformance(resultId: string): Promise<PerformanceResponse> {

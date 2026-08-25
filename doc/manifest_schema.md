@@ -23,18 +23,29 @@ sensor 包含 `id/name/type/enabled/topic/message_type/calibration`，并按实�
 bag 可选 `max_output_position_m`（正数，缺省 2000）限制算法输出位姿离原点的最大距离：
 超过该值或输出非有限值的运行会被判为失败，失败原因会写进 summary 并显示在网页上。
 大尺度数据集可按 bag 调高该值。
-带轨迹真值的 bag 可增加 `ground_truth`，目前支持 TUM 格式：
+带轨迹真值的 bag 可增加 `ground_truth`，支持两种格式：
 
 ```yaml
 ground_truth:
   path: /data/sequence.txt
-  format: tum
+  format: tum              # 缺省按 TUM 处理
   max_time_difference_ms: 100
 ```
 
-TUM 每行依次为秒级时间戳、`x y z qx qy qz qw`。网页会把真值叠加到轨迹图，
-并在刚体 SE(3) 对齐（不校正尺度）后计算 ATE RMSE；时间戳不足以匹配或算法没有
-生成有效轨迹时，精度结果显示“失败”。
+TUM 每行依次为秒级时间戳、`x y z qx qy qz qw`。网页会把真值叠加到轨迹图：
+真值起点先平移到原点，再按初始朝向与第一条算法轨迹对齐，解决真值世界系与算法
+系起点/朝向不一致导致的无法重叠；精度仍按刚体 SE(3) 对齐（不校正尺度）后的
+ATE RMSE 计算。时间戳不足以匹配或算法没有生成有效轨迹时，精度结果显示“失败”。
+
+只发布终点位姿的序列可改用 `format: end_pose`：文件内容为 3×3 旋转矩阵（行优先）
+加 3×1 平移（相对起点的真实终点），可附带 `bag_time: NNs` 时长行。网页会在轨迹图上
+用菱形标出“真实终点”，精度对比改为计算算法末位姿到该真实终点的欧氏距离。
+
+```yaml
+ground_truth:
+  path: /rosbag/M3DGR/LiDAR_Degeneration/Corridor01.txt
+  format: end_pose
+```
 点云传感器可用 `point_time_field` 和 `intensity_field` 指定原始消息中的逐点时间及强度
 字段；默认分别为 `time` 和 `intensity`。runner 会从 PointCloud2 的首条实际消息验证这两个
 字段是否存在，而不是只相信 manifest。存在的强度写入每个 `PointXYZIR::intensity`；Livox

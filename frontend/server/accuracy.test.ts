@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { calculateAteRmse } from './accuracy.js'
+import { calculateAteRmse, calculateEndPointError } from './accuracy.js'
 
 describe('ATE RMSE', () => {
   it('removes a rigid rotation and translation without scale correction', () => {
@@ -26,5 +26,21 @@ describe('ATE RMSE', () => {
       reference: [number, number, number]
     }>
     expect(calculateAteRmse(pairs)).toBeGreaterThan(0.5)
+  })
+})
+
+describe('endpoint error', () => {
+  it('measures straight-line distance to the true end pose', () => {
+    expect(calculateEndPointError(
+      { x: 3, y: 4, z: 12 },
+      { x: 0, y: 0, z: 0 },
+    )).toBeCloseTo(13, 9)
+  })
+
+  it('is zero when the algorithm ends exactly on the true end point', () => {
+    expect(calculateEndPointError(
+      { x: 1.25, y: -2.5, z: 0.75 },
+      { x: 1.25, y: -2.5, z: 0.75 },
+    )).toBe(0)
   })
 })

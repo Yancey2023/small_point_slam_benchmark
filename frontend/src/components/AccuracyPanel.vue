@@ -72,6 +72,22 @@ function formatAte(value: number): string {
   if (value < 0.01) return `${(value * 1000).toFixed(1)} mm`
   return `${value.toFixed(value < 1 ? 3 : 2)} m`
 }
+
+const isEndPoseMode = computed(() => selectedJobs.value[0]?.groundTruthFormat === 'end_pose')
+
+function accuracyValue(jobId: string): number {
+  const accuracy = accuracies.value[jobId]!
+  return accuracy.metric === 'end_pose'
+    ? accuracy.endpointErrorMeters!
+    : accuracy.ateRmseMeters!
+}
+
+function accuracyNote(jobId: string): string {
+  const accuracy = accuracies.value[jobId]!
+  return accuracy.metric === 'end_pose'
+    ? '算法终点相对真实终点的偏差'
+    : `${accuracy.matchedPoseCount.toLocaleString()} 对匹配位姿`
+}
 </script>
 
 <template>
@@ -81,12 +97,16 @@ function formatAte(value: number): string {
         <div class="heading-title">
           <h2 id="accuracy-title">精度对比</h2>
           <HelpTip
-            text="ATE RMSE 使用时间戳匹配后的轨迹点，并通过 SE(3) 刚体对齐消除初始坐标系差异；不进行尺度校正，数值越低越好。"
+            :text="isEndPoseMode
+              ? '该数据集只提供真实终点位姿：终点误差是算法轨迹最后一个位姿与真实终点之间的欧氏距离，数值越低越好。'
+              : 'ATE RMSE 使用时间戳匹配后的轨迹点，并通过 SE(3) 刚体对齐消除初始坐标系差异；不进行尺度校正，数值越低越好。'"
             label="查看精度对比说明"
             align="start"
           />
         </div>
-        <p>有 ground truth 的数据集逐算法给出 ATE RMSE，无法计算时明确标记失败</p>
+        <p>{{ isEndPoseMode
+          ? '该数据集只提供真实终点位姿，逐算法给出终点误差，无法计算时明确标记失败'
+          : '有 ground truth 的数据集逐算法给出 ATE RMSE，无法计算时明确标记失败' }}</p>
       </div>
       <div v-if="datasetOptions.length" class="dataset-select-wrap">
         <select v-model="selectedDatasetId" aria-label="选择精度对比数据集">
@@ -113,8 +133,8 @@ function formatAte(value: number): string {
           v-else-if="accuracies[job.id]?.status === 'success'"
           class="success"
         >
-          <strong>{{ formatAte(accuracies[job.id]!.ateRmseMeters!) }}</strong>
-          <small>{{ accuracies[job.id]!.matchedPoseCount.toLocaleString() }} 对匹配位姿</small>
+          <strong>{{ formatAte(accuracyValue(job.id)) }}</strong>
+          <small>{{ accuracyNote(job.id) }}</small>
         </div>
         <div
           v-else-if="accuracies[job.id]"

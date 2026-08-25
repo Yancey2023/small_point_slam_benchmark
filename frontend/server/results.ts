@@ -160,6 +160,7 @@ export async function discoverResults(
         hasTrajectory: visibleTrajectory,
         hasPerformance,
         hasGroundTruth: dataset.hasGroundTruth,
+        groundTruthFormat: dataset.groundTruthFormat,
         status: failed ? 'failed' : 'completed',
         failureReason: failed
           ? summary.reason ?? (summary.status === 'incomplete' ? '运行结果不完整' : '算法运行失败')

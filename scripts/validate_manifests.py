@@ -118,8 +118,14 @@ def main() -> int:
                     if not isinstance(ground_truth, dict):
                         raise ValueError(f"{location} ground_truth must be a mapping")
                     require(ground_truth, ("path", "format"), f"{location} ground_truth")
+                    if ground_truth["format"] == "end_pose":
+                        # A single true end pose (rotation matrix + translation
+                        # relative to the start); no timestamp matching config.
+                        continue
                     if ground_truth["format"] != "tum":
-                        raise ValueError(f"{location} only supports TUM ground truth")
+                        raise ValueError(
+                            f"{location} ground truth format must be 'tum' or 'end_pose'"
+                        )
                     maximum = ground_truth.get("max_time_difference_ms", 100)
                     if not isinstance(maximum, (int, float)) or maximum <= 0:
                         raise ValueError(

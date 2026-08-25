@@ -117,6 +117,9 @@ export async function loadCatalog(
       const visibleSensors = sensorInventory.filter((sensor) => sensor.enabled !== false)
       const groundTruth = record(bag.ground_truth)
       const configuredGroundTruthPath = String(groundTruth.path ?? '')
+      const groundTruthFormat = String(groundTruth.format ?? 'tum') === 'end_pose'
+        ? 'end_pose'
+        : 'tum'
       const groundTruthPath = configuredGroundTruthPath
         ? (path.isAbsolute(configuredGroundTruthPath)
             ? configuredGroundTruthPath
@@ -126,6 +129,7 @@ export async function loadCatalog(
       const relativeManifest = path.relative(path.join(projectRoot, 'datasets'), manifestPath)
       const id = `${relativeManifest}#${bagName}`
       const rawMessageCount = Number(bag.message_count)
+      const groundTruthAvailable = groundTruthPath !== null && await exists(groundTruthPath)
       datasets.set(id, {
         id,
         datasetName,
@@ -139,7 +143,8 @@ export async function loadCatalog(
         expectedMessages:
           Number.isSafeInteger(rawMessageCount) && rawMessageCount > 0 ? rawMessageCount : null,
         sourceAvailable: await exists(bagPath),
-        hasGroundTruth: groundTruthPath !== null && await exists(groundTruthPath),
+        hasGroundTruth: groundTruthAvailable,
+        groundTruthFormat: groundTruthAvailable ? groundTruthFormat : undefined,
         manifestPath,
         bagPath,
         groundTruthPath,

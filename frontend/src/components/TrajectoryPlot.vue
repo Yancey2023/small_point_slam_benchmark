@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
-import type { TrajectoryResponse } from '../../shared/contracts'
+import type { EndPoseResponse, TrajectoryResponse } from '../../shared/contracts'
 
 interface TrajectorySeries {
   id: string
@@ -11,7 +11,10 @@ interface TrajectorySeries {
   trajectory: TrajectoryResponse
 }
 
-const props = defineProps<{ series: TrajectorySeries[] }>()
+const props = defineProps<{
+  series: TrajectorySeries[]
+  trueEndPoint?: EndPoseResponse | null
+}>()
 
 type Projection = 'xy' | 'xz' | 'yz'
 const projection = ref<Projection>('xy')
@@ -23,15 +26,17 @@ const labels: Record<Projection, [string, string]> = {
 }
 
 const plot = computed(() => {
+  const project = (point: { x: number; y: number; z: number }): readonly [number, number] => {
+    if (projection.value === 'xz') return [point.x, point.z]
+    if (projection.value === 'yz') return [point.y, point.z]
+    return [point.x, point.y]
+  }
   const projected = props.series.map((item) => ({
     ...item,
-    values: item.trajectory.points.map((point) => {
-      if (projection.value === 'xz') return [point.x, point.z] as const
-      if (projection.value === 'yz') return [point.y, point.z] as const
-      return [point.x, point.y] as const
-    }),
+    values: item.trajectory.points.map(project),
   }))
-  const allValues = projected.flatMap((item) => item.values)
+  const endPoseValues = props.trueEndPoint ? [project(props.trueEndPoint)] : []
+  const allValues = [...projected.flatMap((item) => item.values), ...endPoseValues]
   const minA = allValues.length ? Math.min(...allValues.map((point) => point[0])) : 0
   const maxA = allValues.length ? Math.max(...allValues.map((point) => point[0])) : 1
   const minB = allValues.length ? Math.min(...allValues.map((point) => point[1])) : 0
@@ -57,6 +62,7 @@ const plot = computed(() => {
         end: points.at(-1) ?? { x: 0, y: 0 },
       }
     }),
+    trueEnd: props.trueEndPoint ? toScreen(endPoseValues[0]!) : null,
     minA,
     maxA,
     minB,
@@ -128,6 +134,21 @@ function meters(value: number): string {
             :style="{ fill: item.color }"
           />
         </g>
+        <g v-if="plot.trueEnd" class="true-end-group">
+          <path
+            class="true-end-diamond"
+            :d="`M ${plot.trueEnd.x.toFixed(2)} ${(plot.trueEnd.y - 9).toFixed(2)}
+                 L ${(plot.trueEnd.x + 9).toFixed(2)} ${plot.trueEnd.y.toFixed(2)}
+                 L ${plot.trueEnd.x.toFixed(2)} ${(plot.trueEnd.y + 9).toFixed(2)}
+                 L ${(plot.trueEnd.x - 9).toFixed(2)} ${plot.trueEnd.y.toFixed(2)} Z`"
+          />
+          <text
+            class="true-end-label"
+            :x="plot.trueEnd.x"
+            :y="(plot.trueEnd.y - 13).toFixed(2)"
+            text-anchor="middle"
+          >真实终点</text>
+        </g>
       </svg>
       <span class="axis axis-x">{{ labels[projection][0] }}</span>
       <span class="axis axis-y">{{ labels[projection][1] }}</span>
@@ -191,6 +212,8 @@ svg { display: block; width: 100%; height: auto; min-height: 280px; }
 }
 .start-marker { fill: #fff; stroke-width: 2.5; }
 .end-marker { stroke: #fff; stroke-width: 2; }
+.true-end-diamond { fill: #fff; stroke: #b0575e; stroke-width: 2.5; stroke-linejoin: round; }
+.true-end-label { fill: #a85e62; font-size: 11px; font-weight: 800; paint-order: stroke; stroke: rgba(255,255,255,.85); stroke-width: 3px; }
 .axis, .range { position: absolute; color: #89959a; font-size: 10px; font-weight: 800; }
 .axis-x { right: 14px; bottom: 8px; }
 .axis-y { top: 10px; left: 13px; }

@@ -4,9 +4,11 @@ import { computed, ref, watch } from 'vue'
 import type {
   BenchmarkResult,
   DatasetCatalogItem,
+  EndPoseResponse,
   TrajectoryResponse,
 } from '../../shared/contracts'
-import { fetchDatasetGroundTruth, fetchResultTrajectory } from '@/api/client'
+import { alignGroundTruthToReference } from '../../shared/trajectory_transformations'
+import { fetchDatasetEndPose, fetchDatasetGroundTruth, fetchResultTrajectory } from '@/api/client'
 import HelpTip from '@/components/HelpTip.vue'
 import TrajectoryPlot from '@/components/TrajectoryPlot.vue'
 import { algorithmColor } from '@/presentation'
@@ -26,17 +28,25 @@ const loadingJobIds = ref(new Set<string>())
 const loadingGroundTruthIds = ref(new Set<string>())
 const errors = ref<Record<string, string>>({})
 const groundTruthErrors = ref<Record<string, string>>({})
+const endPoses = ref<Record<string, EndPoseResponse>>({})
+const endPoseErrors = ref<Record<string, string>>({})
 let knownAlgorithmIds = new Set<string>()
 
 const dashByDataset = ['', '9 5', '2 5', '12 4 2 4']
 
 const datasetOptions = computed(() => {
-  const options = new Map<string, { id: string; label: string; hasGroundTruth: boolean }>()
+  const options = new Map<string, {
+    id: string
+    label: string
+    hasGroundTruth: boolean
+    groundTruthFormat?: 'tum' | 'end_pose'
+  }>()
   for (const job of availableResults.value) {
     options.set(job.datasetId, {
       id: job.datasetId,
       label: `${job.datasetName}/${job.bagName}`,
       hasGroundTruth: job.hasGroundTruth,
+      groundTruthFormat: job.groundTruthFormat,
     })
   }
   for (const dataset of props.datasets) {
@@ -45,6 +55,7 @@ const datasetOptions = computed(() => {
       id: dataset.id,
       label: `${dataset.datasetName}/${dataset.bagName}`,
       hasGroundTruth: true,
+      groundTruthFormat: dataset.groundTruthFormat ?? 'tum',
     })
   }
   return [...options.values()]
@@ -97,14 +108,25 @@ const selectedJobs = computed(() =>
 const selectedGroundTruth = computed(() => selectedDatasetId.value
   ? groundTruths.value[selectedDatasetId.value]
   : undefined)
+// Ground truth is recorded in its own world frame: shift the start to the origin
+// and rotate the initial heading onto the first plotted algorithm trajectory so
+// both paths overlap. Without an algorithm trajectory only the translation applies.
+const alignedGroundTruth = computed(() => {
+  const groundTruth = selectedGroundTruth.value
+  if (!groundTruth) return undefined
+  const reference = selectedJobs.value
+    .map((job) => trajectories.value[job.id])
+    .find((trajectory) => trajectory !== undefined)
+  return alignGroundTruthToReference(groundTruth, reference)
+})
 const selectedSeries = computed(() =>
   [
-    ...(selectedGroundTruth.value ? [{
+    ...(alignedGroundTruth.value ? [{
       id: `ground-truth:${selectedDatasetId.value}`,
       label: 'Ground truth',
       color: '#263a43',
       dash: '7 4',
-      trajectory: selectedGroundTruth.value,
+      trajectory: alignedGroundTruth.value,
     }] : []),
     ...selectedJobs.value.flatMap((job) => {
       const trajectory = trajectories.value[job.id]
@@ -147,7 +169,9 @@ watch(
   selectedDatasetId,
   (datasetId) => {
     const dataset = datasetOptions.value.find((item) => item.id === datasetId)
-    if (datasetId && dataset?.hasGroundTruth) void loadGroundTruth(datasetId)
+    if (!datasetId || !dataset?.hasGroundTruth) return
+    if (dataset.groundTruthFormat === 'end_pose') void loadEndPose(datasetId)
+    else void loadGroundTruth(datasetId)
   },
   { immediate: true },
 )
@@ -211,6 +235,25 @@ async function loadGroundTruth(datasetId: string): Promise<void> {
   }
 }
 
+async function loadEndPose(datasetId: string): Promise<void> {
+  if (endPoses.value[datasetId]) return
+  try {
+    const endPose = await fetchDatasetEndPose(datasetId)
+    endPoses.value = { ...endPoses.value, [datasetId]: endPose }
+    const { [datasetId]: _removed, ...remainingErrors } = endPoseErrors.value
+    endPoseErrors.value = remainingErrors
+  } catch (reason) {
+    endPoseErrors.value = {
+      ...endPoseErrors.value,
+      [datasetId]: reason instanceof Error ? reason.message : String(reason),
+    }
+  }
+}
+
+const selectedEndPose = computed(() => selectedDatasetId.value
+  ? endPoses.value[selectedDatasetId.value]
+  : undefined)
+
 function toggle(selection: string[], id: string): string[] {
   return selection.includes(id) ? selection.filter((item) => item !== id) : [...selection, id]
 }
@@ -233,7 +276,7 @@ function meters(value: number): string {
         <div class="heading-title">
           <h2 id="result-title">轨迹对比</h2>
           <HelpTip
-            text="切换 XY、XZ、YZ 可以从不同方向查看路线。轨迹长度只表示移动距离，不代表算法精度。"
+            text="切换 XY、XZ、YZ 可以从不同方向查看路线。轨迹长度只表示移动距离，不代表算法精度。TUM 真值起点会平移到原点，并按初始朝向与第一条算法轨迹对齐后叠加；只提供终点位姿的数据集会用菱形标出真实终点。"
             label="查看轨迹对比说明"
             align="start"
           />
@@ -241,7 +284,12 @@ function meters(value: number): string {
         <p>数据集单选、算法多选，并可切换 XY、XZ、YZ 投影</p>
       </div>
       <div class="endpoint-legend">
-        <span class="ground-truth" /> Ground truth
+        <template v-if="alignedGroundTruth">
+          <span class="ground-truth" /> Ground truth
+        </template>
+        <template v-if="selectedEndPose">
+          <span class="true-end" /> 真实终点
+        </template>
         <span class="hollow" /> 起点
         <span class="solid" /> 终点
       </div>
@@ -309,7 +357,14 @@ function meters(value: number): string {
           v-if="selectedDatasetId && groundTruthErrors[selectedDatasetId]"
           class="plot-error"
         >{{ groundTruthErrors[selectedDatasetId] }}</p>
-        <TrajectoryPlot v-if="selectedSeries.length" :series="selectedSeries" />
+        <TrajectoryPlot
+          v-if="selectedSeries.length"
+          :series="selectedSeries"
+          :true-end-point="selectedEndPose"
+        />
+        <p v-if="selectedDatasetId && endPoseErrors[selectedDatasetId]" class="plot-error">
+          {{ endPoseErrors[selectedDatasetId] }}
+        </p>
         <div
           v-else-if="!loadingJobIds.size && !loadingGroundTruthIds.size"
           class="plot-placeholder"
@@ -337,6 +392,7 @@ h2 { margin: 0 0 3px; font-size: 23px; }
 .endpoint-legend { display: flex; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 11px; }
 .endpoint-legend span { width: 9px; height: 9px; border: 2px solid #6f8791; border-radius: 50%; }
 .endpoint-legend .ground-truth { width: 20px; height: 0; border: 0; border-top: 2px dashed #263a43; border-radius: 0; }
+.endpoint-legend .true-end { width: 8px; height: 8px; border-color: #b0575e; background: #fff; border-radius: 2px; transform: rotate(45deg); }
 .endpoint-legend .solid { margin-left: 7px; background: #6f8791; }
 
 .result-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; }

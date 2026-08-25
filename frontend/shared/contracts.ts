@@ -1,5 +1,18 @@
 export type RunStatus = 'queued' | 'running' | 'completed' | 'skipped' | 'failed' | 'cancelled'
 export type RunMode = 'full_speed' | 'realtime'
+// Ground truth flavors: a full TUM trajectory, or a single true end pose
+// (rotation matrix + translation relative to the start) for sequences that only
+// publish where the robot ended.
+export type GroundTruthFormat = 'tum' | 'end_pose'
+
+export interface EndPoseResponse {
+  // True end-point position in the start frame, meters.
+  x: number
+  y: number
+  z: number
+  quaternionXyzw: [number, number, number, number]
+  bagTimeSeconds: number | null
+}
 
 export interface RunModeCatalogItem {
   id: RunMode
@@ -18,6 +31,7 @@ export interface DatasetCatalogItem {
   expectedMessages: number | null
   sourceAvailable: boolean
   hasGroundTruth: boolean
+  groundTruthFormat?: GroundTruthFormat
 }
 
 export interface AlgorithmCatalogItem {
@@ -84,6 +98,7 @@ export interface BenchmarkResult {
   hasTrajectory: boolean
   hasPerformance: boolean
   hasGroundTruth: boolean
+  groundTruthFormat?: GroundTruthFormat
   status?: 'completed' | 'failed'
   failureReason?: string | null
   updatedAt: string
@@ -117,7 +132,11 @@ export interface TrajectoryResponse {
 
 export interface AccuracyResponse {
   status: 'success' | 'failed'
+  // 'ate' (default): SE(3) aligned full-trajectory RMSE. 'end_pose': distance
+  // between the algorithm end point and the dataset's true end pose.
+  metric?: 'ate' | 'end_pose'
   ateRmseMeters: number | null
+  endpointErrorMeters?: number | null
   matchedPoseCount: number
   reason: string | null
 }
@@ -158,4 +177,7 @@ export interface StaticReport {
   // Stored once per bag so Ground truth can be rendered without selecting or
   // even having a successful algorithm trajectory.
   groundTruth?: Record<string, TrajectoryResponse>
+  // True end poses for bags whose ground truth is a single final pose instead
+  // of a full TUM trajectory.
+  endPoses?: Record<string, EndPoseResponse>
 }

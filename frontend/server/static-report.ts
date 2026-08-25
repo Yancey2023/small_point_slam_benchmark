@@ -5,8 +5,9 @@ import type {
   StaticBenchmarkResult,
   StaticReport,
 } from '../shared/contracts.js'
-import { failedAccuracy, readAccuracy } from './accuracy.js'
+import { failedAccuracy, readAccuracy, readEndPoseAccuracy } from './accuracy.js'
 import { loadCatalog } from './catalog.js'
+import { readEndPose } from './end_pose.js'
 import { readPerformance } from './performance.js'
 import { discoverResults } from './results.js'
 import { readGroundTruth, readTrajectory } from './trajectory.js'
@@ -25,9 +26,13 @@ export async function buildStaticReport(
   const discovered = await discoverResults(projectRoot, runtimeCatalog)
   const results: StaticBenchmarkResult[] = []
   const groundTruth: StaticReport['groundTruth'] = {}
+  const endPoses: StaticReport['endPoses'] = {}
 
   for (const dataset of runtimeCatalog.datasets.values()) {
-    if (dataset.hasGroundTruth && dataset.groundTruthPath) {
+    if (!dataset.hasGroundTruth || !dataset.groundTruthPath) continue
+    if (dataset.groundTruthFormat === 'end_pose') {
+      endPoses[dataset.id] = await readEndPose(dataset.groundTruthPath)
+    } else {
       groundTruth[dataset.id] = await readGroundTruth(dataset.groundTruthPath)
     }
   }
@@ -53,11 +58,16 @@ export async function buildStaticReport(
       ...(result.hasGroundTruth
         ? { accuracy: result.status === 'failed'
             ? failedAccuracy(result.failureReason ?? '算法运行失败')
-            : await readAccuracy(
-                path.join(absoluteOutputDirectory, 'final_trajectory.csv'),
-                absoluteGroundTruthPath,
-                groundTruthMaxTimeDifferenceMs,
-              ) }
+            : result.groundTruthFormat === 'end_pose'
+              ? await readEndPoseAccuracy(
+                  path.join(absoluteOutputDirectory, 'final_trajectory.csv'),
+                  absoluteGroundTruthPath ?? '',
+                )
+              : await readAccuracy(
+                  path.join(absoluteOutputDirectory, 'final_trajectory.csv'),
+                  absoluteGroundTruthPath,
+                  groundTruthMaxTimeDifferenceMs,
+                ) }
         : {}),
     })
   }
@@ -71,6 +81,7 @@ export async function buildStaticReport(
     },
     results,
     groundTruth,
+    ...(Object.keys(endPoses).length > 0 ? { endPoses } : {}),
   }
 }
 
@@ -98,6 +109,20 @@ export function validateStaticReport(value: unknown): asserts value is StaticRep
     const trajectory = record(rawTrajectory)
     if (!trajectory || !Array.isArray(trajectory.points) || trajectory.points.length === 0) {
       throw new Error(`静态报告数据集 ${datasetId} 缺少有效 Ground truth`)
+    }
+  }
+
+  const endPoses = record(report.endPoses)
+  if (report.endPoses !== undefined && !endPoses) {
+    throw new Error('静态报告真实终点必须按数据集 ID 保存')
+  }
+  for (const [datasetId, rawEndPose] of Object.entries(endPoses ?? {})) {
+    const endPose = record(rawEndPose)
+    if (!endPose ||
+        ![endPose.x, endPose.y, endPose.z].every((value) => typeof value === 'number' &&
+          Number.isFinite(value)) ||
+        !Array.isArray(endPose.quaternionXyzw)) {
+      throw new Error(`静态报告数据集 ${datasetId} 缺少有效真实终点`)
     }
   }
 
@@ -134,7 +159,12 @@ export function validateStaticReport(value: unknown): asserts value is StaticRep
       if (!accuracy || !['success', 'failed'].includes(String(accuracy.status))) {
         throw new Error(`静态报告结果 ${result.id} 缺少预计算精度`)
       }
-      if (accuracy.status === 'success' &&
+      if (accuracy.status === 'success' && String(accuracy.metric ?? 'ate') === 'end_pose') {
+        if (typeof accuracy.endpointErrorMeters !== 'number' ||
+            !Number.isFinite(accuracy.endpointErrorMeters)) {
+          throw new Error(`静态报告结果 ${result.id} 包含无效终点误差`)
+        }
+      } else if (accuracy.status === 'success' &&
           (typeof accuracy.ateRmseMeters !== 'number' ||
            !Number.isFinite(accuracy.ateRmseMeters))) {
         throw new Error(`静态报告结果 ${result.id} 包含无效 ATE RMSE`)

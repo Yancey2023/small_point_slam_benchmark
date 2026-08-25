@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises'
 
 import type { AccuracyResponse, TrajectoryPoint } from '../shared/contracts.js'
+import { readEndPose } from './end_pose.js'
 import { readGroundTruthPoints, readTrajectoryPoints } from './trajectory.js'
 
 interface Pair {
@@ -10,6 +11,52 @@ interface Pair {
 
 export function failedAccuracy(reason: string): AccuracyResponse {
   return { status: 'failed', ateRmseMeters: null, matchedPoseCount: 0, reason }
+}
+
+/**
+ * Distance between the last estimated pose and the dataset's true end pose.
+ * Both are already expressed in the start frame (LIO output starts at the
+ * identity), so no alignment is needed.
+ */
+export function calculateEndPointError(
+  estimate: { x: number; y: number; z: number },
+  truth: { x: number; y: number; z: number },
+): number {
+  return Math.hypot(estimate.x - truth.x, estimate.y - truth.y, estimate.z - truth.z)
+}
+
+export async function readEndPoseAccuracy(
+  trajectoryPath: string,
+  endPosePath: string,
+): Promise<AccuracyResponse> {
+  try {
+    await access(trajectoryPath)
+  } catch {
+    return failedAccuracy('算法未生成有效轨迹')
+  }
+  try {
+    const [points, endPose] = await Promise.all([
+      readTrajectoryPoints(trajectoryPath),
+      readEndPose(endPosePath),
+    ])
+    const last = points.at(-1)
+    if (!last) return failedAccuracy('算法未生成有效轨迹')
+    const error = calculateEndPointError(last, endPose)
+    if (!Number.isFinite(error)) return failedAccuracy('终点误差计算结果无效')
+    return {
+      status: 'success',
+      metric: 'end_pose',
+      ateRmseMeters: null,
+      endpointErrorMeters: error,
+      matchedPoseCount: 1,
+      reason: null,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return failedAccuracy(message
+      .replaceAll(trajectoryPath, '算法轨迹文件')
+      .replaceAll(endPosePath, 'ground truth 文件'))
+  }
 }
 
 function timestamp(point: TrajectoryPoint): bigint {

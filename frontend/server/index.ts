@@ -4,8 +4,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { CreateRunRequest } from '../shared/contracts.js'
-import { failedAccuracy, readAccuracy } from './accuracy.js'
+import { failedAccuracy, readAccuracy, readEndPoseAccuracy } from './accuracy.js'
 import { loadCatalog } from './catalog.js'
+import { readEndPose } from './end_pose.js'
 import { readPerformance } from './performance.js'
 import { discoverResults, publicResults, type DiscoveredResult } from './results.js'
 import { RunManager } from './run-manager.js'
@@ -132,7 +133,26 @@ const server = createServer(async (request, response) => {
         sendJson(response, 404, { error: '该数据集没有可用的 Ground truth' })
         return
       }
-      sendJson(response, 200, await readGroundTruth(dataset.groundTruthPath))
+      if (dataset.groundTruthFormat === 'end_pose') {
+        sendJson(response, 200, await readEndPose(dataset.groundTruthPath))
+      } else {
+        sendJson(response, 200, await readGroundTruth(dataset.groundTruthPath))
+      }
+      return
+    }
+
+    const endPoseMatch = url.pathname.match(
+      /^\/api\/datasets\/([^/]+)\/end-pose$/,
+    )
+    if (request.method === 'GET' && endPoseMatch) {
+      const catalog = await loadCatalog(projectRoot, buildDirectory)
+      const dataset = catalog.datasets.get(decodeURIComponent(endPoseMatch[1]!))
+      if (!dataset?.hasGroundTruth || !dataset.groundTruthPath ||
+          dataset.groundTruthFormat !== 'end_pose') {
+        sendJson(response, 404, { error: '该数据集没有真实终点位姿' })
+        return
+      }
+      sendJson(response, 200, await readEndPose(dataset.groundTruthPath))
       return
     }
 
@@ -226,7 +246,7 @@ const server = createServer(async (request, response) => {
         const trajectory = await readTrajectory(
           path.join(result.absoluteOutputDirectory, 'final_trajectory.csv'),
         )
-        if (result.absoluteGroundTruthPath) {
+        if (result.absoluteGroundTruthPath && result.groundTruthFormat !== 'end_pose') {
           trajectory.groundTruth = await readGroundTruth(result.absoluteGroundTruthPath)
         }
         sendJson(response, 200, trajectory)
@@ -243,6 +263,13 @@ const server = createServer(async (request, response) => {
         }
         if (result.status === 'failed') {
           sendJson(response, 200, failedAccuracy(result.failureReason ?? '算法运行失败'))
+          return
+        }
+        if (result.groundTruthFormat === 'end_pose' && result.absoluteGroundTruthPath) {
+          sendJson(response, 200, await readEndPoseAccuracy(
+            path.join(result.absoluteOutputDirectory, 'final_trajectory.csv'),
+            result.absoluteGroundTruthPath,
+          ))
           return
         }
         sendJson(response, 200, await readAccuracy(

@@ -170,6 +170,9 @@ bags:
   - name: LiDAR Degeneration / Corridor01
     path: /media/yancey/New Volume2/project/rosbag/M3DGR/LiDAR_Degeneration/Corridor01.bag
     message_count: 80513
+    ground_truth:
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/LiDAR_Degeneration/Corridor01.txt
+      format: end_pose
     sensors: &base_with_cv
       [*mid360_lidar, *mid360_imu, *avia_lidar, *avia_imu, *d435i_imu,
        *d435i_rgb, *d435i_depth, *wheel_odometry, *cv_camera]
@@ -178,18 +181,27 @@ bags:
   - name: LiDAR Degeneration / Corridor02
     path: /media/yancey/New Volume2/project/rosbag/M3DGR/LiDAR_Degeneration/Corridor02.bag
     message_count: 61606
+    ground_truth:
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/LiDAR_Degeneration/Corridor02.txt
+      format: end_pose
     sensors: *base_with_cv
     sensor_inventory: *base_with_cv
 
   - name: LiDAR Degeneration / Elevator01
     path: /media/yancey/New Volume2/project/rosbag/M3DGR/LiDAR_Degeneration/Elevator01.bag
     message_count: 146960
+    ground_truth:
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/LiDAR_Degeneration/Elevator01.txt
+      format: end_pose
     sensors: *base_with_cv
     sensor_inventory: *base_with_cv
 
   - name: GNSS Denied / GNSS-denial01
     path: /media/yancey/New Volume2/project/rosbag/M3DGR/GNSS_Denied/GNSS-denial01.bag
     message_count: 128024
+    ground_truth:
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/GNSS_Denied/GNSS-denial01.txt
+      format: end_pose
     sensors: &base_with_cv_gnss
       [*mid360_lidar, *mid360_imu, *avia_lidar, *avia_imu, *d435i_imu,
        *d435i_rgb, *d435i_depth, *wheel_odometry, *cv_camera, *ublox_gnss,
@@ -200,6 +212,9 @@ bags:
   - name: GNSS Denied / GNSS-denial02
     path: /media/yancey/New Volume2/project/rosbag/M3DGR/GNSS_Denied/GNSS-denial02.bag
     message_count: 157571
+    ground_truth:
+      path: /media/yancey/New Volume2/project/rosbag/M3DGR/GNSS_Denied/GNSS-denial02.txt
+      format: end_pose
     sensors: *base_with_cv_gnss
     sensor_inventory: *base_with_cv_gnss
 
