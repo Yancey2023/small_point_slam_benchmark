@@ -5,10 +5,12 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  computeRunProgress,
   promoteFailedResultDirectory,
   promoteResultDirectory,
   readRunCompatibility,
 } from './run-manager.js'
+import type { RunStatus } from '../shared/contracts.js'
 
 const temporaryDirectories: string[] = []
 
@@ -89,5 +91,38 @@ describe('promoteFailedResultDirectory', () => {
     await expect(readdir(output)).resolves.toEqual(['summary.csv'])
     await expect(readFile(path.join(output, 'summary.csv'), 'utf8'))
       .resolves.toContain(',failed,发散')
+  })
+})
+
+describe('computeRunProgress', () => {
+  const job = (status: RunStatus, progress: number | null = null) => ({ status, progress })
+
+  it('counts only real work for cancelled slots instead of full credit', () => {
+    // Cancelling a 5-job run while the first job was at ~99%: the four queued
+    // slots never ran, so the run must not jump to 99.8%.
+    const jobs = [
+      job('cancelled', 0.99),
+      job('cancelled'),
+      job('cancelled'),
+      job('cancelled'),
+      job('cancelled'),
+    ]
+    expect(computeRunProgress(jobs)).toBe(19.8)
+  })
+
+  it('keeps full credit for executed terminal outcomes and live progress elsewhere', () => {
+    const jobs = [
+      job('completed'),
+      job('failed', 0.5),
+      job('skipped'),
+      job('running', 0.25),
+      job('queued'),
+    ]
+    expect(computeRunProgress(jobs)).toBe(65)
+  })
+
+  it('returns zero for an empty or untouched run', () => {
+    expect(computeRunProgress([])).toBe(0)
+    expect(computeRunProgress([job('queued'), job('queued')])).toBe(0)
   })
 })

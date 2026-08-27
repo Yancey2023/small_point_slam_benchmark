@@ -3,8 +3,12 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import type { RunSnapshot } from '../../shared/contracts'
 
-const props = defineProps<{ run: RunSnapshot }>()
-defineEmits<{ cancel: [] }>()
+const props = defineProps<{
+  run: RunSnapshot
+  canRun?: boolean
+  starting?: boolean
+}>()
+defineEmits<{ cancel: []; start: [] }>()
 
 const logElement = ref<HTMLElement | null>(null)
 const jobListElement = ref<HTMLElement | null>(null)
@@ -149,6 +153,16 @@ function datasetLabel(datasetName: string, bagName: string): string {
 
     <button v-if="isActive" type="button" class="cancel-button" @click="$emit('cancel')">
       停止这次测试
+    </button>
+    <button
+      v-else
+      type="button"
+      class="start-button"
+      :disabled="!canRun || starting"
+      @click="$emit('start')"
+    >
+      <span>{{ starting ? '正在准备…' : '开始跑起来' }}</span>
+      <i aria-hidden="true">→</i>
     </button>
   </section>
 </template>
@@ -316,6 +330,40 @@ h2 { margin: 7px 0 3px; font-size: 22px; }
   cursor: pointer;
   font-weight: 700;
 }
+.start-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 13px 34px;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: #8ab8a2;
+  box-shadow: 0 10px 22px rgba(104, 149, 127, 0.34);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  transition: transform 200ms cubic-bezier(0.33, 1.3, 0.55, 1), box-shadow 200ms ease, background 200ms ease, opacity 200ms ease, filter 200ms ease;
+}
+.start-button i {
+  display: grid;
+  width: 21px;
+  height: 21px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.24);
+  font-size: 12px;
+  font-style: normal;
+  transition: transform 200ms ease;
+}
+.start-button:hover:not(:disabled) { transform: translateY(-2px); background: #7cab94; box-shadow: 0 14px 26px rgba(104, 149, 127, 0.4); }
+.start-button:hover:not(:disabled) i { transform: translateX(3px); }
+.start-button:active:not(:disabled) { transform: translateY(0) scale(0.97); background: #6f9d87; box-shadow: 0 6px 14px rgba(104, 149, 127, 0.3); }
+.start-button:focus-visible { outline: 3px solid rgba(138, 184, 162, 0.55); outline-offset: 3px; }
+.start-button:disabled { cursor: not-allowed; filter: grayscale(0.45); opacity: 0.5; }
 
 @media (max-width: 560px) {
   .progress-card { padding: 24px 18px 20px; }

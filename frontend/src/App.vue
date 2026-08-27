@@ -4,11 +4,9 @@ import { computed } from 'vue'
 import AlgorithmPicker from '@/components/AlgorithmPicker.vue'
 import AccuracyPanel from '@/components/AccuracyPanel.vue'
 import DatasetPicker from '@/components/DatasetPicker.vue'
-import HelpTip from '@/components/HelpTip.vue'
 import PerformancePanel from '@/components/PerformancePanel.vue'
 import ResultPanel from '@/components/ResultPanel.vue'
 import RunProgress from '@/components/RunProgress.vue'
-import RunModePicker from '@/components/RunModePicker.vue'
 import { useBenchmark } from '@/composables/useBenchmark'
 import { isStaticReport } from '@/runtime'
 
@@ -16,7 +14,6 @@ const {
   catalog,
   selectedDatasetIds,
   selectedAlgorithmIds,
-  selectedRunMode,
   results,
   run,
   loading,
@@ -28,13 +25,7 @@ const {
   cancel,
 } = useBenchmark()
 
-const plannedJobs = computed(
-  () => selectedDatasetIds.value.length * selectedAlgorithmIds.value.length,
-)
 const hasResults = computed(() => results.value.length > 0)
-const selectedModeInfo = computed(() =>
-  catalog.value?.runModes.find((mode) => mode.id === selectedRunMode.value),
-)
 </script>
 
 <template>
@@ -65,33 +56,17 @@ const selectedModeInfo = computed(() =>
           <div class="selection-column">
             <DatasetPicker v-model="selectedDatasetIds" :datasets="catalog.datasets" />
             <AlgorithmPicker v-model="selectedAlgorithmIds" :algorithms="catalog.algorithms" />
-            <div class="launch-card">
-              <div class="launch-copy">
-                <div class="launch-title">
-                  <strong>准备一次新实验</strong>
-                  <HelpTip
-                    v-if="selectedModeInfo"
-                    :text="selectedModeInfo.description"
-                    :label="`查看${selectedModeInfo.name}说明`"
-                    align="start"
-                  />
-                </div>
-                <span>{{ plannedJobs }} 个任务将按顺序运行，避免干扰 CPU 统计</span>
-              </div>
-              <RunModePicker
-                v-if="selectedRunMode"
-                v-model="selectedRunMode"
-                :modes="catalog.runModes"
-              />
-              <button type="button" :disabled="!canRun" @click="start">
-                <span>{{ starting ? '正在准备…' : '开始跑起来' }}</span>
-                <i aria-hidden="true">→</i>
-              </button>
-            </div>
           </div>
 
           <aside class="status-column">
-            <RunProgress v-if="run" :run="run" @cancel="cancel" />
+            <RunProgress
+              v-if="run"
+              :run="run"
+              :can-run="canRun"
+              :starting="starting"
+              @cancel="cancel"
+              @start="start"
+            />
             <div v-else class="waiting-card">
               <div class="tiny-world" aria-hidden="true">
                 <span class="planet"><i /></span>
@@ -107,6 +82,10 @@ const selectedModeInfo = computed(() =>
                 <span><i /> 可执行程序检查</span>
                 <span><i /> CSV 自动收集</span>
               </div>
+              <button type="button" class="start-button" :disabled="!canRun" @click="start">
+                <span>{{ starting ? '正在准备…' : '开始跑起来' }}</span>
+                <i aria-hidden="true">→</i>
+              </button>
             </div>
           </aside>
         </div>
@@ -156,17 +135,14 @@ main { position: relative; z-index: 1; width: min(1180px, calc(100% - 40px)); ma
 
 .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(310px, 0.72fr); align-items: start; gap: 18px; }
 .selection-column { display: grid; gap: 16px; }
-.status-column { min-width: 0; }
-.launch-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 19px 20px; border: 1px solid var(--line-soft); border-radius: 22px; background: #f8f9f7; box-shadow: var(--shadow-card); }
-.launch-copy { display: grid; min-width: 145px; gap: 3px; }
-.launch-title { display: flex; align-items: center; gap: 6px; }
-.launch-card strong { font-size: 14px; }
-.launch-card span { color: var(--ink-muted); font-size: 11px; }
-.launch-card button { display: flex; min-width: 154px; align-items: center; justify-content: space-between; gap: 15px; padding: 13px 14px 13px 17px; border: 0; border-radius: 15px; color: white; background: #59798c; box-shadow: 0 9px 21px rgba(65, 91, 106, 0.2); cursor: pointer; font-weight: 800; transition: 160ms ease; }
-.launch-card button:hover:not(:disabled) { transform: translateY(-2px); background: #496c80; box-shadow: 0 12px 26px rgba(65, 91, 106, 0.24); }
-.launch-card button:disabled { cursor: not-allowed; filter: grayscale(0.6); opacity: 0.48; }
-.launch-card button span { color: white; font-size: 12px; }
-.launch-card button i { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 9px; background: rgba(255,255,255,0.18); font-style: normal; }
+.status-column { display: flex; min-width: 0; flex-direction: column; gap: 14px; }
+.start-button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; margin-top: 26px; padding: 15px 38px; border: 0; border-radius: 999px; color: #fff; background: #8ab8a2; box-shadow: 0 10px 22px rgba(104, 149, 127, 0.34); cursor: pointer; font-size: 13px; font-weight: 800; letter-spacing: 0.08em; transition: transform 200ms cubic-bezier(0.33, 1.3, 0.55, 1), box-shadow 200ms ease, background 200ms ease, opacity 200ms ease, filter 200ms ease; }
+.start-button i { display: grid; width: 21px; height: 21px; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, 0.24); font-size: 12px; font-style: normal; transition: transform 200ms ease; }
+.start-button:hover:not(:disabled) { transform: translateY(-2px); background: #7cab94; box-shadow: 0 14px 26px rgba(104, 149, 127, 0.4); }
+.start-button:hover:not(:disabled) i { transform: translateX(3px); }
+.start-button:active:not(:disabled) { transform: translateY(0) scale(0.97); background: #6f9d87; box-shadow: 0 6px 14px rgba(104, 149, 127, 0.3); }
+.start-button:focus-visible { outline: 3px solid rgba(138, 184, 162, 0.55); outline-offset: 3px; }
+.start-button:disabled { cursor: not-allowed; filter: grayscale(0.45); opacity: 0.5; }
 
 .waiting-card { display: flex; min-height: 100%; box-sizing: border-box; flex-direction: column; align-items: center; justify-content: center; padding: 32px 29px; border: 1px solid var(--line-soft); border-radius: var(--radius-xl); background: #f9faf8; box-shadow: var(--shadow-card); text-align: center; }
 .tiny-world { position: relative; width: 160px; height: 160px; margin-bottom: 15px; border: 1.5px dashed #cbd7d5; border-radius: 50%; }
@@ -192,15 +168,9 @@ footer { display: flex; width: min(1180px, calc(100% - 40px)); justify-content: 
   .workspace-grid { grid-template-columns: 1fr; }
   .status-column { min-height: 390px; }
 }
-@media (max-width: 1050px) {
-  .launch-card { align-items: stretch; flex-direction: column; }
-  .launch-card button { width: 100%; }
-}
 @media (max-width: 650px) {
   main, footer { width: min(100% - 24px, 1180px); }
   .page-title { padding: 38px 1px 24px; }
-  .launch-card { align-items: stretch; flex-direction: column; }
-  .launch-card button { width: 100%; }
   footer { gap: 8px; flex-direction: column; }
 }
 </style>

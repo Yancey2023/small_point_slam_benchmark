@@ -101,6 +101,11 @@ export interface BenchmarkResult {
   groundTruthFormat?: GroundTruthFormat
   status?: 'completed' | 'failed'
   failureReason?: string | null
+  // Whether the stored run was produced under a different bag configuration
+  // or a different algorithm binary than the current ones. True is also
+  // reported for results recorded before provenance files existed, since they
+  // can no longer be verified; failed and unsupported runs stay undefined.
+  outdated?: boolean | null
   updatedAt: string
 }
 

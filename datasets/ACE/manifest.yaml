@@ -6,6 +6,7 @@ bags:
   - name: mid360_lab_entrance_10hz
     path: /media/yancey/New Volume2/project/rosbag/mid360/rosbag2_mid360_10hz/rosbag2_mid360_10hz.db3
     message_count: 20773
+    max_output_position_m: 80
     sensors:
       - id: 1
         name: mid360_lidar

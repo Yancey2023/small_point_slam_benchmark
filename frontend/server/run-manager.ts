@@ -6,6 +6,7 @@ import type { Readable } from 'node:stream'
 
 import type { CreateRunRequest, RunJob, RunSnapshot, RunStatus } from '../shared/contracts.js'
 import type { RuntimeCatalog } from './catalog.js'
+import { bagConfigSha256, executableFingerprint, writeRunProvenance } from './provenance.js'
 import { relativeResultDirectory } from './results.js'
 import { isRunMode, runModeInfo } from './run-modes.js'
 
@@ -15,6 +16,8 @@ interface InternalJob extends RunJob {
   executablePath: string
   absoluteOutputDirectory: string
   executionOutputDirectory: string
+  // Parsed manifest definition of the bag; hashed into the provenance record.
+  datasetDefinition: unknown
 }
 
 interface InternalRun {
@@ -27,6 +30,28 @@ interface InternalRun {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)]
+}
+
+const TERMINAL_STATUSES: readonly RunStatus[] = ['completed', 'skipped', 'failed', 'cancelled']
+
+function isTerminalStatus(status: RunStatus): boolean {
+  return TERMINAL_STATUSES.includes(status)
+}
+
+/**
+ * Overall run progress in percent. Slots that reached an outcome through
+ * execution (completed/skipped/failed) count as done; cancelled slots never
+ * finished, so only the fraction they actually processed counts.
+ */
+export function computeRunProgress(
+  jobs: ReadonlyArray<{ status: RunStatus; progress?: number | null }>,
+): number {
+  if (jobs.length === 0) return 0
+  const total = jobs.reduce((sum, job) => {
+    if (job.status !== 'cancelled' && isTerminalStatus(job.status)) return sum + 1
+    return sum + (job.progress ?? 0)
+  }, 0)
+  return Math.round((total / jobs.length) * 1000) / 10
 }
 
 function publicSnapshot(run: InternalRun): RunSnapshot {
@@ -213,6 +238,7 @@ export class RunManager {
           executablePath: algorithm.executablePath,
           absoluteOutputDirectory,
           executionOutputDirectory: `${absoluteOutputDirectory}.running-${jobId}`,
+          datasetDefinition: dataset.definition,
         })
       }
     }
@@ -291,15 +317,9 @@ export class RunManager {
   }
 
   private update(run: InternalRun): void {
-    const terminal: RunStatus[] = ['completed', 'skipped', 'failed', 'cancelled']
-    run.snapshot.completedJobs = run.jobs.filter((job) => terminal.includes(job.status)).length
-    const fractions = run.jobs.map((job) => {
-      if (terminal.includes(job.status)) return 1
-      return job.progress ?? 0
-    })
-    run.snapshot.progress = fractions.length
-      ? Math.round((fractions.reduce((sum, value) => sum + value, 0) / fractions.length) * 1000) / 10
-      : 0
+    run.snapshot.completedJobs =
+      run.jobs.filter((job) => isTerminalStatus(job.status)).length
+    run.snapshot.progress = computeRunProgress(run.jobs)
     this.emit(run)
   }
 
@@ -332,6 +352,24 @@ export class RunManager {
   private async executeJob(run: InternalRun, job: InternalJob): Promise<void> {
     await rm(job.executionOutputDirectory, { force: true, recursive: true })
     await mkdir(job.executionOutputDirectory, { recursive: true })
+    // Record what produced this run so stored results can be flagged outdated
+    // when the bag configuration or the algorithm binary changes afterwards.
+    try {
+      const [configSha256, executable] = await Promise.all([
+        Promise.resolve(bagConfigSha256(job.datasetDefinition)),
+        executableFingerprint(job.executablePath),
+      ])
+      if (configSha256 && executable.sha256) {
+        await writeRunProvenance(job.executionOutputDirectory, {
+          config_sha256: configSha256,
+          executable_sha256: executable.sha256,
+        })
+      }
+    } catch (reason) {
+      run.snapshot.logs.push(
+        `无法写入 ${job.algorithmName} 的溯源信息：${reason instanceof Error ? reason.message : String(reason)}`,
+      )
+    }
     job.status = 'running'
     job.startedAt = new Date().toISOString()
     run.snapshot.logs.push(

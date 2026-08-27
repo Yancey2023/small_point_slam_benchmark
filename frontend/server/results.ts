@@ -7,6 +7,13 @@ import type {
   ResultsResponse,
 } from '../shared/contracts.js'
 import type { RuntimeCatalog } from './catalog.js'
+import {
+  bagConfigSha256,
+  evaluateRunProvenance,
+  executableFingerprint,
+  PROVENANCE_FILE_NAME,
+  readRunProvenance,
+} from './provenance.js'
 import { runModeInfo } from './run-modes.js'
 
 function pathSegment(value: string): string {
@@ -102,6 +109,59 @@ export interface DiscoveredResult extends BenchmarkResult {
   groundTruthMaxTimeDifferenceMs: number
 }
 
+interface StalenessVerdict {
+  configSha256: string | null
+  provenanceMtimeMs: number | null
+  executableMtimeMs: number | null
+  outdated: boolean | null
+}
+
+// Verdicts are keyed by output directory and invalidated by the config digest
+// plus the mtimes of the provenance file and the algorithm binary, so repeated
+// catalog refreshes do not re-hash every executable.
+const stalenessCache = new Map<string, StalenessVerdict>()
+
+/**
+ * Whether a stored run was produced under a different bag configuration or a
+ * different algorithm binary than the current ones. Results recorded before
+ * provenance files existed cannot be verified either, so they are treated as
+ * outdated; null remains only when verification is impossible despite a
+ * provenance record being present (e.g. no parsed catalog definition).
+ */
+async function evaluateOutdated(
+  dataset: DatasetCatalogItem & { definition?: unknown },
+  executablePath: string | null,
+  outputDirectory: string,
+): Promise<boolean | null> {
+  const [provenance, provenanceStat] = await Promise.all([
+    readRunProvenance(outputDirectory),
+    stat(path.join(outputDirectory, PROVENANCE_FILE_NAME)).catch(() => null),
+  ])
+  const provenanceMtimeMs = provenanceStat?.mtimeMs ?? null
+  if (!provenance || provenanceMtimeMs === null) {
+    return true
+  }
+  if (dataset.definition === undefined) {
+    return null
+  }
+  const configSha256 = bagConfigSha256(dataset.definition)
+  const executable = await executableFingerprint(executablePath)
+  const cached = stalenessCache.get(outputDirectory)
+  if (cached && cached.configSha256 === configSha256 &&
+      cached.provenanceMtimeMs === provenanceMtimeMs &&
+      cached.executableMtimeMs === executable.mtimeMs) {
+    return cached.outdated
+  }
+  const outdated = evaluateRunProvenance(provenance, { configSha256, executable })
+  stalenessCache.set(outputDirectory, {
+    configSha256,
+    provenanceMtimeMs,
+    executableMtimeMs: executable.mtimeMs,
+    outdated,
+  })
+  return outdated
+}
+
 export async function discoverResults(
   projectRoot: string,
   catalog: RuntimeCatalog,
@@ -164,6 +224,9 @@ export async function discoverResults(
         status: failed ? 'failed' : 'completed',
         failureReason: failed
           ? summary.reason ?? (summary.status === 'incomplete' ? '运行结果不完整' : '算法运行失败')
+          : null,
+        outdated: successful && visibleTrajectory
+          ? await evaluateOutdated(dataset, algorithm.executablePath, absoluteOutputDirectory)
           : null,
         updatedAt: new Date(Math.max(...modifiedTimes)).toISOString(),
         absoluteOutputDirectory,

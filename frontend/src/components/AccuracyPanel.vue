@@ -121,7 +121,14 @@ function accuracyNote(jobId: string): string {
       <article v-for="job in selectedJobs" :key="job.id" class="accuracy-row">
         <span class="algorithm-dot" :style="{ background: algorithmColor(job.algorithmId) }" />
         <div class="algorithm-name">
-          <strong>{{ job.algorithmName }}</strong>
+          <strong>
+            {{ job.algorithmName }}
+            <span
+              v-if="job.outdated === true"
+              class="stale-flag"
+              title="其 bag 配置/算法可执行文件与当前不一致，结果已过时"
+            >⚠</span>
+          </strong>
           <small>{{ job.runModeName }}</small>
         </div>
         <div v-if="loadingJobIds.has(job.id)" class="pending">计算中…</div>
@@ -168,6 +175,7 @@ select { width: 100%; padding: 11px 34px 11px 13px; border: 1px solid #cbd7d5; b
 .success, .failed, .pending { justify-items: end; text-align: right; }
 .success strong { color: #456e62; font-size: 16px; }
 .failed strong { color: #a85e62; font-size: 12px; font-weight: 900; }
+.stale-flag { color: #b08a2e; }
 .pending { color: var(--ink-muted); font-size: 11px; }
 .empty { margin: 0; padding: 32px; color: var(--ink-muted); text-align: center; }
 @media (max-width: 650px) {

@@ -1,6 +1,5 @@
 algorithm: bievr_lio
 parallel_threads: 4
-filter_size_scan_m: 0.2
-filter_size_map_m: 0.2
+filter_size_scan_m: 0.1
 map_voxel_size_m: 0.5
 max_iterations: 6

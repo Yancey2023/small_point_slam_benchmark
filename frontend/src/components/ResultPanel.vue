@@ -67,6 +67,7 @@ const algorithmOptions = computed(() => {
     label: string
     hasTrajectory: boolean
     failureReason: string | null
+    stale: boolean
   }>()
   for (const job of props.results) {
     if (job.datasetId !== selectedDatasetId.value) continue
@@ -74,12 +75,14 @@ const algorithmOptions = computed(() => {
       label: job.algorithmName,
       hasTrajectory: false,
       failureReason: null,
+      stale: false,
     }
     entry.label = job.algorithmName
     if (job.hasTrajectory) entry.hasTrajectory = true
     if (!entry.failureReason && job.status === 'failed') {
       entry.failureReason = job.failureReason ?? '算法运行失败'
     }
+    if (job.outdated === true) entry.stale = true
     byId.set(job.algorithmId, entry)
   }
   return [...byId]
@@ -89,6 +92,7 @@ const algorithmOptions = computed(() => {
       label: info.label,
       failed: !info.hasTrajectory,
       reason: !info.hasTrajectory ? info.failureReason : null,
+      stale: info.stale,
     }))
 })
 const selectableAlgorithmIds = computed(() =>
@@ -330,6 +334,11 @@ function meters(value: number): string {
             <span class="algorithm-label">
               <span class="name-text">{{ algorithm.label }}</span>
               <span v-if="algorithm.failed" class="failed-tag">失败</span>
+              <span
+                v-else-if="algorithm.stale"
+                class="stale-tag"
+                title="其 bag 配置/算法可执行文件与当前不一致，结果已过时"
+              >已过时</span>
             </span>
           </button>
         </fieldset>
@@ -439,8 +448,10 @@ legend button { flex: none; padding: 4px 7px; border: 0; border-radius: 7px; col
 .result-filters fieldset > button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .result-filters fieldset > button:disabled { cursor: not-allowed; opacity: 0.62; }
 .algorithm-label { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.algorithm-label :is(.failed-tag, .stale-tag) { margin-left: auto; }
 .name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .failed-tag { flex: none; padding: 2px 6px; border-radius: 999px; color: #a85e62; background: #f9e9ea; font-size: 9px; font-weight: 800; }
+.stale-tag { flex: none; padding: 2px 6px; border-radius: 999px; color: #8a6d3b; background: #faf0d7; font-size: 9px; font-weight: 800; }
 .checkmark { display: grid; width: 20px; height: 20px; place-items: center; border: 1.5px solid #b8c4c5; border-radius: 7px; color: #fff; font-size: 11px; }
 .active .checkmark { border-color: #607c89; background: #607c89; }
 .tab-dot { width: 9px; height: 9px; border-radius: 50%; }

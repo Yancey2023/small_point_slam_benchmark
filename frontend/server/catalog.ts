@@ -15,6 +15,9 @@ interface DatasetRuntimeItem extends DatasetCatalogItem {
   bagPath: string
   groundTruthPath: string | null
   groundTruthMaxTimeDifferenceMs: number
+  // Parsed manifest definition of this bag; hashed into run provenance so
+  // stored results can be marked outdated when the configuration changes.
+  definition: unknown
 }
 
 interface AlgorithmRuntimeItem extends AlgorithmCatalogItem {
@@ -152,6 +155,7 @@ export async function loadCatalog(
           Number.isFinite(configuredMaxDifference) && configuredMaxDifference > 0
             ? configuredMaxDifference
             : 100,
+        definition: bag,
       })
     }
   }
@@ -196,7 +200,8 @@ export async function loadCatalog(
       datasets: [...datasets.values()].map(
         ({ manifestPath: _manifestPath, bagPath: _bagPath,
           groundTruthPath: _groundTruthPath,
-          groundTruthMaxTimeDifferenceMs: _maxDifference, ...item }) => item,
+          groundTruthMaxTimeDifferenceMs: _maxDifference,
+          definition: _definition, ...item }) => item,
       ),
       algorithms: [...algorithms.values()].map(
         ({ configPath: _configPath, executablePath: _executablePath, ...item }) => item,
