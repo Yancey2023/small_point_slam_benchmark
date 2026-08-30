@@ -1,0 +1,201 @@
+diff --git a/include/gnss_comm/gnss_utility.hpp b/include/gnss_comm/gnss_utility.hpp
+index 6dab9ef..335b6db 100644
+--- a/include/gnss_comm/gnss_utility.hpp
++++ b/include/gnss_comm/gnss_utility.hpp
+@@ -42,7 +42,7 @@
+ #include <cmath>
+ #include <time.h>
+ #include <eigen3/Eigen/Dense>
+-#include <glog/logging.h>
++#include <spdlog/spdlog.h>
+ 
+ #include "gnss_constant.hpp"
+ 
+@@ -343,4 +343,3 @@ namespace gnss_comm
+ }   // namespace gnss_comm
+ 
+ #endif
+-
+diff --git a/src/gnss_spp.cpp b/src/gnss_spp.cpp
+index 6797368..c30526a 100644
+--- a/src/gnss_spp.cpp
++++ b/src/gnss_spp.cpp
+@@ -20,7 +20,8 @@
+ 
+ #include "gnss_spp.hpp"
+ #include "gnss_utility.hpp"
+-#include <glog/logging.h>
++#include <spdlog/spdlog.h>
++#include <stdexcept>
+ 
+ #define CUT_OFF_DEGREE 15.0
+ 
+@@ -156,7 +157,7 @@ namespace gnss_comm
+         filter_L1(obs, ephems, valid_obs, valid_ephems);
+         if (valid_obs.size() < 4)
+         {
+-            LOG(ERROR) << "[gnss_comm::psr_pos] GNSS observation not enough.\n";
++            spdlog::error("[gnss_comm::psr_pos] Not enough GNSS observations");
+             return result;
+         }
+ 
+@@ -189,10 +190,10 @@ namespace gnss_comm
+             }
+             uint32_t num_extra_constraint = 4;
+             for (uint32_t k = 0; k < 4; ++k)    num_extra_constraint -= sys_mask[k];
+-            LOG_IF(FATAL, num_extra_constraint >= 4) << "[gnss_comm::psr_pos] too many extra-clock constraints.\n";
++            if (num_extra_constraint >= 4) throw std::runtime_error("Too many GNSS clock constraints");
+ 
+             const uint32_t good_num = good_idx.size();
+-            LOG_IF(ERROR, good_num < 4) << "too few good obs: " << good_num;
++            if (good_num < 4) spdlog::error("Too few valid GNSS observations: {}", good_num);
+ 
+             Eigen::MatrixXd good_G(good_num+num_extra_constraint, 7);
+             Eigen::VectorXd good_b(good_num+num_extra_constraint);
+@@ -209,7 +210,7 @@ namespace gnss_comm
+                 double weight = sin_el*sin_el;
+                 int l1_idx = -1;
+                 L1_freq(this_obs, &l1_idx);
+-                LOG_IF(FATAL, l1_idx < 0) << "[gnss_comm::psr_pos] no L1 observation found.\n";
++                if (l1_idx < 0) throw std::runtime_error("No L1 observation found");
+ 
+                 if (this_obs->psr_std[l1_idx] > 0)
+                     weight /= (this_obs->psr_std[l1_idx]/0.16);
+@@ -245,7 +246,7 @@ namespace gnss_comm
+         }
+         if (num_iter == MAX_ITER_PVT)
+         {
+-            LOG(WARNING) << "[gnss_comm::psr_pos] XYZT solver reached maximum iterations.\n";
++            spdlog::warn("[gnss_comm::psr_pos] XYZT solver reached maximum iterations");
+             return result;
+         }
+ 
+@@ -284,7 +285,7 @@ namespace gnss_comm
+     Eigen::Matrix<double, 4, 1> dopp_vel(const std::vector<ObsPtr> &obs, 
+         const std::vector<EphemBasePtr> &ephems, Eigen::Vector3d &ref_ecef)
+     {
+-        LOG(INFO) << "try to solve Doppler velocity.";
++        spdlog::debug("Solving GNSS Doppler velocity");
+         Eigen::Matrix<double, 4, 1> result;
+         result.setZero();
+ 
+@@ -299,7 +300,7 @@ namespace gnss_comm
+             }
+             else
+             {
+-                LOG(ERROR) << "[gnss_comm::dopp_vel] Unable to initialize reference position for Doppler calculation.\n";
++                spdlog::error("[gnss_comm::dopp_vel] Unable to initialize the Doppler reference position");
+                 return result;
+             }
+         }
+@@ -310,7 +311,7 @@ namespace gnss_comm
+ 
+         if (valid_obs.size() < 4)
+         {
+-            LOG(ERROR) << "[gnss_comm::dopp_vel] GNSS observation not enough for velocity calculation.\n";
++            spdlog::error("[gnss_comm::dopp_vel] Not enough GNSS observations for velocity");
+             return result;
+         }
+ 
+@@ -355,7 +356,7 @@ namespace gnss_comm
+                 const ObsPtr &this_obs = valid_obs[origin_idx];
+                 int l1_idx = -1;
+                 L1_freq(this_obs, &l1_idx);
+-                LOG_IF(FATAL, l1_idx < 0) << "[gnss_comm::dopp_vel] no L1 observation found.\n";
++                if (l1_idx < 0) throw std::runtime_error("No L1 Doppler observation found");
+                 if (this_obs->dopp_std[l1_idx] > 0)
+                     weight /= (this_obs->dopp_std[l1_idx]/0.256);
+ 
+@@ -380,9 +381,9 @@ namespace gnss_comm
+         }
+ 
+         if (num_iter == MAX_ITER_PVT)
+-            LOG(WARNING) << "[gnss_comm::dopp_vel] XYZT solver reached maximum iterations.\n";
++            spdlog::warn("[gnss_comm::dopp_vel] XYZT solver reached maximum iterations");
+         
+         result = xyzt_dot;
+         return result;
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/gnss_utility.cpp b/src/gnss_utility.cpp
+index 4bff648..f8366d6 100644
+--- a/src/gnss_utility.cpp
++++ b/src/gnss_utility.cpp
+@@ -30,6 +30,7 @@
+ */
+ 
+ #include "gnss_utility.hpp"
++#include <stdexcept>
+ 
+ namespace gnss_comm
+ {
+@@ -270,8 +271,9 @@ namespace gnss_comm
+ 
+     double julian_day(std::vector<double> datetime)
+     {
+-        LOG_IF(FATAL, datetime.size() != 6) << "datetime should contain 6 fields";
+-        LOG_IF(FATAL, datetime[0] < 1901 || datetime[0] > 2099) << datetime[0] << " should within range 1900 ~ 2100";
++        if (datetime.size() != 6) throw std::runtime_error("GNSS datetime must contain 6 fields");
++        if (datetime[0] < 1901 || datetime[0] > 2099)
++            throw std::runtime_error("GNSS datetime year is outside [1901, 2099]");
+ 
+         if (datetime[1] <= 2)
+         {
+@@ -349,7 +351,7 @@ namespace gnss_comm
+         Eigen::Vector3d lla = Eigen::Vector3d::Zero();
+         if (xyz.x() == 0 && xyz.y() == 0)
+         {
+-            LOG(ERROR) << "LLA coordinate is not defined if x = 0 and y = 0";
++            spdlog::error("LLA coordinate is undefined when ECEF x and y are zero");
+             return lla;
+         }
+ 
+@@ -399,7 +401,7 @@ namespace gnss_comm
+             ++ num_iter;
+         }
+         if (num_iter == MAX_ITER_KEPLER)
+-            LOG(WARNING) << "Kepler equation reached max number iteration";
++            spdlog::warn("Kepler equation reached the iteration limit");
+         
+         return ek;
+     }
+@@ -458,7 +460,7 @@ namespace gnss_comm
+         // LOG(INFO) << "tk is " << std::setprecision(10) << tk;
+         
+         if (std::abs(tk) > EPH_VALID_SECONDS)
+-            LOG(WARNING) << "Ephemeris is not valid anymore";
++            spdlog::warn("Ephemeris is no longer valid");
+         
+         uint32_t prn;
+         uint32_t sys = satsys(ephem_ptr->sat, &prn);
+@@ -544,7 +546,7 @@ namespace gnss_comm
+         // LOG(INFO) << "tk is " << std::setprecision(10) << tk;
+         
+         if (std::abs(tk) > EPH_VALID_SECONDS)
+-            LOG(WARNING) << "Ephemeris is not valid anymore";
++            spdlog::warn("Ephemeris is no longer valid");
+         
+         uint32_t prn;
+         uint32_t sys = satsys(ephem_ptr->sat, &prn);
+@@ -924,7 +926,7 @@ namespace gnss_comm
+                 ss << "J" << std::setw(2) << std::setfill('0') << prn;
+                 break;
+             default:    // current not support other system
+-                LOG(WARNING) << "currently not support satelite system id " << sys;
++                spdlog::warn("Unsupported satellite system id {}", sys);
+                 break;
+         }
+         return ss.str();
+@@ -965,7 +967,7 @@ namespace gnss_comm
+     {
+         if (sat_str.size() < 3)
+         {
+-            LOG(ERROR) << "Invalid RINEX satellite identifier " << sat_str;
++            spdlog::error("Invalid RINEX satellite identifier {}", sat_str);
+             return 0;
+         }
+         const uint32_t prn = std::stoul(sat_str.substr(1, 2));
+
+

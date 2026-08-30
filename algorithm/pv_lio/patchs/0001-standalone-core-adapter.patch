@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 57702d9..0de6e5a 100644
+index 57702d9..701d0ff 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,112 +1,41 @@
+@@ -1,112 +1,42 @@
 -cmake_minimum_required(VERSION 2.8.3)
 -project(pv_lio)
 +cmake_minimum_required(VERSION 3.24)
@@ -108,6 +108,7 @@ index 57702d9..0de6e5a 100644
 +target_link_libraries(pv_lio_algorithm PUBLIC
 +    Eigen3::Eigen
 +    OpenMP::OpenMP_CXX
++    spdlog::spdlog
 +    ${PCL_LIBRARIES}
  )
 -
@@ -216,7 +217,7 @@ index bd18bae..09767ae 100644
 \ No newline at end of file
 +#endif
 diff --git a/include/voxel_map_util.hpp b/include/voxel_map_util.hpp
-index 1370ab3..bc02e29 100644
+index 1370ab3..e6f68a6 100644
 --- a/include/voxel_map_util.hpp
 +++ b/include/voxel_map_util.hpp
 @@ -6,14 +6,10 @@
@@ -226,7 +227,8 @@ index 1370ab3..bc02e29 100644
 -#include <openssl/md5.h>
  #include <pcl/common/io.h>
 -#include <rosbag/bag.h>
- #include <stdio.h>
+-#include <stdio.h>
++#include <spdlog/spdlog.h>
  #include <string>
  #include <unordered_map>
 -#include <visualization_msgs/Marker.h>
@@ -234,7 +236,13 @@ index 1370ab3..bc02e29 100644
  
  #define HASH_P 116101
  #define MAX_N 10000000000
-@@ -656,7 +652,6 @@ void updateVoxelMapOMP(const std::vector<pointWithCov> &input_points,
+@@ -652,11 +648,11 @@ void updateVoxelMapOMP(const std::vector<pointWithCov> &input_points,
+     }
+   }
+   double t_update_end = omp_get_wtime();
+-  std::printf("Insert & store time:  %.4fs\n", t_update_end - t_update_start);
++  spdlog::debug("PV-LIO voxel insert/store time: {:.4f}s",
++                t_update_end - t_update_start);
      t_update_start = omp_get_wtime();
      // 并行延迟更新
  #ifdef MP_EN
@@ -242,7 +250,21 @@ index 1370ab3..bc02e29 100644
  #pragma omp parallel for default(none) shared(position_index_map, feat_map)
  #endif
      for (size_t b = 0; b < position_index_map.bucket_count(); b++) {
-@@ -877,7 +872,6 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
+@@ -670,9 +666,11 @@ void updateVoxelMapOMP(const std::vector<pointWithCov> &input_points,
+         }
+     }
+     t_update_end = omp_get_wtime();
+-    std::printf("Update:  %.4fs\n", t_update_end - t_update_start);
++    spdlog::debug("PV-LIO voxel update time: {:.4f}s",
++                  t_update_end - t_update_start);
+ 
+-  std::printf("Insert: %d  Update: %d \n", insert_count, update_count);
++  spdlog::debug("PV-LIO voxel changes: insert={}, update={}",
++                insert_count, update_count);
+ }
+ 
+ 
+@@ -877,7 +875,6 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
      useful_ptpl[i] = false;
    }
  #ifdef MP_EN
@@ -250,24 +272,287 @@ index 1370ab3..bc02e29 100644
  #pragma omp parallel for
  #endif
    // 这个文章在实现的时候 第一层voxel并没有严格作为根节点，而是现有一个层次的结构，这样方便管理
-@@ -1021,6 +1015,7 @@ void BuildResidualListNormal(
+@@ -1021,279 +1018,6 @@ void BuildResidualListNormal(
    }
  }
  
-+#if 0  // ROS visualization helpers are excluded from the standalone benchmark.
- void CalcVectQuation(const Eigen::Vector3d &x_vec, const Eigen::Vector3d &y_vec,
-                      const Eigen::Vector3d &z_vec,
-                      geometry_msgs::Quaternion &q) {
-@@ -1295,6 +1290,8 @@ void pubPlaneMap(const std::unordered_map<VOXEL_LOC, OctoTree *> &feat_map,
-   //      << "total size: " << feat_map.size() << endl;
- }
+-void CalcVectQuation(const Eigen::Vector3d &x_vec, const Eigen::Vector3d &y_vec,
+-                     const Eigen::Vector3d &z_vec,
+-                     geometry_msgs::Quaternion &q) {
+-
+-  Eigen::Matrix3d rot;
+-  rot << x_vec(0), x_vec(1), x_vec(2), y_vec(0), y_vec(1), y_vec(2), z_vec(0),
+-      z_vec(1), z_vec(2);
+-  Eigen::Matrix3d rotation = rot.transpose();
+-  Eigen::Quaterniond eq(rotation);
+-  q.w = eq.w();
+-  q.x = eq.x();
+-  q.y = eq.y();
+-  q.z = eq.z();
+-}
+-
+-void CalcQuation(const Eigen::Vector3d &vec, const int axis,
+-                 geometry_msgs::Quaternion &q) {
+-  Eigen::Vector3d x_body = vec;
+-  Eigen::Vector3d y_body(1, 1, 0);
+-  if (x_body(2) != 0) {
+-    y_body(2) = -(y_body(0) * x_body(0) + y_body(1) * x_body(1)) / x_body(2);
+-  } else {
+-    if (x_body(1) != 0) {
+-      y_body(1) = -(y_body(0) * x_body(0)) / x_body(1);
+-    } else {
+-      y_body(0) = 0;
+-    }
+-  }
+-  y_body.normalize();
+-  Eigen::Vector3d z_body = x_body.cross(y_body);
+-  Eigen::Matrix3d rot;
+-
+-  rot << x_body(0), x_body(1), x_body(2), y_body(0), y_body(1), y_body(2),
+-      z_body(0), z_body(1), z_body(2);
+-  Eigen::Matrix3d rotation = rot.transpose();
+-  if (axis == 2) {
+-    Eigen::Matrix3d rot_inc;
+-    rot_inc << 0, 0, 1, 0, 1, 0, -1, 0, 0;
+-    rotation = rotation * rot_inc;
+-  }
+-  Eigen::Quaterniond eq(rotation);
+-  q.w = eq.w();
+-  q.x = eq.x();
+-  q.y = eq.y();
+-  q.z = eq.z();
+-}
+-
+-void pubSinglePlane(visualization_msgs::MarkerArray &plane_pub,
+-                    const std::string plane_ns, const Plane &single_plane,
+-                    const float alpha, const Eigen::Vector3d rgb) {
+-  visualization_msgs::Marker plane;
+-  plane.header.frame_id = "camera_init";
+-  plane.header.stamp = ros::Time();
+-  plane.ns = plane_ns;
+-  plane.id = single_plane.id;
+-  plane.type = visualization_msgs::Marker::CYLINDER;
+-  plane.action = visualization_msgs::Marker::ADD;
+-  plane.pose.position.x = single_plane.center[0];
+-  plane.pose.position.y = single_plane.center[1];
+-  plane.pose.position.z = single_plane.center[2];
+-  geometry_msgs::Quaternion q;
+-  CalcVectQuation(single_plane.x_normal, single_plane.y_normal,
+-                  single_plane.normal, q);
+-  plane.pose.orientation = q;
+-  plane.scale.x = 3 * sqrt(single_plane.max_eigen_value);
+-  plane.scale.y = 3 * sqrt(single_plane.mid_eigen_value);
+-  plane.scale.z = 2 * sqrt(single_plane.min_eigen_value);
+-  plane.color.a = alpha;
+-  plane.color.r = rgb(0);
+-  plane.color.g = rgb(1);
+-  plane.color.b = rgb(2);
+-  plane.lifetime = ros::Duration();
+-  plane_pub.markers.push_back(plane);
+-}
+-
+-void pubNoPlaneMap(const std::unordered_map<VOXEL_LOC, OctoTree *> &feat_map,
+-                   const ros::Publisher &plane_map_pub) {
+-  int id = 0;
+-  ros::Rate loop(500);
+-  float use_alpha = 0.8;
+-  visualization_msgs::MarkerArray voxel_plane;
+-  voxel_plane.markers.reserve(1000000);
+-  for (auto iter = feat_map.begin(); iter != feat_map.end(); iter++) {
+-    if (!iter->second->plane_ptr_->is_plane) {
+-      for (uint i = 0; i < 8; i++) {
+-        if (iter->second->leaves_[i] != nullptr) {
+-          OctoTree *temp_octo_tree = iter->second->leaves_[i];
+-          if (!temp_octo_tree->plane_ptr_->is_plane) {
+-            for (uint j = 0; j < 8; j++) {
+-              if (temp_octo_tree->leaves_[j] != nullptr) {
+-                if (!temp_octo_tree->leaves_[j]->plane_ptr_->is_plane) {
+-                  Eigen::Vector3d plane_rgb(1, 1, 1);
+-                  pubSinglePlane(voxel_plane, "no_plane",
+-                                 *(temp_octo_tree->leaves_[j]->plane_ptr_),
+-                                 use_alpha, plane_rgb);
+-                }
+-              }
+-            }
+-          }
+-        }
+-      }
+-    }
+-  }
+-  plane_map_pub.publish(voxel_plane);
+-  loop.sleep();
+-}
+-
+-void pubVoxelMap(const std::unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
+-                 const int pub_max_voxel_layer,
+-                 const ros::Publisher &plane_map_pub) {
+-  double max_trace = 0.25;
+-  double pow_num = 0.2;
+-  ros::Rate loop(500);
+-  float use_alpha = 0.8;
+-  visualization_msgs::MarkerArray voxel_plane;
+-  voxel_plane.markers.reserve(1000000);
+-  std::vector<Plane> pub_plane_list;
+-  for (auto iter = voxel_map.begin(); iter != voxel_map.end(); iter++) {
+-    GetUpdatePlane(iter->second, pub_max_voxel_layer, pub_plane_list);
+-  }
+-  for (size_t i = 0; i < pub_plane_list.size(); i++) {
+-    V3D plane_cov = pub_plane_list[i].plane_cov.block<3, 3>(0, 0).diagonal();
+-    double trace = plane_cov.sum();
+-    if (trace >= max_trace) {
+-      trace = max_trace;
+-    }
+-    trace = trace * (1.0 / max_trace);
+-    trace = pow(trace, pow_num);
+-    uint8_t r, g, b;
+-    mapJet(trace, 0, 1, r, g, b);
+-    Eigen::Vector3d plane_rgb(r / 256.0, g / 256.0, b / 256.0);
+-    double alpha;
+-    if (pub_plane_list[i].is_plane) {
+-      alpha = use_alpha;
+-    } else {
+-      alpha = 0;
+-    }
+-    pubSinglePlane(voxel_plane, "plane", pub_plane_list[i], alpha, plane_rgb);
+-  }
+-  plane_map_pub.publish(voxel_plane);
+-  loop.sleep();
+-}
+-
+-void pubPlaneMap(const std::unordered_map<VOXEL_LOC, OctoTree *> &feat_map,
+-                 const ros::Publisher &plane_map_pub) {
+-  OctoTree *current_octo = nullptr;
+-
+-  double max_trace = 0.25;
+-  double pow_num = 0.2;
+-  ros::Rate loop(500);
+-  float use_alpha = 1.0;
+-  visualization_msgs::MarkerArray voxel_plane;
+-  voxel_plane.markers.reserve(1000000);
+-
+-  for (auto iter = feat_map.begin(); iter != feat_map.end(); iter++) {
+-    if (iter->second->plane_ptr_->is_update) {
+-      Eigen::Vector3d normal_rgb(0.0, 1.0, 0.0);
+-
+-      V3D plane_cov =
+-          iter->second->plane_ptr_->plane_cov.block<3, 3>(0, 0).diagonal();
+-      double trace = plane_cov.sum();
+-      if (trace >= max_trace) {
+-        trace = max_trace;
+-      }
+-      trace = trace * (1.0 / max_trace);
+-      trace = pow(trace, pow_num);
+-      uint8_t r, g, b;
+-      mapJet(trace, 0, 1, r, g, b);
+-      Eigen::Vector3d plane_rgb(r / 256.0, g / 256.0, b / 256.0);
+-      // Eigen::Vector3d plane_rgb(1, 0, 0);
+-      float alpha = 0.0;
+-      if (iter->second->plane_ptr_->is_plane) {
+-        alpha = use_alpha;
+-      } else {
+-        // std::cout << "delete plane" << std::endl;
+-      }
+-      // if (iter->second->update_enable_) {
+-      //   plane_rgb << 1, 0, 0;
+-      // } else {
+-      //   plane_rgb << 0, 0, 1;
+-      // }
+-      pubSinglePlane(voxel_plane, "plane", *(iter->second->plane_ptr_), alpha,
+-                     plane_rgb);
+-
+-      iter->second->plane_ptr_->is_update = false;
+-    } else {
+-      for (uint i = 0; i < 8; i++) {
+-        if (iter->second->leaves_[i] != nullptr) {
+-          if (iter->second->leaves_[i]->plane_ptr_->is_update) {
+-            Eigen::Vector3d normal_rgb(0.0, 1.0, 0.0);
+-
+-            V3D plane_cov = iter->second->leaves_[i]
+-                                ->plane_ptr_->plane_cov.block<3, 3>(0, 0)
+-                                .diagonal();
+-            double trace = plane_cov.sum();
+-            if (trace >= max_trace) {
+-              trace = max_trace;
+-            }
+-            trace = trace * (1.0 / max_trace);
+-            // trace = (max_trace - trace) / max_trace;
+-            trace = pow(trace, pow_num);
+-            uint8_t r, g, b;
+-            mapJet(trace, 0, 1, r, g, b);
+-            Eigen::Vector3d plane_rgb(r / 256.0, g / 256.0, b / 256.0);
+-            plane_rgb << 0, 1, 0;
+-            // fabs(iter->second->leaves_[i]->plane_ptr_->normal[0]),
+-            //     fabs(iter->second->leaves_[i]->plane_ptr_->normal[1]),
+-            //     fabs(iter->second->leaves_[i]->plane_ptr_->normal[2]);
+-            float alpha = 0.0;
+-            if (iter->second->leaves_[i]->plane_ptr_->is_plane) {
+-              alpha = use_alpha;
+-            } else {
+-              // std::cout << "delete plane" << std::endl;
+-            }
+-            pubSinglePlane(voxel_plane, "plane",
+-                           *(iter->second->leaves_[i]->plane_ptr_), alpha,
+-                           plane_rgb);
+-            // loop.sleep();
+-            iter->second->leaves_[i]->plane_ptr_->is_update = false;
+-            // loop.sleep();
+-          } else {
+-            OctoTree *temp_octo_tree = iter->second->leaves_[i];
+-            for (uint j = 0; j < 8; j++) {
+-              if (temp_octo_tree->leaves_[j] != nullptr) {
+-                if (temp_octo_tree->leaves_[j]->octo_state_ == 0 &&
+-                    temp_octo_tree->leaves_[j]->plane_ptr_->is_update) {
+-                  if (temp_octo_tree->leaves_[j]->plane_ptr_->is_plane) {
+-                    // std::cout << "subsubplane" << std::endl;
+-                    Eigen::Vector3d normal_rgb(0.0, 1.0, 0.0);
+-                    V3D plane_cov =
+-                        temp_octo_tree->leaves_[j]
+-                            ->plane_ptr_->plane_cov.block<3, 3>(0, 0)
+-                            .diagonal();
+-                    double trace = plane_cov.sum();
+-                    if (trace >= max_trace) {
+-                      trace = max_trace;
+-                    }
+-                    trace = trace * (1.0 / max_trace);
+-                    // trace = (max_trace - trace) / max_trace;
+-                    trace = pow(trace, pow_num);
+-                    uint8_t r, g, b;
+-                    mapJet(trace, 0, 1, r, g, b);
+-                    Eigen::Vector3d plane_rgb(r / 256.0, g / 256.0, b / 256.0);
+-                    plane_rgb << 0, 0, 1;
+-                    float alpha = 0.0;
+-                    if (temp_octo_tree->leaves_[j]->plane_ptr_->is_plane) {
+-                      alpha = use_alpha;
+-                    }
+-
+-                    pubSinglePlane(voxel_plane, "plane",
+-                                   *(temp_octo_tree->leaves_[j]->plane_ptr_),
+-                                   alpha, plane_rgb);
+-                    // loop.sleep();
+-                    temp_octo_tree->leaves_[j]->plane_ptr_->is_update = false;
+-                  }
+-                }
+-              }
+-            }
+-          }
+-        }
+-      }
+-    }
+-  }
+-
+-  plane_map_pub.publish(voxel_plane);
+-  // plane_map_pub.publish(voxel_norm);
+-  loop.sleep();
+-  // cout << "[Map Info] Plane counts:" << plane_count
+-  //      << " Sub Plane counts:" << sub_plane_count
+-  //      << " Sub Sub Plane counts:" << sub_sub_plane_count << endl;
+-  // cout << "[Map Info] Update plane counts:" << update_count
+-  //      << "total size: " << feat_map.size() << endl;
+-}
  
-+#endif
-+
  M3D calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_inc)
  {
-   float range = sqrt(pb[0] * pb[0] + pb[1] * pb[1] + pb[2] * pb[2]);
-@@ -1320,4 +1317,4 @@ M3D calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_i
+@@ -1320,4 +1044,4 @@ M3D calcBodyCov(Eigen::Vector3d &pb, const float range_inc, const float degree_i
          A * direction_var * A.transpose();
  };
  
@@ -290,10 +575,10 @@ index 0000000..4b81fec
 +}
 diff --git a/standalone/voxel_map_adapter.cpp b/standalone/voxel_map_adapter.cpp
 new file mode 100644
-index 0000000..9b5f1b0
+index 0000000..4ed8b5d
 --- /dev/null
 +++ b/standalone/voxel_map_adapter.cpp
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,171 @@
 +#include "voxel_map_adapter.hpp"
 +
 +#include <slam_benchmark/calibration.hpp>
@@ -331,12 +616,10 @@ index 0000000..9b5f1b0
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = compatibility.selected_sensor(sensors,
-+                                                      slam_benchmark::SensorType::Lidar);
-+    const auto imu = compatibility.selected_sensor(sensors,
-+                                                    slam_benchmark::SensorType::Imu);
++    const auto lidar = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
-+        throw std::runtime_error("PV-LIO requires one LiDAR and one IMU");
++        return slam_benchmark::InitializationResult::unsupported("PV-LIO requires one LiDAR and one IMU");
 +    sink_ = &sink;
 +    lidar_id_ = lidar->id;
 +    imu_id_ = imu->id;

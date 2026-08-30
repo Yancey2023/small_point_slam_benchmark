@@ -7,11 +7,16 @@ repository:
   name: small_point_lio
   url: https://github.com/Yancey2023/small_point_lio.git
   ref: ba8b4ce5bf80df8bbada44b984e12c460b269dd5
+source_excludes:
+  - livox_ros_driver2
+  - pcd
+  - src/main.cpp
 dependencies: []
 paper: {}
 sensors: [lidar, imu]
 timing_stages:
   - lidar_preprocess
+  - imu_preprocess
   - downsampling
   - state_propagation
   - map_search

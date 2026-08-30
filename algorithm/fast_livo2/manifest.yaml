@@ -1,0 +1,49 @@
+schema_version: 1
+name: FAST-LIVO2
+description: Fast direct LiDAR-inertial-visual odometry with tightly coupled geometric and photometric updates.
+authors: [Chunran Zheng, Wei Xu, Zuhao Zou, Tong Hua, Chongjian Yuan, Dongjiao He, Bingyang Zhou, Zheng Liu, Jiarong Lin, Fu Zhang]
+license: GPL-2.0
+repository:
+  name: fast_livo2
+  url: https://github.com/hku-mars/FAST-LIVO2.git
+  ref: 0d2c0346107b75b59934975adec9a6eeeb913c64
+source_excludes:
+  - Log
+  - config
+  - launch
+  - rviz_cfg
+  - scripts
+  - package.xml
+  - include/livox_ros_driver
+  - src/main.cpp
+  - src/preprocess.cpp
+dependencies:
+  - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
+  - {name: OpenCV, url: https://github.com/opencv/opencv.git}
+  - name: Sophus
+    url: https://github.com/strasdat/Sophus.git
+    ref: a621ff2e56c56c839a6c40418d42c3c254424b5c
+    directory: Sophus
+  - name: rpg_vikit
+    url: https://github.com/xuankuzcr/rpg_vikit.git
+    ref: 6c886c8e5d83997806e00294826d528cea3581dd
+    directory: rpg_vikit
+    patches: [dependency_patches/rpg_vikit-no-stdout.patch]
+paper:
+  title: "FAST-LIVO2: Fast, Direct LiDAR-Inertial-Visual Odometry"
+  url: https://doi.org/10.1109/TRO.2024.3491010
+sensors: [lidar, imu, camera]
+timing_stages:
+  - lidar_preprocess
+  - image_preprocess
+  - undistortion
+  - downsampling
+  - state_propagation
+  - map_search
+  - filter_update
+  - visual_update
+  - map_update
+integration:
+  status: integrated
+  transport: core_sensor_samples
+  build_requirement: Builds the ROS-independent front end from the pinned official public FAST-LIVO2 ref.

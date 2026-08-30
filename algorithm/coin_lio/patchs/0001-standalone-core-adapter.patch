@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index fdc52f9..19e4ed0 100644
+index fdc52f9..42cd537 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,102 +1,54 @@
+@@ -1,102 +1,55 @@
 -cmake_minimum_required(VERSION 2.8.3)
 -project(coin_lio)
 -
@@ -113,6 +113,7 @@ index fdc52f9..19e4ed0 100644
 +    Threads::Threads
 +    ${OpenCV_LIBS}
 +    ${PCL_LIBRARIES}
++    spdlog::spdlog
  )
 -
 -generate_messages(
@@ -153,6 +154,222 @@ index fdc52f9..19e4ed0 100644
 +    target_compile_options(coin_lio_algorithm PRIVATE -Wall -Wextra)
 +    target_compile_options(coin_lio_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 +endif()
+diff --git a/include/IKFoM_toolkit/esekfom/esekfom.hpp b/include/IKFoM_toolkit/esekfom/esekfom.hpp
+index 2bcbb78..06bb21d 100755
+--- a/include/IKFoM_toolkit/esekfom/esekfom.hpp
++++ b/include/IKFoM_toolkit/esekfom/esekfom.hpp
+@@ -386,7 +386,7 @@ public:
+ 	void update_iterated(measurement& z, measurementnoisecovariance &R) {
+ 		
+ 		if(!(is_same<typename measurement::scalar, scalar_type>())){
+-			std::cerr << "the scalar type of measurment must be the same as the state" << std::endl;
++			spdlog::critical("IKFoM measurement and state scalar types differ");
+ 			std::exit(100);
+ 		}
+ 		int t = 0;
+@@ -592,7 +592,7 @@ public:
+ 	void update_iterated_share() {
+ 		
+ 		if(!(is_same<typename measurement::scalar, scalar_type>())){
+-			std::cerr << "the scalar type of measurment must be the same as the state" << std::endl;
++			spdlog::critical("IKFoM measurement and state scalar types differ");
+ 			std::exit(100);
+ 		}
+ 
+@@ -918,7 +918,7 @@ public:
+ 			if(t > 1 || i == maximum_iter - 1)
+ 			{
+ 				L_ = P_;
+-				std::cout << "iteration time:" << t << "," << i << std::endl;
++				spdlog::debug("IKFoM iteration time: {}, {}", t, i);
+ 		
+ 				Matrix<scalar_type, 3, 3> res_temp_SO3;
+ 				MTK::vect<3, scalar_type> seg_SO3;
+@@ -1124,7 +1124,7 @@ public:
+ 			if(t > 1 || i == maximum_iter - 1)
+ 			{
+ 				L_ = P_;
+-				std::cout << "iteration time:" << t << "," << i << std::endl;
++				spdlog::debug("IKFoM iteration time: {}, {}", t, i);
+ 		
+ 				Matrix<scalar_type, 3, 3> res_temp_SO3;
+ 				MTK::vect<3, scalar_type> seg_SO3;
+@@ -1328,7 +1328,7 @@ public:
+ 			if(t > 1 || i == maximum_iter - 1)
+ 			{
+ 				L_ = P_;
+-				std::cout << "iteration time:" << t << "," << i << std::endl;
++				spdlog::debug("IKFoM iteration time: {}, {}", t, i);
+ 		
+ 				Matrix<scalar_type, 3, 3> res_temp_SO3;
+ 				MTK::vect<3, scalar_type> seg_SO3;
+@@ -1536,7 +1536,7 @@ public:
+ 			if(t > 1 || i == maximum_iter - 1)
+ 			{
+ 				L_ = P_;
+-				std::cout << "iteration time:" << t << "," << i << std::endl;
++				spdlog::debug("IKFoM iteration time: {}, {}", t, i);
+ 		
+ 				Matrix<scalar_type, 3, 3> res_temp_SO3;
+ 				MTK::vect<3, scalar_type> seg_SO3;
+@@ -1994,7 +1994,7 @@ private:
+         double pos_dis = temp_vec.block( 3, 0, 3, 1 ).norm();
+         if ( angular_dis >= 20 || pos_dis > 1 )
+         {
+-            printf( "Angular dis = %.2f, pos dis = %.2f\r\n", angular_dis, pos_dis );
++            spdlog::warn("IKFoM state correction is large: angular={}, position={}", angular_dis, pos_dis);
+             temp_vec.setZero();
+         }
+         return temp_vec;
+diff --git a/include/IKFoM_toolkit/mtk/types/S2.hpp b/include/IKFoM_toolkit/mtk/types/S2.hpp
+index 789ebd9..3f521b9 100755
+--- a/include/IKFoM_toolkit/mtk/types/S2.hpp
++++ b/include/IKFoM_toolkit/mtk/types/S2.hpp
+@@ -251,7 +251,7 @@ public:
+ 		}
+ 		else
+ 		{
+-			std::cerr << "No N(x, y) for x=-y" << std::endl;
++			spdlog::critical("IKFoM cannot compute N(x,y) for antipodal vectors");
+ 			std::exit(100);
+ 		}
+ 	}
+diff --git a/include/IKFoM_toolkit/mtk/types/SOn.hpp b/include/IKFoM_toolkit/mtk/types/SOn.hpp
+index 31005e6..7517aa6 100755
+--- a/include/IKFoM_toolkit/mtk/types/SOn.hpp
++++ b/include/IKFoM_toolkit/mtk/types/SOn.hpp
+@@ -139,14 +139,14 @@ struct SO2 : public Eigen::Rotation2D<_scalar> {
+ 	//! @name Manifold requirements
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+@@ -250,14 +250,14 @@ struct SO3 : public Eigen::Quaternion<_scalar, Options> {
+ 	}
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+diff --git a/include/IKFoM_toolkit/mtk/types/vect.hpp b/include/IKFoM_toolkit/mtk/types/vect.hpp
+index 0e5b9ce..225f5ba 100755
+--- a/include/IKFoM_toolkit/mtk/types/vect.hpp
++++ b/include/IKFoM_toolkit/mtk/types/vect.hpp
+@@ -81,7 +81,7 @@
+ #define VECT_H_
+ 
+ #include <iosfwd>
+-#include <iostream>
++#include <spdlog/spdlog.h>
+ #include <vector>
+ 
+ #include "../src/vectview.hpp"
+@@ -132,14 +132,14 @@ struct vect : public Eigen::Matrix<_scalar, D, 1, _Options> {
+ 
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+@@ -253,14 +253,14 @@ struct matrix : public Eigen::Matrix<_scalar, M, N, _Options> {
+ 
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+@@ -303,14 +303,14 @@ struct Scalar {
+ 
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+@@ -362,14 +362,14 @@ struct PositiveScalar {
+ 
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+@@ -416,14 +416,14 @@ struct Complex : public std::complex<_scalar>{
+ 
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
 diff --git a/include/common_lib.h b/include/common_lib.h
 index 036b2f0..14f8827 100644
 --- a/include/common_lib.h
@@ -320,6 +537,50 @@ index 4768702..1593913 100644
 - #endif // COIN_LIO_FEATURE_MANAGER_H_
 \ No newline at end of file
 + #endif // COIN_LIO_FEATURE_MANAGER_H_
+diff --git a/include/ikd-Tree/ikd_Tree.cpp b/include/ikd-Tree/ikd_Tree.cpp
+index e8c4e86..87d7d7b 100644
+--- a/include/ikd-Tree/ikd_Tree.cpp
++++ b/include/ikd-Tree/ikd_Tree.cpp
+@@ -1,5 +1,7 @@
+ #include "ikd_Tree.h"
+ 
++#include <spdlog/spdlog.h>
++
+ /*
+ Description: ikd-Tree: an incremental k-d tree for robotic applications 
+ Author: Yixi Cai
+@@ -199,7 +201,7 @@ void KD_TREE<PointType>::start_thread()
+     pthread_mutex_init(&working_flag_mutex, NULL);
+     pthread_mutex_init(&search_flag_mutex, NULL);
+     pthread_create(&rebuild_thread, NULL, multi_thread_ptr, (void *)this);
+-    printf("Multi thread started \n");
++    spdlog::debug("iKD-tree rebuild thread started");
+ }
+ 
+ template <typename PointType>
+@@ -243,7 +245,7 @@ void KD_TREE<PointType>::multi_thread_rebuild()
+             /* Traverse and copy */
+             if (!Rebuild_Logger.empty())
+             {
+-                printf("\n\n\n\n\n\n\n\n\n\n\n ERROR!!! \n\n\n\n\n\n\n\n\n");
++                spdlog::error("iKD-tree rebuild logger was not drained before rebuild");
+             }
+             rebuild_flag = true;
+             if (*Rebuild_Ptr == Root_Node)
+@@ -363,7 +365,7 @@ void KD_TREE<PointType>::multi_thread_rebuild()
+         pthread_mutex_unlock(&termination_flag_mutex_lock);
+         usleep(100);
+     }
+-    printf("Rebuild thread terminated normally\n");
++    spdlog::debug("iKD-tree rebuild thread terminated normally");
+ }
+ 
+ template <typename PointType>
+@@ -1725,4 +1727,3 @@ bool KD_TREE<PointType>::point_cmp_z(PointType a, PointType b) { return a.z < b.
+ template class KD_TREE<pcl::PointXYZ>;
+ template class KD_TREE<pcl::PointXYZI>;
+ template class KD_TREE<pcl::PointXYZINormal>;
+-
 diff --git a/include/ikd-Tree/ikd_Tree.h b/include/ikd-Tree/ikd_Tree.h
 index d4b302e..661a7fe 100644
 --- a/include/ikd-Tree/ikd_Tree.h
@@ -1073,10 +1334,10 @@ index 3f4990c..06ce65b 100644
 +}
 diff --git a/standalone/coin_lio_adapter.cpp b/standalone/coin_lio_adapter.cpp
 new file mode 100644
-index 0000000..f8db5da
+index 0000000..6309889
 --- /dev/null
 +++ b/standalone/coin_lio_adapter.cpp
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,235 @@
 +#include "coin_lio_adapter.hpp"
 +
 +#include <slam_benchmark/calibration.hpp>
@@ -1122,12 +1383,10 @@ index 0000000..f8db5da
 +        sensors, {.lidar = true, .imu = true, .point_time = true,
 +                  .intensity = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = compatibility.selected_sensor(sensors,
-+                                                      slam_benchmark::SensorType::Lidar);
-+    const auto imu = compatibility.selected_sensor(sensors,
-+                                                    slam_benchmark::SensorType::Imu);
++    const auto lidar = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
-+        throw std::runtime_error("COIN-LIO requires one LiDAR and one IMU");
++        return slam_benchmark::InitializationResult::unsupported("COIN-LIO requires one LiDAR and one IMU");
 +
 +    sink_ = &sink;
 +    const YAML::Node root = YAML::LoadFile(config_path.string());

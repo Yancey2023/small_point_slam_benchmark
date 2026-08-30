@@ -1,10 +1,10 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 old mode 100755
 new mode 100644
-index 3e15930..a7a33a2
+index 3e15930..c00cf4f
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,56 +1,58 @@
+@@ -1,56 +1,46 @@
 -cmake_minimum_required(VERSION 3.2)
 -project(ct_lio)
 -
@@ -45,9 +45,7 @@ index 3e15930..a7a33a2
 +find_package(Ceres CONFIG REQUIRED)
 +find_package(PCL REQUIRED COMPONENTS common filters kdtree)
 +find_package(OpenCV REQUIRED COMPONENTS core)
-+find_package(glog CONFIG REQUIRED)
 +find_package(gflags CONFIG REQUIRED)
-+find_package(OpenMP REQUIRED)
 +
 +add_library(ct_lio_algorithm STATIC
 +  src/common/timer/timer.cc
@@ -82,30 +80,19 @@ index 3e15930..a7a33a2
 -include_directories(
 -  include 
 +target_link_libraries(ct_lio_algorithm PUBLIC
-+  Eigen3::Eigen Ceres::ceres glog::glog gflags
++  Eigen3::Eigen Ceres::ceres gflags spdlog::spdlog
 +  ${PCL_LIBRARIES} ${OpenCV_LIBS} yaml-cpp::yaml-cpp
++)
++target_compile_definitions(ct_lio_algorithm PUBLIC
++  SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
  )
--
+ 
 -include_directories(${PROJECT_SOURCE_DIR})
 -include_directories(${PROJECT_SOURCE_DIR}/src)
 -include_directories(${PROJECT_SOURCE_DIR}/thirdparty/sophus)
 -
 -add_subdirectory(src)
 \ No newline at end of file
-+if(OpenMP_CXX_FOUND)
-+  target_link_libraries(ct_lio_algorithm PUBLIC OpenMP::OpenMP_CXX)
-+  target_compile_definitions(ct_lio_algorithm PUBLIC
-+    MP_EN
-+    MP_PROC_NUM=${SLAM_BENCHMARK_PARALLEL_THREADS}
-+    SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
-+  )
-+else()
-+  target_compile_definitions(ct_lio_algorithm PUBLIC
-+    MP_PROC_NUM=1
-+    SLAM_BENCHMARK_PARALLEL_THREADS=1
-+  )
-+endif()
-+
 +add_executable(ct_lio_benchmark standalone/ct_lio_adapter.cpp standalone/main.cpp)
 +target_link_libraries(ct_lio_benchmark PRIVATE
 +  ct_lio_algorithm slam_benchmark::core spdlog::spdlog
@@ -117,11 +104,340 @@ index 3e15930..a7a33a2
 +  target_compile_options(ct_lio_algorithm PRIVATE -Wall -Wextra)
 +  target_compile_options(ct_lio_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 +endif()
+diff --git a/src/algo/eskf.hpp b/src/algo/eskf.hpp
+index fd8fb2e..dbea6bf 100644
+--- a/src/algo/eskf.hpp
++++ b/src/algo/eskf.hpp
+@@ -11,7 +11,7 @@
+ #include "tools/nav_state.h"
+ #include "tools/odom.h"
+ 
+-#include <glog/logging.h>
++#include "common/spdlog_stream.h"
+ #include <iomanip>
+ 
+ namespace zjloc
+@@ -217,7 +217,7 @@ namespace zjloc
+         if (dt > (5 * options_.imu_dt_) || dt < 0)
+         {
+             // 时间间隔不对，可能是第一个IMU数据，没有历史信息
+-            LOG(INFO) << "skip this imu because dt_ = " << dt;
++            zjloc::common::SpdlogStream(spdlog::level::info) << "skip this imu because dt_ = " << dt;
+             current_time_ = imu.timestamp_;
+             return false;
+         }
+diff --git a/src/algo/static_imu_init.cc b/src/algo/static_imu_init.cc
+index 5237f52..d1fd3a0 100644
+--- a/src/algo/static_imu_init.cc
++++ b/src/algo/static_imu_init.cc
+@@ -5,7 +5,7 @@
+ #include "static_imu_init.h"
+ #include "common/math_utils.h"
+ 
+-#include <glog/logging.h>
++#include "common/spdlog_stream.h"
+ 
+ namespace zjloc
+ {
+@@ -19,7 +19,7 @@ namespace zjloc
+ 
+         if (options_.use_speed_for_static_checking_ && !is_static_)
+         {
+-            LOG(WARNING) << "等待车辆静止";
++            zjloc::common::SpdlogStream(spdlog::level::warn) << "等待车辆静止";
+             init_imu_deque_.clear();
+             return false;
+         }
+@@ -86,7 +86,7 @@ namespace zjloc
+                                     { return imu.acce_; });
+ 
+         // 以acce均值为方向，取9.8长度为重力
+-        LOG(INFO) << "mean acce: " << mean_acce.transpose();
++        zjloc::common::SpdlogStream(spdlog::level::info) << "mean acce: " << mean_acce.transpose();
+         gravity_ = -mean_acce / mean_acce.norm() * options_.gravity_norm_;
+ 
+         // 重新计算加计的协方差
+@@ -97,13 +97,13 @@ namespace zjloc
+         // 检查IMU噪声
+         if (cov_gyro_.norm() > options_.max_static_gyro_var)
+         {
+-            LOG(ERROR) << "陀螺仪测量噪声太大" << cov_gyro_.norm() << " > " << options_.max_static_gyro_var;
++            zjloc::common::SpdlogStream(spdlog::level::err) << "陀螺仪测量噪声太大" << cov_gyro_.norm() << " > " << options_.max_static_gyro_var;
+             return false;
+         }
+ 
+         if (cov_acce_.norm() > options_.max_static_acce_var)
+         {
+-            LOG(ERROR) << "加计测量噪声太大" << cov_acce_.norm() << " > " << options_.max_static_acce_var;
++            zjloc::common::SpdlogStream(spdlog::level::err) << "加计测量噪声太大" << cov_acce_.norm() << " > " << options_.max_static_acce_var;
+             return false;
+         }
+ 
+@@ -111,12 +111,12 @@ namespace zjloc
+         init_bg_ = mean_gyro;
+         init_ba_ = mean_acce;
+ 
+-        LOG(INFO) << "IMU 初始化成功，初始化时间= " << current_time_ - init_start_time_ << ", bg = " << init_bg_.transpose()
++        zjloc::common::SpdlogStream(spdlog::level::info) << "IMU 初始化成功，初始化时间= " << current_time_ - init_start_time_ << ", bg = " << init_bg_.transpose()
+                   << ", ba = " << init_ba_.transpose();
+-        LOG(INFO) << "gyro sq = " << cov_gyro_.transpose()
++        zjloc::common::SpdlogStream(spdlog::level::info) << "gyro sq = " << cov_gyro_.transpose()
+                   << ", acce sq = " << cov_acce_.transpose() << ", grav = " << gravity_.transpose()
+                   << ", norm: " << gravity_.norm();
+-        LOG(INFO) << "mean gyro: " << mean_gyro.transpose() << " acce: " << mean_acce.transpose();
++        zjloc::common::SpdlogStream(spdlog::level::info) << "mean gyro: " << mean_gyro.transpose() << " acce: " << mean_acce.transpose();
+         init_success_ = true;
+         return true;
+     }
+diff --git a/src/common/math_utils.h b/src/common/math_utils.h
+index fdbd783..1a1f12e 100644
+--- a/src/common/math_utils.h
++++ b/src/common/math_utils.h
+@@ -5,7 +5,7 @@
+ #ifndef MAPPING_MATH_UTILS_H
+ #define MAPPING_MATH_UTILS_H
+ 
+-#include <glog/logging.h>
++#include "common/spdlog_stream.h"
+ #include <boost/array.hpp>
+ #include <boost/math/tools/precision.hpp>
+ #include <iomanip>
+@@ -254,7 +254,7 @@ namespace zjloc::math
+             {
+                 if (std::isnan(m(i, j)))
+                 {
+-                    LOG(ERROR) << "matrix has nan: \n"
++                    zjloc::common::SpdlogStream(spdlog::level::err) << "matrix has nan: \n"
+                                << m;
+                     return true;
+                 }
+@@ -463,7 +463,7 @@ namespace zjloc::math
+     {
+         if (point.size() < 3)
+         {
+-            LOG(ERROR) << "the number of points should not be less than 3, given " << point.size();
++            zjloc::common::SpdlogStream(spdlog::level::err) << "the number of points should not be less than 3, given " << point.size();
+             return false;
+         }
+         // Marked by xiaotao:
+@@ -533,7 +533,7 @@ namespace zjloc::math
+     {
+         if (data.empty())
+         {
+-            LOG(INFO) << "cannot interp because data is empty. ";
++            zjloc::common::SpdlogStream(spdlog::level::info) << "cannot interp because data is empty. ";
+             return false;
+         }
+ 
+@@ -791,13 +791,13 @@ namespace zjloc::math
+     {
+         if (data.empty())
+         {
+-            LOG(INFO) << "data is empty";
++            zjloc::common::SpdlogStream(spdlog::level::info) << "data is empty";
+             return false;
+         }
+ 
+         if (query_time > data.rbegin()->first)
+         {
+-            LOG(INFO) << "query time is later than last, " << std::setprecision(18) << ", query: " << query_time
++            zjloc::common::SpdlogStream(spdlog::level::info) << "query time is later than last, " << std::setprecision(18) << ", query: " << query_time
+                       << ", end time: " << data.rbegin()->first;
+ 
+             return false;
+diff --git a/src/common/spdlog_stream.h b/src/common/spdlog_stream.h
+new file mode 100644
+index 0000000..3597319
+--- /dev/null
++++ b/src/common/spdlog_stream.h
+@@ -0,0 +1,34 @@
++#pragma once
++
++#include <spdlog/spdlog.h>
++
++#include <ostream>
++#include <sstream>
++#include <utility>
++
++namespace zjloc::common {
++
++class SpdlogStream {
++public:
++    explicit SpdlogStream(spdlog::level::level_enum level) : level_(level) {}
++    SpdlogStream(const SpdlogStream&) = delete;
++    SpdlogStream(SpdlogStream&&) = default;
++    ~SpdlogStream() { spdlog::log(level_, "{}", stream_.str()); }
++
++    template <typename T>
++    SpdlogStream& operator<<(T&& value) {
++        stream_ << std::forward<T>(value);
++        return *this;
++    }
++
++    SpdlogStream& operator<<(std::ostream& (*manipulator)(std::ostream&)) {
++        manipulator(stream_);
++        return *this;
++    }
++
++private:
++    spdlog::level::level_enum level_;
++    std::ostringstream stream_;
++};
++
++}  // namespace zjloc::common
+diff --git a/src/common/timer/timer.cc b/src/common/timer/timer.cc
+index 220d725..ea582d6 100644
+--- a/src/common/timer/timer.cc
++++ b/src/common/timer/timer.cc
+@@ -1,6 +1,6 @@
+ #include "timer.h"
+ 
+-#include <glog/logging.h>
++#include "common/spdlog_stream.h"
+ #include <fstream>
+ #include <numeric>
+ 
+@@ -11,15 +11,15 @@ namespace zjloc::common
+ 
+     void Timer::PrintAll()
+     {
+-        std::cout << ANSI_COLOR_GREEN_BOLD << ">>> ===== Printing run time =====" << std::endl;
++        zjloc::common::SpdlogStream(spdlog::level::debug) << ANSI_COLOR_GREEN_BOLD << ">>> ===== Printing run time =====" << std::endl;
+         for (const auto &r : records_)
+         {
+-            std::cout << ANSI_COLOR_GREEN << "> [ " << r.first << " ] average time usage: "
++            zjloc::common::SpdlogStream(spdlog::level::debug) << ANSI_COLOR_GREEN << "> [ " << r.first << " ] average time usage: "
+                       << std::accumulate(r.second.time_usage_in_ms_.begin(), r.second.time_usage_in_ms_.end(), 0.0) /
+                              double(r.second.time_usage_in_ms_.size())
+                       << " ms , called times: " << r.second.time_usage_in_ms_.size() << std::endl;
+         }
+-        std::cout << ">>> ===== Printing run time end =====" << ANSI_COLOR_RESET << std::endl;
++        zjloc::common::SpdlogStream(spdlog::level::debug) << ">>> ===== Printing run time end =====" << ANSI_COLOR_RESET << std::endl;
+     }
+ 
+     void Timer::DumpIntoFile(const std::string &file_name)
+@@ -27,12 +27,12 @@ namespace zjloc::common
+         std::ofstream ofs(file_name, std::ios::out);
+         if (!ofs.is_open())
+         {
+-            std::cout << ANSI_COLOR_RED_BOLD << "Failed to open file: " << file_name << std::endl;
++            zjloc::common::SpdlogStream(spdlog::level::debug) << ANSI_COLOR_RED_BOLD << "Failed to open file: " << file_name << std::endl;
+             return;
+         }
+         else
+         {
+-            std::cout << ANSI_COLOR_GREEN_BOLD << "Dump Time Records into file: " << file_name << ANSI_COLOR_RESET << std::endl;
++            zjloc::common::SpdlogStream(spdlog::level::debug) << ANSI_COLOR_GREEN_BOLD << "Dump Time Records into file: " << file_name << ANSI_COLOR_RESET << std::endl;
+         }
+ 
+         size_t max_length = 0;
+@@ -76,4 +76,4 @@ namespace zjloc::common
+                double(r.time_usage_in_ms_.size());
+     }
+ 
+-} // namespace zjloc::utils
+\ No newline at end of file
++} // namespace zjloc::utils
+diff --git a/src/common/timer/timer.h b/src/common/timer/timer.h
+index 1f2598f..203947d 100644
+--- a/src/common/timer/timer.h
++++ b/src/common/timer/timer.h
+@@ -2,7 +2,7 @@
+ #define FUSION_TIMER_H
+ 
+ #include <ctime>
+-#include <iostream>
++#include <iomanip>
+ #include <chrono>
+ #include <functional>
+ #include <map>
+@@ -10,6 +10,7 @@
+ #include <vector>
+ #include <cstdlib>
+ #include "tools/tool_color_printf.hpp"
++#include "common/spdlog_stream.h"
+ 
+ namespace zjloc::common
+ {
+@@ -98,8 +99,9 @@ namespace zjloc::common
+ 
+             if (disp_)
+             {
+-                std::cout.precision(3); // 10 for sec, 3 for ms
+-                std::cout << _about_task << ": " << elapsed_ms << " msec." << std::endl;
++                SpdlogStream(spdlog::level::debug)
++                    << std::setprecision(3) << _about_task << ": "
++                    << elapsed_ms << " msec.";
+             }
+         }
+         double toc()
+diff --git a/src/common/utils.cpp b/src/common/utils.cpp
+index d4f40a3..985d11e 100644
+--- a/src/common/utils.cpp
++++ b/src/common/utils.cpp
+@@ -164,17 +164,6 @@ Eigen::Quaterniond Utils::deltaQ(const Eigen::Vector3d &theta)
+      return dq;
+ }
+ 
+-// Eigen::Isometry3d Utils::odomToEigen(const nav_msgs::OdometryConstPtr &odom_msg)
+-// {
+-//      Eigen::Isometry3d odom = Eigen::Isometry3d::Identity();
+-//      Eigen::Quaterniond q_temp(odom_msg->pose.pose.orientation.w, odom_msg->pose.pose.orientation.x, odom_msg->pose.pose.orientation.y, odom_msg->pose.pose.orientation.z);
+-//      odom.linear() = q_temp.toRotationMatrix();
+-//      odom.translation().x() = odom_msg->pose.pose.position.x;
+-//      odom.translation().y() = odom_msg->pose.pose.position.y;
+-//      odom.translation().z() = odom_msg->pose.pose.position.z;
+-//      return odom;
+-// }
+-
+ Eigen::Isometry3d Utils::so3ToT(const Eigen::Vector3d &rotation, const Eigen::Vector3d &translation)
+ {
+      Eigen::Isometry3d T = Eigen::Isometry3d::Identity();
+@@ -204,4 +193,4 @@ Eigen::Isometry3d Utils::so3ToT(const Eigen::Vector3d &rotation, const Eigen::Ve
+ //      total_frame++;
+ //      if (total_frame % freq == 0)
+ //           std::cout << "the average time of " << name << " is " << elapsed_seconds.count() * 1000 << "ms" << std::endl;
+-// }
+\ No newline at end of file
++// }
+diff --git a/src/common/utils.h b/src/common/utils.h
+index 5c5494e..69aefcc 100644
+--- a/src/common/utils.h
++++ b/src/common/utils.h
+@@ -5,7 +5,6 @@
+ #include <Eigen/Geometry>
+ 
+ // #include <opencv2/core/core.hpp>
+-// #include <nav_msgs/Odometry.h>
+ #include <chrono>
+ 
+ #define MY_IMUPREINTEGRATE_
+@@ -38,7 +37,6 @@ public:
+      static Eigen::Matrix4d quatLeftMatrix(const Eigen::Quaterniond &q);
+      static Eigen::Matrix4d quatRightMatrix(const Eigen::Quaterniond &q);
+      static Eigen::Quaterniond deltaQ(const Eigen::Vector3d &theta);
+-     // static Eigen::Isometry3d odomToEigen(const nav_msgs::OdometryConstPtr &odom_msg);
+      static Eigen::Isometry3d so3ToT(const Eigen::Vector3d &rotation, const Eigen::Vector3d &translation);
+      static Eigen::Matrix3d normalizeR(const Eigen::Matrix3d &R_in);
+ }; // namespace utils
+@@ -57,4 +55,4 @@ public:
+ //      std::string name;
+ // };
+ 
+-#endif //_UTILS_H_
+\ No newline at end of file
++#endif //_UTILS_H_
 diff --git a/src/liw/lio/lidarodom.cpp b/src/liw/lio/lidarodom.cpp
-index 8b2e820..9d06c87 100644
+index 8b2e820..07d5bca 100644
 --- a/src/liw/lio/lidarodom.cpp
 +++ b/src/liw/lio/lidarodom.cpp
-@@ -7,6 +7,7 @@ namespace zjloc
+@@ -1,4 +1,5 @@
+ #include <yaml-cpp/yaml.h>
++#include "common/spdlog_stream.h"
+ #include "lidarodom.h"
+ 
+ namespace zjloc
+@@ -7,6 +8,7 @@ namespace zjloc
  
       lidarodom::lidarodom(/* args */)
       {
@@ -129,7 +445,7 @@ index 8b2e820..9d06c87 100644
            laser_point_cov = 0.001;
            current_state = new state(Eigen::Quaterniond::Identity(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
  
-@@ -16,6 +17,9 @@ namespace zjloc
+@@ -16,6 +18,9 @@ namespace zjloc
  
            index_frame = 1;
            points_world.reset(new pcl::PointCloud<pcl::PointXYZI>());
@@ -139,7 +455,7 @@ index 8b2e820..9d06c87 100644
       }
  
       lidarodom::~lidarodom()
-@@ -25,6 +29,11 @@ namespace zjloc
+@@ -25,6 +30,11 @@ namespace zjloc
       void lidarodom::loadOptions()
       {
            auto yaml = YAML::LoadFile(config_yaml_);
@@ -151,7 +467,25 @@ index 8b2e820..9d06c87 100644
            options_.surf_res = yaml["odometry"]["surf_res"].as<double>();
            options_.log_print = yaml["odometry"]["log_print"].as<bool>();
            options_.max_num_iteration = yaml["odometry"]["max_num_iteration"].as<int>();
-@@ -76,7 +85,9 @@ namespace zjloc
+@@ -58,7 +68,7 @@ namespace zjloc
+           else if (str_motion_compensation == "CONTINUOUS")
+                options_.motion_compensation = MotionCompensation::CONTINUOUS;
+           else
+-               std::cout << "The `motion_compensation` " << str_motion_compensation << " is not supported." << std::endl;
++               zjloc::common::SpdlogStream(spdlog::level::debug) << "The `motion_compensation` " << str_motion_compensation << " is not supported." << std::endl;
+ 
+           std::string str_icpmodel = yaml["odometry"]["icpmodel"].as<std::string>();
+           if (str_icpmodel == "POINT_TO_PLANE")
+@@ -66,7 +76,7 @@ namespace zjloc
+           else if (str_icpmodel == "CT_POINT_TO_PLANE")
+                options_.icpmodel = CT_POINT_TO_PLANE;
+           else
+-               std::cout << "The `icp_residual` " << str_icpmodel << " is not supported." << std::endl;
++               zjloc::common::SpdlogStream(spdlog::level::debug) << "The `icp_residual` " << str_icpmodel << " is not supported." << std::endl;
+ 
+           options_.beta_location_consistency = yaml["odometry"]["beta_location_consistency"].as<double>();
+           options_.beta_orientation_consistency = yaml["odometry"]["beta_orientation_consistency"].as<double>();
+@@ -76,7 +86,9 @@ namespace zjloc
            options_.thres_translation_norm = yaml["odometry"]["thres_translation_norm"].as<double>();
       }
  
@@ -162,7 +496,7 @@ index 8b2e820..9d06c87 100644
       {
            config_yaml_ = config_yaml;
            StaticIMUInit::Options imu_init_options;
-@@ -85,22 +96,14 @@ namespace zjloc
+@@ -85,22 +97,14 @@ namespace zjloc
  
            auto yaml = YAML::LoadFile(config_yaml_);
            delay_time_ = yaml["delay_time"].as<double>();
@@ -192,7 +526,44 @@ index 8b2e820..9d06c87 100644
  
            //   TODO: need init here
            CT_ICP::LidarPlaneNormFactor::t_il = t_imu_lidar;
-@@ -199,6 +202,15 @@ namespace zjloc
+@@ -125,7 +129,7 @@ namespace zjloc
+                options_.icpmodel = CT_POINT_TO_PLANE;
+                break;
+           }
+-          LOG(WARNING) << "motion_compensation:" << options_.motion_compensation << ", model: " << options_.icpmodel;
++          zjloc::common::SpdlogStream(spdlog::level::warn) << "motion_compensation:" << options_.motion_compensation << ", model: " << options_.icpmodel;
+ 
+           return true;
+      }
+@@ -134,7 +138,7 @@ namespace zjloc
+      {
+           if (data.first < last_timestamp_lidar_)
+           {
+-               LOG(ERROR) << "lidar loop back, clear buffer";
++               zjloc::common::SpdlogStream(spdlog::level::err) << "lidar loop back, clear buffer";
+                lidar_buffer_.clear();
+                time_buffer_.clear();
+           }
+@@ -151,7 +155,7 @@ namespace zjloc
+           double timestamp = imu->timestamp_;
+           if (timestamp < last_timestamp_imu_)
+           {
+-               LOG(WARNING) << "imu loop back, clear buffer";
++               zjloc::common::SpdlogStream(spdlog::level::warn) << "imu loop back, clear buffer";
+                imu_buffer_.clear();
+           }
+ 
+@@ -189,7 +193,8 @@ namespace zjloc
+                               static double prev_data_time = data_time;
+                               auto delta_real = std::chrono::duration_cast<std::chrono::milliseconds>(real_time - prev_real_time).count() * 0.001;
+                               auto delta_sim = data_time - prev_data_time;
+-                              printf("Processing the rosbag at %.1fX speed.", delta_sim / delta_real);
++                              spdlog::debug("CT-LIO processing at {:.1f}x sensor time",
++                                            delta_sim / delta_real);
+ 
+                               prev_data_time = data_time;
+                               prev_real_time = real_time;
+@@ -199,6 +204,15 @@ namespace zjloc
            }
       }
  
@@ -208,7 +579,7 @@ index 8b2e820..9d06c87 100644
       void lidarodom::ProcessMeasurements(MeasureGroup &meas)
       {
            measures_ = meas;
-@@ -209,9 +221,6 @@ namespace zjloc
+@@ -209,30 +223,33 @@ namespace zjloc
                 return;
            }
  
@@ -218,7 +589,136 @@ index 8b2e820..9d06c87 100644
            imu_states_.clear(); //   need clear here
  
            // 利用IMU数据进行状态预测
-@@ -375,11 +384,7 @@ namespace zjloc
+-          zjloc::common::Timer::Evaluate([&]()
+-                                         { Predict(); },
+-                                         "predict");
+-          //
+-          zjloc::common::Timer::Evaluate([&]()
+-                                         { stateInitialization(); },
+-                                         "state init");
++          auto stage_started = std::chrono::steady_clock::now();
++          Predict();
++          stateInitialization();
++          if (timing_callback_)
++          {
++               const double duration_ms = std::chrono::duration<double, std::milli>(
++                   std::chrono::steady_clock::now() - stage_started).count();
++               timing_callback_("state_propagation", meas.lidar_end_time_, duration_ms);
++          }
+ 
+           std::vector<point3D> const_surf;
+           const_surf.insert(const_surf.end(), meas.lidar_.begin(), meas.lidar_.end());
+           // const_surf.assign(meas.lidar_.begin(), meas.lidar_.end());
+ 
+           cloudFrame *p_frame;
+-          zjloc::common::Timer::Evaluate([&]()
+-                                         { p_frame = buildFrame(const_surf, current_state,
+-                                                                meas.lidar_begin_time_,
+-                                                                meas.lidar_end_time_); },
+-                                         "build frame");
++          stage_started = std::chrono::steady_clock::now();
++          p_frame = buildFrame(const_surf, current_state,
++                               meas.lidar_begin_time_, meas.lidar_end_time_);
++          if (timing_callback_)
++          {
++               const double duration_ms = std::chrono::duration<double, std::milli>(
++                   std::chrono::steady_clock::now() - stage_started).count();
++               timing_callback_("undistortion", meas.lidar_end_time_, duration_ms);
++          }
+ 
+           //   lio
+           zjloc::common::Timer::Evaluate([&]()
+@@ -241,9 +258,9 @@ namespace zjloc
+ 
+           //   观测
+           SE3 pose_of_lo_ = SE3(current_state->rotation, current_state->translation);
+-          // std::cout << "obs: " << current_state->translation.transpose() << ", " << current_state->rotation.transpose() << std::endl;
++          // zjloc::common::SpdlogStream(spdlog::level::debug) << "obs: " << current_state->translation.transpose() << ", " << current_state->rotation.transpose() << std::endl;
+           // SE3 pred_pose = eskf_.GetNominalSE3();
+-          // std::cout << "pred: " << pred_pose.translation().transpose() << ", " << pred_pose.so3().log().transpose() << std::endl;
++          // zjloc::common::SpdlogStream(spdlog::level::debug) << "pred: " << pred_pose.translation().transpose() << ", " << pred_pose.so3().log().transpose() << std::endl;
+           zjloc::common::Timer::Evaluate([&]()
+                                          { eskf_.ObserveSE3(pose_of_lo_, 1e-2, 1e-2); },
+                                          "eskf_obs");
+@@ -266,7 +283,7 @@ namespace zjloc
+                     dist += (t - last_t).norm();
+                     last_t = t;
+                     pub_data_to_ros(laser_topic, dist, 0);
+-                    // std::cout << eskf_.GetGravity().transpose() << std::endl;
++                    // zjloc::common::SpdlogStream(spdlog::level::debug) << eskf_.GetGravity().transpose() << std::endl;
+                } },
+                                          "pub cloud");
+ 
+@@ -287,22 +304,22 @@ namespace zjloc
+           //   TODO: check current_state data
+           if (index_frame > 1)
+           {
+-               zjloc::common::Timer::Evaluate([&]()
+-                                              { optimize(p_frame); },
+-                                              "optimize");
++               optimize(p_frame);
+           }
+ 
+           bool add_points = true;
+           if (add_points)
+           { //   update map here
+-               zjloc::common::Timer::Evaluate([&]()
+-                                              { map_incremental(p_frame); },
+-                                              "map update");
++               const auto map_started = std::chrono::steady_clock::now();
++               map_incremental(p_frame);
++               lasermap_fov_segment();
++               if (timing_callback_)
++               {
++                    const double duration_ms = std::chrono::duration<double, std::milli>(
++                        std::chrono::steady_clock::now() - map_started).count();
++                    timing_callback_("map_update", measures_.lidar_end_time_, duration_ms);
++               }
+           }
+-
+-          zjloc::common::Timer::Evaluate([&]()
+-                                         { lasermap_fov_segment(); },
+-                                         "fov segment");
+      }
+ 
+      void lidarodom::optimize(cloudFrame *p_frame)
+@@ -322,7 +339,7 @@ namespace zjloc
+           if (p_frame->frame_id > 1)
+           {
+                if (options_.log_print)
+-                    std::cout << "all_cloud_frame.size():" << all_state_frame.size() << ", " << p_frame->frame_id << std::endl;
++                    zjloc::common::SpdlogStream(spdlog::level::debug) << "all_cloud_frame.size():" << all_state_frame.size() << ", " << p_frame->frame_id << std::endl;
+                // previous_state = all_cloud_frame[p_frame->frame_id - 2]->p_state;
+                previous_state = all_state_frame[p_frame->frame_id - 2];
+                previous_translation = previous_state->translation;
+@@ -331,14 +348,24 @@ namespace zjloc
+           }
+           if (options_.log_print)
+           {
+-               std::cout << "prev end: " << previous_translation.transpose() << std::endl;
+-               std::cout << "curr begin: " << p_frame->p_state->translation_begin.transpose()
++               zjloc::common::SpdlogStream(spdlog::level::debug) << "prev end: " << previous_translation.transpose() << std::endl;
++               zjloc::common::SpdlogStream(spdlog::level::debug) << "curr begin: " << p_frame->p_state->translation_begin.transpose()
+                          << "\ncurr end: " << p_frame->p_state->translation.transpose() << std::endl;
+           }
+ 
+           std::vector<point3D> surf_keypoints;
++          const auto downsampling_started = std::chrono::steady_clock::now();
+           gridSampling(p_frame->point_surf, surf_keypoints,
+                        options_.sampling_rate * options_.surf_res);
++          if (timing_callback_)
++          {
++               const double duration_ms = std::chrono::duration<double, std::milli>(
++                   std::chrono::steady_clock::now() - downsampling_started).count();
++               timing_callback_("downsampling", measures_.lidar_end_time_, duration_ms);
++          }
++
++          double map_search_duration_ms = 0.0;
++          double filter_update_duration_ms = 0.0;
+ 
+           size_t num_size = p_frame->point_surf.size();
+ 
+@@ -375,11 +402,7 @@ namespace zjloc
                 ceres::LossFunction *loss_function = new ceres::HuberLoss(0.5);
                 ceres::Problem::Options problem_options;
                 ceres::Problem problem(problem_options);
@@ -231,7 +731,39 @@ index 8b2e820..9d06c87 100644
  
                 switch (options_.icpmodel)
                 {
-@@ -480,7 +485,7 @@ namespace zjloc
+@@ -397,6 +420,7 @@ namespace zjloc
+ 
+                std::vector<ceres::CostFunction *> surfFactor;
+                std::vector<Eigen::Vector3d> normalVec;
++               const auto map_search_started = std::chrono::steady_clock::now();
+                addSurfCostFactor(surfFactor, normalVec, surf_keypoints, p_frame);
+ 
+                //   TODO: 退化后，该如何处理
+@@ -404,7 +428,7 @@ namespace zjloc
+ 
+                int surf_num = 0;
+                if (options_.log_print)
+-                    std::cout << "get factor: " << surfFactor.size() << std::endl;
++                    zjloc::common::SpdlogStream(spdlog::level::debug) << "get factor: " << surfFactor.size() << std::endl;
+                for (auto &e : surfFactor)
+                {
+                     surf_num++;
+@@ -423,6 +447,8 @@ namespace zjloc
+                //   release
+                std::vector<Eigen::Vector3d>().swap(normalVec);
+                std::vector<ceres::CostFunction *>().swap(surfFactor);
++               map_search_duration_ms += std::chrono::duration<double, std::milli>(
++                   std::chrono::steady_clock::now() - map_search_started).count();
+ 
+                if (options_.icpmodel == IcpModel::CT_POINT_TO_PLANE)
+                {
+@@ -475,12 +501,12 @@ namespace zjloc
+                     std::stringstream ss_out;
+                     ss_out << "[Optimization] Error : not enough keypoints selected in ct-icp !" << std::endl;
+                     ss_out << "[Optimization] number_of_residuals : " << surf_num << std::endl;
+-                    std::cout << "ERROR: " << ss_out.str();
++                    zjloc::common::SpdlogStream(spdlog::level::debug) << "ERROR: " << ss_out.str();
+                }
  
                 ceres::Solver::Options options;
                 options.max_num_iterations = 5;
@@ -240,7 +772,71 @@ index 8b2e820..9d06c87 100644
                 options.minimizer_progress_to_stdout = false;
                 options.trust_region_strategy_type = ceres::TrustRegionStrategyType::LEVENBERG_MARQUARDT;
  
-@@ -1105,7 +1110,6 @@ namespace zjloc
+@@ -493,11 +519,14 @@ namespace zjloc
+ 
+                ceres::Solver::Summary summary;
+ 
++               const auto filter_update_started = std::chrono::steady_clock::now();
+                ceres::Solve(options, &problem, &summary);
++               filter_update_duration_ms += std::chrono::duration<double, std::milli>(
++                   std::chrono::steady_clock::now() - filter_update_started).count();
+ 
+                if (!summary.IsSolutionUsable())
+                {
+-                    std::cout << summary.FullReport() << std::endl;
++                    zjloc::common::SpdlogStream(spdlog::level::debug) << summary.FullReport() << std::endl;
+                     throw std::runtime_error("Error During Optimization");
+                }
+ 
+@@ -536,14 +565,19 @@ namespace zjloc
+                    diff_trans < options_.thres_translation_norm)
+                {
+                     if (options_.log_print)
+-                         std::cout << "Optimization: Finished with N=" << iter << " ICP iterations" << std::endl;
++                         zjloc::common::SpdlogStream(spdlog::level::debug) << "Optimization: Finished with N=" << iter << " ICP iterations" << std::endl;
+                     break;
+                }
+           }
+           std::vector<point3D>().swap(surf_keypoints);
++          if (timing_callback_)
++          {
++               timing_callback_("map_search", measures_.lidar_end_time_, map_search_duration_ms);
++               timing_callback_("filter_update", measures_.lidar_end_time_, filter_update_duration_ms);
++          }
+           if (options_.log_print)
+           {
+-               std::cout << "opt: " << p_frame->p_state->translation_begin.transpose()
++               zjloc::common::SpdlogStream(spdlog::level::debug) << "opt: " << p_frame->p_state->translation_begin.transpose()
+                          << ",end: " << p_frame->p_state->translation.transpose() << std::endl;
+           }
+ 
+@@ -567,14 +601,14 @@ namespace zjloc
+                Eigen::JacobiSVD<Eigen::MatrixXd> svd(planeNormals.size(), 3);
+                svd.compute(mat);
+                if (svd.singularValues().z() < 3.5)
+-                    std::cout << ANSI_COLOR_YELLOW << "Low convincing result -> singular values:"
++                    zjloc::common::SpdlogStream(spdlog::level::debug) << ANSI_COLOR_YELLOW << "Low convincing result -> singular values:"
+                               << svd.singularValues().x() << ", " << svd.singularValues().y() << ", "
+                               << svd.singularValues().z() << ANSI_COLOR_RESET << std::endl;
+                return svd.singularValues().z();
+           }
+           else
+           {
+-               std::cout << ANSI_COLOR_RED << "Too few normal vector received -> " << planeNormals.size() << ANSI_COLOR_RESET << std::endl;
++               zjloc::common::SpdlogStream(spdlog::level::debug) << ANSI_COLOR_RED << "Too few normal vector received -> " << planeNormals.size() << ANSI_COLOR_RESET << std::endl;
+                return -1;
+           }
+      }
+@@ -1065,7 +1099,7 @@ namespace zjloc
+      {
+           // auto &cloud = measures_.lidar_;
+           auto imu_state = eskf_.GetNominalState(); // 最后时刻的状态
+-          // std::cout << __FUNCTION__ << ", " << imu_state.timestamp_ << std::endl;
++          // zjloc::common::SpdlogStream(spdlog::level::debug) << __FUNCTION__ << ", " << imu_state.timestamp_ << std::endl;
+           SE3 T_end = SE3(imu_state.R_, imu_state.p_);
+ 
+           /// 将所有点转到最后时刻状态上
+@@ -1105,7 +1139,6 @@ namespace zjloc
                 eskf_.SetInitialConditions(options, imu_init_.GetInitBg(), imu_init_.GetInitBa(), imu_init_.GetGravity());
                 imu_need_init_ = false;
  
@@ -249,7 +845,7 @@ index 8b2e820..9d06c87 100644
       }
  
 diff --git a/src/liw/lio/lidarodom.h b/src/liw/lio/lidarodom.h
-index 1177892..cd8262d 100644
+index 1177892..5333a1b 100644
 --- a/src/liw/lio/lidarodom.h
 +++ b/src/liw/lio/lidarodom.h
 @@ -2,7 +2,6 @@
@@ -278,7 +874,7 @@ index 1177892..cd8262d 100644
            //   ct_icp
            IcpModel icpmodel;
            double size_voxel_map;
-@@ -67,12 +64,15 @@ namespace zjloc
+@@ -67,18 +64,25 @@ namespace zjloc
            lidarodom(/* args */);
            ~lidarodom();
  
@@ -295,7 +891,22 @@ index 1177892..cd8262d 100644
  
            int getIndex() { return index_frame; }
  
-@@ -188,4 +188,4 @@ namespace zjloc
+           void setFunc(std::function<bool(std::string &topic_name, CloudPtr &cloud, double time)> &fun) { pub_cloud_to_ros = fun; }
+           void setFunc(std::function<bool(std::string &topic_name, SE3 &pose, double time)> &fun) { pub_pose_to_ros = fun; }
+           void setFunc(std::function<bool(std::string &topic_name, double time1, double time2)> &fun) { pub_data_to_ros = fun; }
++          void setTimingFunc(std::function<void(const char *stage, double time, double duration_ms)> fun)
++          {
++               timing_callback_ = std::move(fun);
++          }
+ 
+      private:
+           void loadOptions();
+@@ -184,8 +188,9 @@ namespace zjloc
+           std::function<bool(std::string &topic_name, CloudPtr &cloud, double time)> pub_cloud_to_ros;
+           std::function<bool(std::string &topic_name, SE3 &pose, double time)> pub_pose_to_ros;
+           std::function<bool(std::string &topic_name, double time1, double time2)> pub_data_to_ros;
++          std::function<void(const char *stage, double time, double duration_ms)> timing_callback_;
+           pcl::PointCloud<pcl::PointXYZI>::Ptr points_world;
       };
  }
  
@@ -317,12 +928,72 @@ index 302118f..0252294 100644
  {
  
      // 定义系统中用到的点和点云类型
+diff --git a/src/tools/tool_color_printf.hpp b/src/tools/tool_color_printf.hpp
+index 4cf01c8..aa77ef7 100644
+--- a/src/tools/tool_color_printf.hpp
++++ b/src/tools/tool_color_printf.hpp
+@@ -1,8 +1,6 @@
+ 
+ #ifndef __TOOLS_COLOR_PRINT_HPP__
+ #define __TOOLS_COLOR_PRINT_HPP__
+-#include <stdio.h>
+-#include <string.h>
+ /*
+  * Make screen print colorful :)
+  * Related link:
+@@ -15,8 +13,6 @@
+ // const std::string _tools_color_printf_info = "[Init]: Add macros, add scope_color()";
+ const std::string _tools_color_printf_version = "V1.2";
+ const std::string _tools_color_printf_info = "[Enh]: Add delete lines, ANSI_SCREEN_FLUSH";
+-using std::cout;
+-using std::endl;
+ // clang-format off
+ #ifdef EMPTY_ANSI_COLORS
+     #define ANSI_COLOR_RED ""
+@@ -66,27 +62,14 @@ using std::endl;
+ 
+     #define ANSI_DELETE_LAST_LINE "\033[A\33[2K\r"
+     #define ANSI_DELETE_CURRENT_LINE "\33[2K\r"
+-    #define ANSI_SCREEN_FLUSH std::fflush(stdout);
++    #define ANSI_SCREEN_FLUSH ((void)0)
+ 
+-    #define SET_PRINT_COLOR( a ) cout << a ;
++    #define SET_PRINT_COLOR(a) ((void)0)
+ 
+ #endif
+ // clang-format on
+ 
+-struct _Scope_color
+-{
+-    _Scope_color(const char *color)
+-    {
+-        std::cout << color;
+-    }
+-
+-    ~_Scope_color()
+-    {
+-        std::cout << ANSI_COLOR_RESET;
+-    }
+-};
+-
+-#define scope_color(a) _Scope_color _scope(a);
++#define scope_color(a) ((void)0)
+ 
+ // inline int demo_test_color_printf()
+ // {
+@@ -105,4 +88,4 @@ struct _Scope_color
+ //     }
+ //     return ( 0 );
+ // };
+-#endif
+\ No newline at end of file
++#endif
 diff --git a/standalone/ct_lio_adapter.cpp b/standalone/ct_lio_adapter.cpp
 new file mode 100644
-index 0000000..aba8bd0
+index 0000000..f32b435
 --- /dev/null
 +++ b/standalone/ct_lio_adapter.cpp
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,109 @@
 +#include "ct_lio_adapter.hpp"
 +
 +#include <slam_benchmark/calibration.hpp>
@@ -335,10 +1006,6 @@ index 0000000..aba8bd0
 +#include <stdexcept>
 +
 +namespace {
-+double seconds(slam_benchmark::TimestampNs value) {
-+    return static_cast<double>(value) * 1e-9;
-+}
-+
 +slam_benchmark::TimestampNs nanoseconds(double value) {
 +    return static_cast<slam_benchmark::TimestampNs>(std::llround(value * 1e9));
 +}
@@ -351,12 +1018,10 @@ index 0000000..aba8bd0
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = compatibility.selected_sensor(sensors,
-+                                                      slam_benchmark::SensorType::Lidar);
-+    const auto imu = compatibility.selected_sensor(sensors,
-+                                                    slam_benchmark::SensorType::Imu);
++    const auto lidar = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end()) {
-+        throw std::runtime_error("CT-LIO requires one LiDAR and one IMU");
++        return slam_benchmark::InitializationResult::unsupported("CT-LIO requires one LiDAR and one IMU");
 +    }
 +    sink_ = &sink;
 +    const auto transform =
@@ -379,8 +1044,12 @@ index 0000000..aba8bd0
 +            trajectory_.push_back(pose);
 +            sink_->report_realtime_pose(pose);
 +            return true;
-+        };
++    };
 +    odometry_.setFunc(pose_callback);
++    odometry_.setTimingFunc([this](const char* stage, double timestamp, double duration_ms) {
++        sink_->report_timing(
++            {time_origin_ns_ + nanoseconds(timestamp), stage, duration_ms});
++    });
 +    spdlog::info("CT-LIO standalone adapter initialized");
 +    return compatibility;
 +}
@@ -427,14 +1096,7 @@ index 0000000..aba8bd0
 +            std::chrono::steady_clock::now() - started).count();
 +        sink_->report_timing({sample.timestamp_ns, "lidar_preprocess", elapsed});
 +    }
-+    const auto processing_started = std::chrono::steady_clock::now();
-+    const auto poses_before = trajectory_.size();
 +    odometry_.processAvailable();
-+    if (trajectory_.size() > poses_before) {
-+        const double elapsed = std::chrono::duration<double, std::milli>(
-+            std::chrono::steady_clock::now() - processing_started).count();
-+        sink_->report_timing({sample.timestamp_ns, "registration", elapsed});
-+    }
 +}
 +
 +void CtLioAdapter::finalize() {
@@ -481,3 +1143,58 @@ index 0000000..bafbfdc
 +    CtLioAdapter algorithm;
 +    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
 +}
+diff --git a/thirdparty/sophus/common.hpp b/thirdparty/sophus/common.hpp
+index eff22f6..6152c0b 100644
+--- a/thirdparty/sophus/common.hpp
++++ b/thirdparty/sophus/common.hpp
+@@ -5,12 +5,12 @@
+ #define SOPHUS_COMMON_HPP
+ 
+ #include <cmath>
+-#include <cstdio>
+ #include <cstdlib>
+ #include <random>
+ #include <type_traits>
+ 
+ #include <Eigen/Core>
++#include <spdlog/spdlog.h>
+ 
+ #if !defined(SOPHUS_DISABLE_ENSURES)
+ #include "formatstring.hpp"
+@@ -91,15 +91,10 @@ namespace Sophus {
+ template <class... Args>
+ SOPHUS_FUNC void defaultEnsure(char const* function, char const* file, int line,
+                                char const* description, Args&&... args) {
+-  std::printf("Sophus ensure failed in function '%s', file '%s', line %d.\n",
+-              function, file, line);
+-#ifdef __CUDACC__
+-  std::printf("%s", description);
+-#else
+-  std::cout << details::FormatString(description, std::forward<Args>(args)...)
+-            << std::endl;
++  spdlog::critical("Sophus ensure failed in {} ({}:{}): {}", function, file,
++                   line, details::FormatString(description,
++                                               std::forward<Args>(args)...));
+   std::abort();
+-#endif
+ }
+ }  // namespace Sophus
+ 
+diff --git a/thirdparty/tessil-src/include/tsl/robin_growth_policy.h b/thirdparty/tessil-src/include/tsl/robin_growth_policy.h
+index 1d3125f..86895eb 100644
+--- a/thirdparty/tessil-src/include/tsl/robin_growth_policy.h
++++ b/thirdparty/tessil-src/include/tsl/robin_growth_policy.h
+@@ -51,12 +51,7 @@
+ #    define TSL_RH_THROW_OR_TERMINATE(ex, msg) throw ex(msg)
+ #else
+ #    define TSL_RH_NO_EXCEPTIONS
+-#    ifdef NDEBUG
+-#        define TSL_RH_THROW_OR_TERMINATE(ex, msg) std::terminate()
+-#    else
+-#        include <iostream>
+-#        define TSL_RH_THROW_OR_TERMINATE(ex, msg) do { std::cerr << msg << std::endl; std::terminate(); } while(0)
+-#    endif
++#    define TSL_RH_THROW_OR_TERMINATE(ex, msg) std::terminate()
+ #endif
+ 
+ 

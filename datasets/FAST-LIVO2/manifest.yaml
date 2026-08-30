@@ -1,0 +1,92 @@
+schema_version: 1
+name: FAST-LIVO2
+description: Official FAST-LIVO2 handheld Avia-camera sequences stored locally for LiDAR-inertial-visual benchmarking.
+download_url: https://github.com/hku-mars/FAST-LIVO2
+sensor_definitions:
+  avia_lidar: &avia_lidar
+    id: 1
+    name: Livox Avia LiDAR
+    type: lidar
+    enabled: true
+    priority: 100
+    topic: /livox/lidar
+    message_type: livox_ros_driver/CustomMsg
+    units: {point_time: ns, distance: m}
+    calibration:
+      body_from_sensor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+  avia_imu: &avia_imu
+    id: 2
+    name: Livox Avia built-in IMU
+    type: imu
+    enabled: true
+    priority: 100
+    topic: /livox/imu
+    message_type: sensor_msgs/Imu
+    units: {angular_velocity: rad/s, acceleration: g}
+    calibration:
+      body_from_sensor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+  common_camera_calibration: &common_camera_calibration
+    body_from_sensor: [0.00610192714406, -0.00615449047442, 0.999962443661, 0.02571994,
+                       -0.999862528763, 0.0153796447233, 0.00619597487967, 0.01798177,
+                       -0.0154172001886, -0.999862784974, -0.0060597989374, 0.10482167,
+                       0, 0, 0, 1]
+    intrinsics: [1293.56944, 1293.3155, 626.91359, 522.799224]
+    distortion: [-0.076160, 0.123001, -0.00113, 0.000251]
+    resolution: [1280, 1024]
+  common_raw_camera: &common_raw_camera
+    id: 3
+    name: Left global-shutter camera
+    type: camera
+    enabled: true
+    priority: 100
+    topic: /left_camera/image
+    message_type: sensor_msgs/Image
+    timestamp_offset_s: 0.1
+    calibration: *common_camera_calibration
+  common_compressed_camera: &common_compressed_camera
+    id: 3
+    name: Left global-shutter camera
+    type: camera
+    enabled: true
+    priority: 100
+    topic: /left_camera/image/compressed
+    message_type: sensor_msgs/CompressedImage
+    timestamp_offset_s: 0.1
+    calibration: *common_camera_calibration
+  red_sculpture_camera: &red_sculpture_camera
+    id: 3
+    name: Left global-shutter camera
+    type: camera
+    enabled: true
+    priority: 100
+    topic: /left_camera/image
+    message_type: sensor_msgs/Image
+    timestamp_offset_s: 0.1
+    calibration:
+      body_from_sensor: [0.00610192714406, -0.00615449047442, 0.999962443661, 0.02571994,
+                         -0.999862528763, 0.0153796447233, 0.00619597487967, 0.01798177,
+                         -0.0154172001886, -0.999862784974, -0.0060597989374, 0.10482167,
+                         0, 0, 0, 1]
+      intrinsics: [1294.7265716372897, 1294.8678078910468,
+                   626.663267153558, 531.0334324363173]
+      distortion: [-0.07592763180373921, 0.12857252741674535,
+                   0.0002726821691221157, 0.0002504335037343933]
+      resolution: [1280, 1024]
+bags:
+  - name: Bright Screen Wall
+    path: /media/yancey/New Volume2/project/rosbag/fastlivo2/Bright_Screen_Wall.bag
+    message_count: 14850
+    sensors: [*avia_lidar, *avia_imu, *common_compressed_camera]
+    sensor_inventory: [*avia_lidar, *avia_imu, *common_compressed_camera]
+
+  - name: Retail Street
+    path: /media/yancey/New Volume2/project/rosbag/fastlivo2/Retail_Street.bag
+    message_count: 30157
+    sensors: [*avia_lidar, *avia_imu, *common_raw_camera]
+    sensor_inventory: [*avia_lidar, *avia_imu, *common_raw_camera]
+
+  - name: Red Sculpture
+    path: /media/yancey/New Volume2/project/rosbag/fastlivo2/Red_Sculpture.bag
+    message_count: 22839
+    sensors: [*avia_lidar, *avia_imu, *red_sculpture_camera]
+    sensor_inventory: [*avia_lidar, *avia_imu, *red_sculpture_camera]

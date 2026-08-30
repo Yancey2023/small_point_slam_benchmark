@@ -7,6 +7,19 @@ repository:
   name: COIN-LIO
   url: https://github.com/ethz-asl/COIN-LIO.git
   ref: 76729cc4feb3649cbd79d28f82d9f62a2c82889b
+source_excludes:
+  - launch
+  - msg
+  - rviz_cfg
+  - docker
+  - scripts
+  - package.xml
+  - include/preprocess.h
+  - include/timing.h
+  - src/calibration.cpp
+  - src/laserMapping.cpp
+  - src/preprocess.cpp
+  - src/timing.cpp
 dependencies:
   - {name: IKFoM, url: https://github.com/hku-mars/IKFoM.git}
   - {name: OpenCV, url: https://github.com/opencv/opencv.git}

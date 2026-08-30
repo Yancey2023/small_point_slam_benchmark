@@ -7,9 +7,10 @@ repository:
   name: ctlo
   url: https://github.com/G3tupup/ctlo.git
   ref: 03caf1d6c8f4fd7d03d53934a3636a5db1a31c4c
+source_excludes: [launch, package.xml, src, include/lidar_odometry_wrapper.hpp]
 dependencies:
   - {name: Ceres Solver, url: https://github.com/ceres-solver/ceres-solver.git}
   - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
 paper: {}
 sensors: [lidar]
-timing_stages: [lidar_preprocess, downsampling, registration, map_update]
+timing_stages: [lidar_preprocess, map_search, map_update]

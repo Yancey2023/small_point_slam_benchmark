@@ -604,10 +604,10 @@ index 0000000..377a74c
 +}
 diff --git a/standalone/small_point_lio_adapter.cpp b/standalone/small_point_lio_adapter.cpp
 new file mode 100644
-index 0000000..cd061a6
+index 0000000..b590a8e
 --- /dev/null
 +++ b/standalone/small_point_lio_adapter.cpp
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,108 @@
 +#include "small_point_lio_adapter.hpp"
 +
 +#include <slam_benchmark/calibration.hpp>
@@ -641,12 +641,10 @@ index 0000000..cd061a6
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = compatibility.selected_sensor(sensors,
-+                                                      slam_benchmark::SensorType::Lidar);
-+    const auto imu = compatibility.selected_sensor(sensors,
-+                                                    slam_benchmark::SensorType::Imu);
++    const auto lidar = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
-+        throw std::runtime_error("Small Point LIO requires one LiDAR and one IMU");
++        return slam_benchmark::InitializationResult::unsupported("Small Point LIO requires one LiDAR and one IMU");
 +
 +    const YAML::Node config = YAML::LoadFile(config_path.string());
 +    const auto transform =

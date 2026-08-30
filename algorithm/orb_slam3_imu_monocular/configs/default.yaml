@@ -1,0 +1,14 @@
+algorithm: orb_slam3_imu_monocular
+camera_fps: 10.0
+rgb: true
+orb_features: 1000
+orb_scale_factor: 1.2
+orb_levels: 8
+orb_initial_fast_threshold: 20
+orb_minimum_fast_threshold: 7
+imu_frequency: 200.0
+imu_noise_gyro: 0.00017
+imu_noise_acc: 0.002
+imu_gyro_walk: 0.000019393
+imu_acc_walk: 0.003
+imu_insert_keyframes_when_lost: true

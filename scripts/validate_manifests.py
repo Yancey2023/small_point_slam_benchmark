@@ -105,6 +105,12 @@ def main() -> int:
                         raise ValueError(f"{sensor_location} priority must be an integer")
                     if not isinstance(sensor["enabled"], bool):
                         raise ValueError(f"{sensor_location} enabled must be a boolean")
+                    timestamp_offset = sensor.get("timestamp_offset_s", 0)
+                    if (not isinstance(timestamp_offset, (int, float))
+                            or isinstance(timestamp_offset, bool)
+                            or not float("-inf") < timestamp_offset < float("inf")):
+                        raise ValueError(
+                            f"{sensor_location} timestamp_offset_s must be finite")
                     if sensor["id"] in inventory_ids:
                         raise ValueError(f"{location} has duplicate sensor inventory id {sensor['id']}")
                     if sensor["topic"] in inventory_topics:

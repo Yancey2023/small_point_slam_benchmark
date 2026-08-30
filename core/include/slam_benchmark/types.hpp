@@ -60,6 +60,9 @@ struct SensorDefinition {
     double distance_to_meters{1.0};
     double angular_velocity_to_rad_per_second{1.0};
     double acceleration_to_meters_per_second_squared{1.0};
+    // Constant clock correction applied by the dataset reader before samples
+    // reach an algorithm. Positive values move the sensor timestamp forward.
+    std::int64_t timestamp_offset_ns{};
 };
 
 struct PointXYZIR {

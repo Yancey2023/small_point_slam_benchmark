@@ -32,6 +32,7 @@ bags:
         message_type: sensor_msgs/msg/PointCloud2
         point_time_field: t
         intensity_field: reflectivity
+        timestamp_offset_s: 0.1
         units: {point_time: us, distance: mm}
         calibration:
           body_from_sensor: [1, 0, 0, 1, 0, 1, 0, 2, 0, 0, 1, 3, 0, 0, 0, 1]
@@ -73,6 +74,7 @@ bags:
     expect(bag.sensors[0].point_time_to_nanoseconds == 1000.0);
     expect(bag.sensors[0].distance_to_meters == 0.001);
     expect(bag.sensors[0].intensity_field == "reflectivity");
+    expect(bag.sensors[0].timestamp_offset_ns == 100000000);
     expect(bag.sensors[0].calibration.body_from_sensor[3] == 1.0);
     expect(bag.sensors[0].enabled);
     expect(bag.sensors[0].available);

@@ -7,6 +7,7 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <string_view>
@@ -394,6 +395,19 @@ SensorPayload decode(const rosbag_io::SerializedMessage &message,
   throw std::runtime_error("unreachable sensor type");
 }
 
+TimestampNs adjusted_timestamp(TimestampNs timestamp, std::int64_t offset_ns) {
+  if (offset_ns >= 0) {
+    const auto offset = static_cast<TimestampNs>(offset_ns);
+    if (timestamp > std::numeric_limits<TimestampNs>::max() - offset)
+      throw std::runtime_error("sensor timestamp offset overflows");
+    return timestamp + offset;
+  }
+  const auto magnitude = static_cast<TimestampNs>(-(offset_ns + 1)) + 1;
+  if (timestamp < magnitude)
+    throw std::runtime_error("sensor timestamp offset underflows");
+  return timestamp - magnitude;
+}
+
 } // namespace
 
 std::vector<SensorDefinition>
@@ -510,7 +524,8 @@ void RosbagDatasetReader::read(const BagDefinition &bag,
     const TimestampNs timestamp = serialized.send_timestamp != 0
                                       ? serialized.send_timestamp
                                       : serialized.receive_timestamp;
-    callback(SensorSample{sensor.id, timestamp,
+    callback(SensorSample{sensor.id,
+                          adjusted_timestamp(timestamp, sensor.timestamp_offset_ns),
                           decode(serialized, *topic_it->second, sensor,
                                  binding)});
   }

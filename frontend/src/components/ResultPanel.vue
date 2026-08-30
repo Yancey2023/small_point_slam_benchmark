@@ -375,7 +375,7 @@ function meters(value: number): string {
           {{ endPoseErrors[selectedDatasetId] }}
         </p>
         <div
-          v-else-if="!loadingJobIds.size && !loadingGroundTruthIds.size"
+          v-if="!selectedSeries.length && !loadingJobIds.size && !loadingGroundTruthIds.size"
           class="plot-placeholder"
         >
           请选择至少一个算法，或选择带 Ground truth 的数据集

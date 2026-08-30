@@ -1,14 +1,23 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 new file mode 100644
-index 0000000..d3ae7fa
+index 0000000..f3e26dc
 --- /dev/null
 +++ b/CMakeLists.txt
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,56 @@
 +cmake_minimum_required(VERSION 3.24)
 +
 +find_package(Eigen3 CONFIG REQUIRED)
-+find_package(PCL 1.10 REQUIRED COMPONENTS common filters io)
++find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
 +find_package(TBB CONFIG REQUIRED)
++
++# PCD persistence needs libpcl_io, but requesting PCL's full io component also
++# imports its optional OpenNI/VTK/MPI stack.  The benchmark has no viewer or
++# device capture path, so link the persistence library directly.
++find_library(SUPER_LIO_PCL_IO_LIBRARY
++    NAMES pcl_io
++    HINTS ${PCL_LIBRARY_DIRS}
++    REQUIRED
++)
 +
 +add_library(super_lio_algorithm STATIC
 +    src/basic/src/Manifold.cpp
@@ -25,6 +34,7 @@ index 0000000..d3ae7fa
 +    Eigen3::Eigen
 +    TBB::tbb
 +    spdlog::spdlog
++    ${SUPER_LIO_PCL_IO_LIBRARY}
 +    ${PCL_LIBRARIES}
 +)
 +target_compile_definitions(super_lio_algorithm PUBLIC ROOT="${CMAKE_CURRENT_SOURCE_DIR}/")
@@ -113,6 +123,46 @@ index 7ed9f1b..51ffc5b 100644
 -#endif
 \ No newline at end of file
 +#endif
+diff --git a/src/basic/src/Manifold.cpp b/src/basic/src/Manifold.cpp
+index cf830a1..804b08c 100644
+--- a/src/basic/src/Manifold.cpp
++++ b/src/basic/src/Manifold.cpp
+@@ -1,5 +1,6 @@
+ 
+ #include "basic/Manifold.h"
++#include "basic/logs.h"
+ 
+ 
+ namespace BASIC {
+@@ -370,12 +371,12 @@ scalar SO3::distance(const SO3 &rhs) const noexcept{
+ }
+ 
+ void SO3::print(void) const noexcept{
+-  std::cout << R_ << std::endl;
++  LOG(INFO) << R_;
+ }
+ 
+ void SO3::print_lie(void) const noexcept{
+   V3 w =  this->log_vee();
+-  std::cout << w << std::endl;
++  LOG(INFO) << w;
+ }
+ 
+ scalar SO3::yaw() const noexcept{
+@@ -568,11 +569,11 @@ double SE3::distance(const SE3 &rhs) const noexcept{
+ }
+ 
+ void SE3::print(void) const noexcept{
+-  std::cout << T_ << std::endl;
++  LOG(INFO) << T_;
+ }
+ 
+ void SE3::print_lie(void) const noexcept{
+-  std::cout << this->log_vee() << std::endl;
++  LOG(INFO) << this->log_vee();
+ }
+ 
+ 
 diff --git a/src/basic/src/logs.cpp b/src/basic/src/logs.cpp
 index 6fc0360..86040ab 100644
 --- a/src/basic/src/logs.cpp
@@ -140,6 +190,129 @@ index 6fc0360..86040ab 100644
 -}
 \ No newline at end of file
 +}
+diff --git a/src/super_lio/include/OctVoxMap/OctVoxMap.hpp b/src/super_lio/include/OctVoxMap/OctVoxMap.hpp
+index 790aba8..5baf898 100644
+--- a/src/super_lio/include/OctVoxMap/OctVoxMap.hpp
++++ b/src/super_lio/include/OctVoxMap/OctVoxMap.hpp
+@@ -16,6 +16,7 @@
+ 
+ #include <Eigen/Core>
+ 
++#include "basic/logs.h"
+ #include "tsl/robin_map.h"
+ #include "HKNN_list60_gem.h"
+ 
+@@ -167,8 +168,8 @@ public:
+   
+   OctVoxMap(Options options){
+     SetOptions(options);
+-    std::cout << " ---> OctVoxMap init. Resolution: " << resolution_ 
+-              << " Capacity: " << capacity_ << std::endl;
++    LOG(INFO) << "OctVoxMap initialized: resolution=" << resolution_
++              << ", capacity=" << capacity_;
+     flat_search_ptrs_.reserve(flat_search_order_offsets.size());
+     for(std::size_t i = 0; i < flat_search_order_offsets.size(); i++){
+       uint16_t start = flat_search_order_offsets[i];
+@@ -266,7 +267,8 @@ void OctVoxMap<Point, Scalar>::insert(const Points& cloud_world){
+   if(reset_map_){
+     reset_map_count_--;
+     if(reset_map_count_ > 0){
+-      std::cout << "OctVoxMap::insert skip: reset_map_count_ = " << reset_map_count_ << std::endl;
++      LOG(INFO) << "OctVoxMap insert skipped during reset: remaining="
++                << reset_map_count_;
+       return;
+     } 
+     reset_map_ = false;
+@@ -459,7 +461,7 @@ void OctVoxMap<Point, Scalar>::saveMap() const {
+ 
+   if (std::filesystem::exists(filename)) {
+     std::filesystem::remove(filename);
+-    std::cout << "Removed existing file: " << filename << std::endl;
++    LOG(INFO) << "Removed existing map file: " << filename;
+   }
+ 
+   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+@@ -487,10 +489,10 @@ void OctVoxMap<Point, Scalar>::saveMap() const {
+   int result = pcl::io::savePCDFileBinary(filename, *cloud);
+   
+   if (result == 0) {
+-    std::cout << "Successfully saved " << cloud->points.size() 
+-              << " points to " << filename << " (binary format)" << std::endl;
++    LOG(INFO) << "Saved " << cloud->points.size()
++              << " map points to " << filename << " (binary format)";
+   } else {
+-    std::cerr << "Error saving point cloud to " << filename << std::endl;
++    LOG(ERROR) << "Error saving point cloud to " << filename;
+     throw std::runtime_error("Failed to save PCD file: " + filename);
+   }
+ }
+@@ -505,10 +507,10 @@ void OctVoxMap<Point, Scalar>::clear() {
+ 
+ template<typename Point, typename Scalar>
+ void OctVoxMap<Point, Scalar>::printInfo() const {
+-    std::cout << " ---> OctVoxMap info. Size: " << data_.size() 
+-              << " Capacity: " << capacity_ << std::endl;
++    LOG(INFO) << "OctVoxMap info: size=" << data_.size()
++              << ", capacity=" << capacity_;
+ }
+ 
+ }
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/src/super_lio/include/OctVoxMap/tsl/robin_growth_policy.h b/src/super_lio/include/OctVoxMap/tsl/robin_growth_policy.h
+index 787e19e..4bf0643 100644
+--- a/src/super_lio/include/OctVoxMap/tsl/robin_growth_policy.h
++++ b/src/super_lio/include/OctVoxMap/tsl/robin_growth_policy.h
+@@ -61,17 +61,8 @@
+ #define TSL_RH_THROW_OR_TERMINATE(ex, msg) throw ex(msg)
+ #else
+ #define TSL_RH_NO_EXCEPTIONS
+-#ifdef TSL_DEBUG
+-#include <iostream>
+-#define TSL_RH_THROW_OR_TERMINATE(ex, msg) \
+-  do {                                     \
+-    std::cerr << msg << std::endl;         \
+-    std::terminate();                      \
+-  } while (0)
+-#else
+ #define TSL_RH_THROW_OR_TERMINATE(ex, msg) std::terminate()
+ #endif
+-#endif
+ 
+ #if defined(__GNUC__) || defined(__clang__)
+ #define TSL_RH_LIKELY(exp) (__builtin_expect(!!(exp), true))
+diff --git a/src/super_lio/include/OctVoxMap/tsl/robin_hood.h b/src/super_lio/include/OctVoxMap/tsl/robin_hood.h
+index b4e0fbc..c0a3984 100644
+--- a/src/super_lio/include/OctVoxMap/tsl/robin_hood.h
++++ b/src/super_lio/include/OctVoxMap/tsl/robin_hood.h
+@@ -52,23 +52,8 @@
+ #    include <string_view>
+ #endif
+ 
+-// #define ROBIN_HOOD_LOG_ENABLED
+-#ifdef ROBIN_HOOD_LOG_ENABLED
+-#    include <iostream>
+-#    define ROBIN_HOOD_LOG(...) \
+-        std::cout << __FUNCTION__ << "@" << __LINE__ << ": " << __VA_ARGS__ << std::endl;
+-#else
+-#    define ROBIN_HOOD_LOG(x)
+-#endif
+-
+-// #define ROBIN_HOOD_TRACE_ENABLED
+-#ifdef ROBIN_HOOD_TRACE_ENABLED
+-#    include <iostream>
+-#    define ROBIN_HOOD_TRACE(...) \
+-        std::cout << __FUNCTION__ << "@" << __LINE__ << ": " << __VA_ARGS__ << std::endl;
+-#else
+-#    define ROBIN_HOOD_TRACE(x)
+-#endif
++#define ROBIN_HOOD_LOG(x)
++#define ROBIN_HOOD_TRACE(x)
+ 
+ // #define ROBIN_HOOD_COUNT_ENABLED
+ #ifdef ROBIN_HOOD_COUNT_ENABLED
 diff --git a/src/super_lio/include/common/timer.h b/src/super_lio/include/common/timer.h
 index 41c8ae5..3bdb18f 100644
 --- a/src/super_lio/include/common/timer.h
@@ -499,10 +672,10 @@ index 0000000..89a2946
 +}
 diff --git a/standalone/super_lio_adapter.cpp b/standalone/super_lio_adapter.cpp
 new file mode 100644
-index 0000000..540e2f2
+index 0000000..0d4842a
 --- /dev/null
 +++ b/standalone/super_lio_adapter.cpp
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,171 @@
 +#include "super_lio_adapter.hpp"
 +
 +#include "lio/params.h"
@@ -535,7 +708,8 @@ index 0000000..540e2f2
 +    return root[key] ? root[key].as<T>() : fallback;
 +}
 +
-+void load_parameters(const YAML::Node& root, std::span<const slam_benchmark::SensorDefinition> sensors,
++void load_parameters(const YAML::Node& root,
++                     std::span<const slam_benchmark::SensorDefinition> sensors,
 +                     const slam_benchmark::InitializationResult& compatibility) {
 +    using namespace LI2Sup;
 +    g_time_eva = false;
@@ -569,8 +743,6 @@ index 0000000..540e2f2
 +        sensors, slam_benchmark::SensorType::Lidar);
 +    const auto imu = compatibility.selected_sensor(
 +        sensors, slam_benchmark::SensorType::Imu);
-+    if (lidar == sensors.end() || imu == sensors.end())
-+        throw std::runtime_error("Super-LIO requires one LiDAR and one IMU");
 +    BASIC::M3 rotation;
 +    BASIC::V3 translation;
 +    const auto transform =
@@ -591,10 +763,6 @@ index 0000000..540e2f2
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const bool has_imu = std::ranges::any_of(sensors, [](const auto& sensor) {
-+        return sensor.type == slam_benchmark::SensorType::Imu;
-+    });
-+    if (!has_imu) throw std::runtime_error("Super-LIO requires an IMU");
 +    sink_ = &sink;
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
 +    const int parallel_threads = parameter(

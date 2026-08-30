@@ -7,6 +7,37 @@ repository:
   name: LIGO.
   url: https://github.com/Joanna-HE/LIGO..git
   ref: 987b88cd9ee3183c6e62231008c8cb26cf1786d6
+source_excludes:
+  - Data
+  - Log
+  - config
+  - image
+  - launch
+  - msg
+  - paper
+  - rviz_cfg
+  - package.xml
+  - include/Curvefitter
+  - include/Urbannav_process
+  - include/basalt
+  - include/ivox
+  - include/nmea_factor
+  - include/utils
+  - src/Estimator.cpp
+  - src/Estimator.h
+  - src/IMU_Processing.cpp
+  - src/IMU_Processing.h
+  - src/NMEA_Assignment.cpp
+  - src/NMEA_Assignment.h
+  - src/NMEA_Processing_fg.cpp
+  - src/NMEA_Processing_fg.h
+  - src/laserMapping.cpp
+  - src/li_initialization.cpp
+  - src/li_initialization.h
+  - src/parameters.cpp
+  - src/parameters.h
+  - src/preprocess.cpp
+  - src/preprocess.h
 dependencies:
   - name: GTSAM
     url: https://github.com/borglab/gtsam.git
@@ -17,6 +48,7 @@ dependencies:
     url: https://github.com/HKUST-Aerial-Robotics/gnss_comm.git
     ref: a2035fec1cc427bba184d25ff1fde8dcf23c9ce1
     directory: gnss_comm
+    patches: [dependencies/gnss-comm-spdlog.patch]
 paper:
   title: "LIGO: Tightly Coupled LiDAR-Inertial-GNSS Odometry based on a Hierarchy Fusion Framework for Global Localization with Real-time Mapping"
   url: https://doi.org/10.1109/TRO.2024.3351332
@@ -25,4 +57,4 @@ timing_stages: [lidar_preprocess, imu_preprocess, gnss_preprocess, undistortion,
 integration:
   status: integrated
   transport: core_sensor_samples
-  build_requirement: Builds the ROS-independent LIO front end and upstream LIGO GNSS factor-graph backend from pinned local sources.
+  build_requirement: Builds the ROS-independent LIO front end and upstream LIGO GNSS factor-graph backend from pinned official source revisions.

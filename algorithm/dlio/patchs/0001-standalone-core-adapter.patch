@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 91e47a0..c552c55 100644
+index 91e47a0..1bf5e49 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,119 +1,43 @@
+@@ -1,119 +1,62 @@
 -###########################################################
 -#                                                         #
 -# Copyright (c)                                           #
@@ -14,14 +14,10 @@ index 91e47a0..c552c55 100644
 -# Contact: {kennyjchen, ryguyn, btlopez}@ucla.edu         #
 -#                                                         #
 -###########################################################
-+cmake_minimum_required(VERSION 3.24)
- 
+-
 -cmake_minimum_required(VERSION 3.12.4)
 -project(direct_lidar_inertial_odometry)
-+find_package(Eigen3 CONFIG REQUIRED)
-+find_package(PCL 1.10 REQUIRED COMPONENTS common filters registration)
-+find_package(OpenMP REQUIRED)
- 
+-
 -add_compile_options(-std=c++17)
 -set(CMAKE_BUILD_TYPE "Release")
 -
@@ -54,32 +50,43 @@ index 91e47a0..c552c55 100644
 -  nav_msgs
 -  pcl_ros
 -  message_generation
-+add_library(dlio_algorithm STATIC
-+    standalone/dlio_engine.cpp
-+    src/nano_gicp/lsq_registration.cc
-+    src/nano_gicp/nano_gicp.cc
-+    src/nano_gicp/nanoflann.cc
++cmake_minimum_required(VERSION 3.24)
++
++find_package(Eigen3 CONFIG REQUIRED)
++find_package(PCL 1.10 REQUIRED COMPONENTS common filters)
++find_package(OpenMP REQUIRED)
++
++# PCL's registration component pulls its optional visualization/VTK stack into
++# configuration even though NanoGICP only needs the registration library.  In
++# particular, that makes a clean standalone configure depend on VTK's MPI
++# metadata.  Keep the algorithm dependency without importing that unrelated
++# stack.
++find_library(DLIO_PCL_REGISTRATION_LIBRARY
++    NAMES pcl_registration
++    HINTS ${PCL_LIBRARY_DIRS}
++    REQUIRED
  )
 -
 -add_service_files(
 -  DIRECTORY srv
 -  FILES
 -  save_pcd.srv
-+target_include_directories(dlio_algorithm PUBLIC
-+    include
-+    ${CMAKE_CURRENT_SOURCE_DIR}
-+    ${PCL_INCLUDE_DIRS}
++find_library(DLIO_PCL_FEATURES_LIBRARY
++    NAMES pcl_features
++    HINTS ${PCL_LIBRARY_DIRS}
++    REQUIRED
  )
--
+ 
 -generate_messages(
 -  DEPENDENCIES
 -  sensor_msgs
 -  std_msgs
 -  geometry_msgs
-+target_link_libraries(dlio_algorithm PUBLIC
-+    Eigen3::Eigen
-+    OpenMP::OpenMP_CXX
-+    ${PCL_LIBRARIES}
++add_library(dlio_algorithm STATIC
++    standalone/dlio_engine.cpp
++    src/nano_gicp/lsq_registration.cc
++    src/nano_gicp/nano_gicp.cc
++    src/nano_gicp/nanoflann.cc
  )
 -
 -catkin_package(
@@ -90,15 +97,16 @@ index 91e47a0..c552c55 100644
 -    geometry_msgs
 -    pcl_ros
 -  INCLUDE_DIRS
--    include
++target_include_directories(dlio_algorithm PUBLIC
+     include
 -  LIBRARIES
 -    ${PROJECT_NAME}
 -    nano_gicp
 -    nanoflann
-+target_compile_definitions(dlio_algorithm PUBLIC
-+    SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
++    ${CMAKE_CURRENT_SOURCE_DIR}
++    ${PCL_INCLUDE_DIRS}
  )
- 
+-
 -include_directories(include)
 -include_directories(SYSTEM ${catkin_INCLUDE_DIRS})
 -
@@ -114,9 +122,13 @@ index 91e47a0..c552c55 100644
 -# NanoFLANN
 -add_library(nanoflann STATIC
 -  src/nano_gicp/nanoflann.cc
-+add_executable(dlio_benchmark
-+    standalone/main.cpp
-+    standalone/dlio_adapter.cpp
++target_link_libraries(dlio_algorithm PUBLIC
++    Eigen3::Eigen
++    OpenMP::OpenMP_CXX
++    ${DLIO_PCL_REGISTRATION_LIBRARY}
++    ${DLIO_PCL_FEATURES_LIBRARY}
++    ${PCL_LIBRARIES}
++    spdlog::spdlog
  )
 -target_link_libraries(nanoflann ${PCL_LIBRARIES})
 -
@@ -124,25 +136,32 @@ index 91e47a0..c552c55 100644
 -add_library(nano_gicp STATIC
 -  src/nano_gicp/lsq_registration.cc
 -  src/nano_gicp/nano_gicp.cc
-+target_link_libraries(dlio_benchmark PRIVATE
-+    dlio_algorithm
-+    slam_benchmark::core
-+    yaml-cpp::yaml-cpp
++target_compile_definitions(dlio_algorithm PUBLIC
++    SLAM_BENCHMARK_PARALLEL_THREADS=${SLAM_BENCHMARK_PARALLEL_THREADS}
  )
 -target_link_libraries(nano_gicp ${PCL_LIBRARIES} ${OpenMP_LIBS} nanoflann)
--
+ 
 -# Odometry Node
 -add_executable(dlio_odom_node src/dlio/odom_node.cc src/dlio/odom.cc)
 -add_dependencies(dlio_odom_node ${catkin_EXPORTED_TARGETS} ${PROJECT_NAME}_generate_messages_cpp)
 -target_compile_options(dlio_odom_node PRIVATE ${OpenMP_FLAGS})
 -target_link_libraries(dlio_odom_node ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenMP_LIBS} Threads::Threads nano_gicp)
- 
+-
 -# Mapping Node
 -add_executable (dlio_map_node src/dlio/map_node.cc src/dlio/map.cc)
 -add_dependencies(dlio_map_node ${catkin_EXPORTED_TARGETS} ${PROJECT_NAME}_generate_messages_cpp)
 -target_compile_options(dlio_map_node PRIVATE ${OpenMP_FLAGS})
 -target_link_libraries(dlio_map_node ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenMP_LIBS} Threads::Threads)
--
++add_executable(dlio_benchmark
++    standalone/main.cpp
++    standalone/dlio_adapter.cpp
++)
++target_link_libraries(dlio_benchmark PRIVATE
++    dlio_algorithm
++    slam_benchmark::core
++    yaml-cpp::yaml-cpp
++)
+ 
 -# Binaries
 -install( TARGETS dlio_odom_node dlio_map_node
 -         DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION} )
@@ -155,32 +174,100 @@ index 91e47a0..c552c55 100644
 +    target_compile_options(dlio_algorithm PRIVATE -Wall -Wextra)
 +    target_compile_options(dlio_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 +endif()
+diff --git a/include/nano_gicp/nanoflann.h b/include/nano_gicp/nanoflann.h
+index 427a656..a7e2fe4 100644
+--- a/include/nano_gicp/nanoflann.h
++++ b/include/nano_gicp/nanoflann.h
+@@ -66,6 +66,7 @@
+ #include <limits>  // std::reference_wrapper
+ #include <ostream>
+ #include <stdexcept>
++#include <spdlog/spdlog.h>
+ #include <unordered_set>
+ #include <vector>
+ 
+@@ -816,7 +817,7 @@ class PooledAllocator
+             void* m = ::malloc(blocksize);
+             if (!m)
+             {
+-                fprintf(stderr, "Failed to allocate memory.\n");
++                spdlog::critical("nano_gicp failed to allocate KD-tree memory");
+                 throw std::bad_alloc();
+             }
+ 
 diff --git a/src/nano_gicp/lsq_registration.cc b/src/nano_gicp/lsq_registration.cc
-index 271cb03..fff8ced 100644
+index 271cb03..3b567b0 100644
 --- a/src/nano_gicp/lsq_registration.cc
 +++ b/src/nano_gicp/lsq_registration.cc
-@@ -42,7 +42,7 @@
+@@ -42,7 +42,8 @@
   * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   *************************************************************************/
  
 -#include "dlio/dlio.h"
 +#include "standalone/dlio_point.hpp"
++#include "standalone/spdlog_stream.hpp"
  #include "nano_gicp/lsq_registration.h"
  
  template class nano_gicp::LsqRegistration<PointType, PointType>;
+@@ -112,9 +113,8 @@ void LsqRegistration<PointTarget, PointSource>::computeTransformation(PointCloud
+   converged_ = false;
+ 
+   if (lm_debug_print_) {
+-    std::cout << "********************************************" << std::endl;
+-    std::cout << "***************** optimize *****************" << std::endl;
+-    std::cout << "********************************************" << std::endl;
++    dlio::standalone::SpdlogStream(spdlog::level::debug)
++        << "nano_gicp LM optimization started";
+   }
+ 
+   for (int i = 0; i < max_iterations_ && !converged_; i++) {
+@@ -122,7 +122,7 @@ void LsqRegistration<PointTarget, PointSource>::computeTransformation(PointCloud
+ 
+     Eigen::Isometry3d delta;
+     if (!step_optimize(x0, delta)) {
+-      std::cerr << "lm not converged!!" << std::endl;
++      spdlog::warn("nano_gicp LM optimization did not converge");
+       break;
+     }
+ 
+@@ -202,10 +202,12 @@ bool LsqRegistration<PointTarget, PointSource>::step_lm(Eigen::Isometry3d& x0, E
+ 
+     if (lm_debug_print_) {
+       if (i == 0) {
+-        std::cout << boost::format("--- LM optimization ---\n%5s %15s %15s %15s %15s %15s %5s\n") % "i" % "y0" % "yi" % "rho" % "lambda" % "|delta|" % "dec";
++        dlio::standalone::SpdlogStream(spdlog::level::debug)
++            << boost::format("--- LM optimization ---\n%5s %15s %15s %15s %15s %15s %5s\n") % "i" % "y0" % "yi" % "rho" % "lambda" % "|delta|" % "dec";
+       }
+       char dec = rho > 0.0 ? 'x' : ' ';
+-      std::cout << boost::format("%5d %15g %15g %15g %15g %15g %5c") % i % y0 % yi % rho % lm_lambda_ % d.norm() % dec << std::endl;
++      dlio::standalone::SpdlogStream(spdlog::level::debug)
++          << boost::format("%5d %15g %15g %15g %15g %15g %5c") % i % y0 % yi % rho % lm_lambda_ % d.norm() % dec;
+     }
+ 
+     if (rho < 0) {
 diff --git a/src/nano_gicp/nano_gicp.cc b/src/nano_gicp/nano_gicp.cc
-index 906e3c3..b6850b3 100644
+index 906e3c3..3020deb 100644
 --- a/src/nano_gicp/nano_gicp.cc
 +++ b/src/nano_gicp/nano_gicp.cc
-@@ -42,7 +42,7 @@
+@@ -42,7 +42,8 @@
   * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   *************************************************************************/
  
 -#include "dlio/dlio.h"
 +#include "standalone/dlio_point.hpp"
++#include "standalone/spdlog_stream.hpp"
  #include "nano_gicp/nano_gicp.h"
  
  template class nano_gicp::NanoGICP<PointType, PointType>;
+@@ -367,7 +368,7 @@ bool NanoGICP<PointSource, PointTarget>::calculate_covariances(
+ 
+       switch (regularization_method_) {
+         default:
+-          std::cerr << "here must not be reached" << std::endl;
++          spdlog::critical("nano_gicp reached an invalid regularization method");
+           abort();
+         case RegularizationMethod::PLANE:
+           values = Eigen::Vector3d(1, 1, 1e-3);
 diff --git a/src/nano_gicp/nanoflann.cc b/src/nano_gicp/nanoflann.cc
 index bf25a4a..43e93d7 100644
 --- a/src/nano_gicp/nanoflann.cc
@@ -196,15 +283,16 @@ index bf25a4a..43e93d7 100644
  template class nanoflann::KdTreeFLANN<PointType>;
 diff --git a/standalone/dlio_adapter.cpp b/standalone/dlio_adapter.cpp
 new file mode 100644
-index 0000000..0f37cfc
+index 0000000..abe1b72
 --- /dev/null
 +++ b/standalone/dlio_adapter.cpp
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,178 @@
 +#include "dlio_adapter.hpp"
 +
 +#include <slam_benchmark/calibration.hpp>
 +#include <spdlog/spdlog.h>
 +#include <yaml-cpp/yaml.h>
++#include <omp.h>
 +
 +#include <chrono>
 +#include <cmath>
@@ -235,12 +323,10 @@ index 0000000..0f37cfc
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = compatibility.selected_sensor(sensors,
-+                                                      slam_benchmark::SensorType::Lidar);
-+    const auto imu = compatibility.selected_sensor(sensors,
-+                                                    slam_benchmark::SensorType::Imu);
++    const auto lidar = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
-+        throw std::runtime_error("DLIO requires one LiDAR and one IMU");
++        return slam_benchmark::InitializationResult::unsupported("DLIO requires one LiDAR and one IMU");
 +    sink_ = &sink;
 +    lidar_id_ = lidar->id;
 +    imu_id_ = imu->id;
@@ -260,6 +346,10 @@ index 0000000..0f37cfc
 +    options.max_iterations =
 +        parameter(root, "max_iterations", options.max_iterations);
 +    options.threads = parameter(root, "parallel_threads", options.threads);
++    if (options.threads <= 0)
++        throw std::runtime_error("parallel_threads must be positive");
++    omp_set_dynamic(0);
++    omp_set_num_threads(options.threads);
 +    options.correspondence_randomness =
 +        parameter(root, "correspondence_randomness",
 +                  options.correspondence_randomness);
@@ -422,7 +512,7 @@ index 0000000..c8641c5
 +};
 diff --git a/standalone/dlio_engine.cpp b/standalone/dlio_engine.cpp
 new file mode 100644
-index 0000000..3d97cbb
+index 0000000..1143999
 --- /dev/null
 +++ b/standalone/dlio_engine.cpp
 @@ -0,0 +1,330 @@
@@ -543,7 +633,7 @@ index 0000000..3d97cbb
 +        gicp_.align(aligned, pose_.matrix().cast<float>());
 +        const Eigen::Isometry3d corrected(
 +            gicp_.getFinalTransformation().cast<double>());
-+        report(scan_end, "registration", elapsed_ms(started));
++        report(scan_end, "map_search", elapsed_ms(started));
 +        if (gicp_.hasConverged()) {
 +            started = Clock::now();
 +            pose_ = corrected;
@@ -842,3 +932,37 @@ index 0000000..8426929
 +    DlioAdapter algorithm;
 +    return slam_benchmark::run_benchmark_main(argc, argv, algorithm);
 +}
+diff --git a/standalone/spdlog_stream.hpp b/standalone/spdlog_stream.hpp
+new file mode 100644
+index 0000000..f55fcdb
+--- /dev/null
++++ b/standalone/spdlog_stream.hpp
+@@ -0,0 +1,28 @@
++#pragma once
++
++#include <spdlog/spdlog.h>
++
++#include <sstream>
++#include <utility>
++
++namespace dlio::standalone {
++
++class SpdlogStream {
++public:
++    explicit SpdlogStream(spdlog::level::level_enum level) : level_(level) {}
++    SpdlogStream(const SpdlogStream&) = delete;
++    SpdlogStream(SpdlogStream&&) = default;
++    ~SpdlogStream() { spdlog::log(level_, "{}", stream_.str()); }
++
++    template <typename T>
++    SpdlogStream& operator<<(T&& value) {
++        stream_ << std::forward<T>(value);
++        return *this;
++    }
++
++private:
++    spdlog::level::level_enum level_;
++    std::ostringstream stream_;
++};
++
++}  // namespace dlio::standalone

@@ -7,6 +7,7 @@ repository:
   name: kiss-icp
   url: https://github.com/PRBonn/kiss-icp.git
   ref: b16835283aee62f7d5e2bdf6c1c3bb2930de74ff
+source_excludes: [ros]
 dependencies:
   - {name: Sophus, url: https://github.com/strasdat/Sophus.git}
 paper:
@@ -17,5 +18,5 @@ timing_stages:
   - lidar_preprocess
   - undistortion
   - downsampling
-  - registration
+  - map_search
   - map_update

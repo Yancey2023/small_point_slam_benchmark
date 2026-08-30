@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <set>
 #include <stdexcept>
@@ -71,6 +72,17 @@ SensorDefinition parse_sensor(const YAML::Node& node) {
     sensor.priority = node["priority"].as<int>(0);
     sensor.point_time_field = node["point_time_field"].as<std::string>("time");
     sensor.intensity_field = node["intensity_field"].as<std::string>("intensity");
+    const double timestamp_offset_s = node["timestamp_offset_s"].as<double>(0.0);
+    const long double timestamp_offset_ns =
+        static_cast<long double>(timestamp_offset_s) * 1'000'000'000.0L;
+    if (!std::isfinite(timestamp_offset_s) ||
+        timestamp_offset_ns < static_cast<long double>(
+                                  std::numeric_limits<std::int64_t>::min()) ||
+        timestamp_offset_ns > static_cast<long double>(
+                                  std::numeric_limits<std::int64_t>::max()))
+        throw std::runtime_error("timestamp_offset_s is outside the supported range");
+    sensor.timestamp_offset_ns = static_cast<std::int64_t>(
+        std::round(timestamp_offset_ns));
 
     const auto calibration = node["calibration"];
     sensor.calibration.body_from_sensor = fixed_array<16>(

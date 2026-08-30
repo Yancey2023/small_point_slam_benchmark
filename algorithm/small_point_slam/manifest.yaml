@@ -9,6 +9,18 @@ repository:
   local_path: /home/yancey/cpp/navigation
   local_path_env: SMALL_POINT_SLAM_SOURCE_DIR
   ref: e24b04452966f24fa221b2558e0ffc6281abdf5d
+source_excludes:
+  - livox_custom_msg_ws
+  - tests
+  - unused
+  - web
+  - apps/dump_lidar_frames.cpp
+  - apps/run_gazebo_simulation.cpp
+  - apps/run_rosbag.cpp
+  - src/io/ros_image_decoder.cpp
+  - src/io/ros_image_decoder.h
+  - src/io/rosbag_progress.h
+  - 3rdparty/rosbag_io/tests
 dependencies:
   - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
   - {name: oneTBB, url: https://github.com/uxlfoundation/oneTBB.git}

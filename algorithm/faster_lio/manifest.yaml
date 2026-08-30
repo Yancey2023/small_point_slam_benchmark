@@ -7,6 +7,24 @@ repository:
   name: faster-lio
   url: https://github.com/gaoxiang12/faster-lio.git
   ref: ea0e0910a4cf2da49f569d168442a9c8c1bbe672
+source_excludes:
+  - Log
+  - PCD
+  - app
+  - cmake
+  - docker
+  - launch
+  - msg
+  - result
+  - rviz_cfg
+  - package.xml
+  - src
+  - include/common_lib.h
+  - include/imu_processing.hpp
+  - include/laser_mapping.h
+  - include/pointcloud_preprocess.h
+  - include/utils.h
+  - thirdparty/livox_ros_driver/msg
 dependencies:
   - {name: IKFoM, url: https://github.com/hku-mars/IKFoM.git}
   - {name: oneTBB, url: https://github.com/uxlfoundation/oneTBB.git}

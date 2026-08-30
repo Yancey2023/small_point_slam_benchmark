@@ -62,6 +62,21 @@ def source_owner(name: str) -> str:
     return owner
 
 
+def source_excludes(name: str) -> tuple[str, ...]:
+    """Upstream paths omitted from patched source work trees."""
+    owner = source_owner(name)
+    raw = algorithm_manifest(owner).get("source_excludes", [])
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        raise ValueError(f"algorithm/{name}/manifest.yaml source_excludes must be strings")
+    for item in raw:
+        path = Path(item)
+        if (path.is_absolute() or "\\" in item or item != path.as_posix()
+                or not path.parts
+                or any(part in {"", ".", "..", ".git"} for part in path.parts)):
+            raise ValueError(f"unsafe source exclude: {item!r}")
+    return tuple(raw)
+
+
 def repository_for(name: str) -> Repository:
     owner = source_owner(name)
     raw = algorithm_manifest(owner).get("repository")

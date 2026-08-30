@@ -191,6 +191,7 @@ int main(int argc, char** argv) {
     lidar.point_time_field = "time";
     lidar.intensity_field = "reflectivity";
     lidar.point_time_to_nanoseconds = 1e9;
+    lidar.timestamp_offset_ns = 100;
     BagDefinition bag{
         "sensors", path, {sensor, lidar},
         {{5, {"/fix", "sensor_msgs/msg/NavSatFix"}},
@@ -215,6 +216,7 @@ int main(int argc, char** argv) {
             expect(fix.position_covariance[8] == 8.5);
         } else {
             expect(sample.sensor_id == 6);
+            expect(sample.timestamp_ns == 124000000100ULL);
             const auto& cloud = std::get<PointCloud>(sample.payload);
             expect(cloud.points.size() == 2);
             expect(cloud.point_time_offset_ns.size() == 2);

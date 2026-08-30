@@ -100,8 +100,15 @@ manifest 中声明的第三方 `dependencies` 会由下载脚本按固定 commit
 目录；如依赖本身需要编译器兼容修复，可声明 `directory` 和 `patches`。算法主仓库的移植
 差异仍只由 `patch_algorithms.py` 管理。
 
+算法 manifest 顶层可声明 `source_excludes`，列出复制到工作树时不需要的仓库相对路径，
+既支持顶层目录（例如演示数据），也支持嵌套目录或单个文件。对于移植后完全删除的文件，
+必须优先放入此列表；否则标准 Git patch 会保存被删除文件的完整旧内容，造成无意义的体积
+膨胀。下载树保持完整，`apply`/`generate`/`check` 会先按相同规则裁剪工作树，再处理 patch。
+路径必须使用 `/` 分隔，不能是绝对路径，也不能包含空段、`.`、`..` 或 `.git`。
+
 `generate` 使用 `git diff --no-index --binary`，生成标准 Git patch，并把两棵工作目录前缀
-归一化成 `a/` 和 `b/`。因此 patch 可直接在上游仓库根目录用 `git apply` 检查和应用。
+归一化成 `a/` 和 `b/`。未声明 `source_excludes` 时，patch 可直接在上游仓库根目录用
+`git apply` 检查和应用；存在排除项时，应使用 `patch_algorithms.py`，确保先执行相同的裁剪。
 
 上游 `ref` 发生变化时，先更新 manifest，再下载新版本并执行 `check`。如果失败，应重新
 移植并生成 patch，不应在脚本中加入模糊匹配或静默跳过。

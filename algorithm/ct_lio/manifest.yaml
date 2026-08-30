@@ -7,9 +7,20 @@ repository:
   name: ct-lio
   url: https://github.com/chengwei0427/ct-lio.git
   ref: b7cdb476a54c04310857d897acb838cd42539003
+source_excludes:
+  - cmake
+  - launch
+  - package.xml
+  - src/apps
+  - src/preprocess
+  - src/tools/io_utils.cc
+  - src/tools/io_utils.h
+  - src/tools/message_def.h
+  - src/tools/sys_utils.h
+  - thirdparty/tessil-src/cmake
 dependencies:
   - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
   - {name: PCL, url: https://github.com/PointCloudLibrary/pcl.git}
 paper: {}
 sensors: [lidar, imu]
-timing_stages: [lidar_preprocess, imu_preprocess, undistortion, downsampling, state_propagation, registration, filter_update, map_update]
+timing_stages: [lidar_preprocess, imu_preprocess, undistortion, downsampling, state_propagation, map_search, filter_update, map_update]

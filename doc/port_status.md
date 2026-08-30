@@ -12,7 +12,7 @@
 | KISS-ICP | `b16835283aee62f7d5e2bdf6c1c3bb2930de74ff` | LiDAR | 已移植 |
 | Faster-LIO | `ea0e0910a4cf2da49f569d168442a9c8c1bbe672` | LiDAR + IMU | 已移植 |
 | Small Point LIO | `ba8b4ce5bf80df8bbada44b984e12c460b269dd5` | LiDAR + IMU | 已移植 |
-| Small Point SLAM | `e24b04452966f24fa221b2558e0ffc6281abdf5d` | LiDAR + IMU | 已移植（私有本地源） |
+| Small Point SLAM | `e24b04452966f24fa221b2558e0ffc6281abdf5d` | LiDAR + 可选 IMU + 可选 Camera + 可选 Wheel Speed | 已移植（私有本地源） |
 | CTLO | `03caf1d6c8f4fd7d03d53934a3636a5db1a31c4c` | LiDAR | 已移植 |
 | CT-LIO | `b7cdb476a54c04310857d897acb838cd42539003` | LiDAR + IMU | 已移植 |
 | DLIO | `fc8d183f18cdcfb9bb4fc754c6d373cedc4cbd04` | LiDAR + IMU | 已移植 |
@@ -20,10 +20,18 @@
 | BIEVR-LIO | `2306022e341e98ce84244f92ba7d26f047b41dbc` | LiDAR + IMU | 已移植 |
 | COIN-LIO | `76729cc4feb3649cbd79d28f82d9f62a2c82889b` | LiDAR + IMU | 已移植 |
 | LIGO | `987b88cd9ee3183c6e62231008c8cb26cf1786d6` | LiDAR + IMU + GNSS | 已移植 |
+| FAST-LIVO2 | `0d2c0346107b75b59934975adec9a6eeeb913c64` | LiDAR + IMU + Camera | 已移植 |
+| ORB-SLAM3 (monocular) | `4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4` | Camera | 已移植 |
+| ORB-SLAM3 (imu monocular) | `4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4` | Camera + IMU | 已移植 |
+| R3LIVE | `6143a38537f28cb36eb24e9bbe2e39c8f7967157` | LiDAR + IMU + Camera | 已移植 |
 
 “已移植”表示存在可从固定上游 commit 重放的 Git patch，且目标不依赖 ROS/ROS2，能独立
 链接 `slam_benchmark::core`。一般 LIO 实包验证使用 `ACE/Mid-360/ACE实验室门口10hz`；
-LIGO 使用带原始 GNSS 的 `M3DGR/Visual Challenge/outdoor/Dark01`。
+LIGO 使用带原始 GNSS 的 `M3DGR/Visual Challenge/outdoor/Dark01`。FAST-LIVO2、ORB-SLAM3
+和 R3LIVE 的目标验证数据为 `FAST-LIVO2/Bright Screen Wall`；其数据集标定与
+`/home/yancey/cpp/navigation/run/config/datasets.yaml` 一致。ORB-SLAM3 分成固定的纯单目和
+单目惯性 profile；后者要求 Camera + IMU，并从数据集标定生成相机到 IMU 的 `Tbc`。三套
+新增算法均从 manifest 固定的官方公开仓库生成 patch，不以私有本地优化版本为基线。
 
 COIN-LIO 保留了上游的几何残差、球面强度图、互补强度特征和光度残差，并直接消费 core
 提供的点坐标、逐点时间与强度；适配没有用普通强度最近邻替代其光度模型。LIGO 的紧耦合
@@ -62,9 +70,15 @@ ctest --preset algorithms
 | `bievr_lio` | `bievr_lio_benchmark` |
 | `coin_lio` | `coin_lio_benchmark` |
 | `ligo` | `ligo_benchmark` |
+| `fast_livo2` | `fast_livo2_benchmark` |
+| `orb_slam3_monocular` | `orb_slam3_monocular_benchmark` |
+| `orb_slam3_imu_monocular` | `orb_slam3_imu_monocular_benchmark` |
+| `r3live` | `r3live_benchmark` |
 
-这些可执行目标均单独与当前 core 静态链接；除 LIGO 使用上述 M3DGR GNSS 包外，其他算法
-使用 ACE 数据完成运行验证。
+这些可执行目标均单独与当前 core 静态链接。LIGO 使用上述 M3DGR GNSS 包、其余既有算法
+使用 ACE 数据完成运行验证。三个新增视觉算法已完成官方 patch 重放、独立构建和入口检查；
+当前机器未挂载 `/media/yancey/New Volume2`，因此严格移植后的 FAST-LIVO2 全数据集运行和
+线程峰值验证仍待数据盘可用后执行，不能把历史运行结果视为本轮验证。
 编译器可能报告来自上游 Eigen、IKFoM、ikd-Tree 或 fmt 的警告；这些警告不影响目标生成，
 但不能据此宣称其他编译器或平台已经过验证。
 
@@ -74,6 +88,12 @@ ctest --preset algorithms
 Faster-LIO、KISS-ICP、PV-LIO、Super-LIO、VoxelMap 与 VoxelMap (with imu) 的进程峰值均为
 4 个线程；FAST-LIO、COIN-LIO 和 DLIO 因保留上游独立地图维护线程，峰值为 5。Point-LIO、
 Small Point LIO 与当前 Small Point SLAM (lio mode) 路径保持其上游串行计算语义，峰值为 1。
+
+LIGO 现由 `parallel_threads` 统一限制 OpenMP 计算线程，同时保留并单独计数上游 iKD-Tree
+重建线程。ORB-SLAM3 的局部建图与回环线程属于上游固定后台线程，不归 OpenMP/TBB/Ceres
+线程池参数管理；适配器关闭 Viewer，但保留这些算法必要线程并在资源统计中计入。BIEVR-LIO
+与 CTLO 的 Ceres 线程数、KISS-ICP 的 TBB 生命周期均已绑定到适配器读取的
+`parallel_threads`。
 
 本轮同时恢复了 Faster-LIO 的并行雅可比构建，以及 DLIO 的并行去畸变和异步子地图构建。
 Faster-LIO 与 DLIO 均在 `ACE/Mid-360/ACE实验室门口10hz` 完整处理 20,773 条消息并输出

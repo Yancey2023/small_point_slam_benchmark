@@ -1,0 +1,20 @@
+diff --git a/vikit_common/src/pinhole_camera.cpp b/vikit_common/src/pinhole_camera.cpp
+index 4308abf..c87b733 100644
+--- a/vikit_common/src/pinhole_camera.cpp
++++ b/vikit_common/src/pinhole_camera.cpp
+@@ -6,7 +6,6 @@
+  */
+ 
+ #include <stdio.h>
+-#include <iostream>
+ #include <fstream>
+ #include <string.h>
+ #include <math.h>
+@@ -28,7 +27,6 @@ PinholeCamera(double width, double height, double scale,
+               undist_map2_(height_, width_, CV_16SC2),
+               use_optimization_(false)
+ {
+-  cout << "scale: " << scale << endl;
+   d_[0] = d0; d_[1] = d1; d_[2] = d2; d_[3] = d3; d_[4] = d4;
+   cvK_ = (cv::Mat_<float>(3, 3) << fx_, 0.0, cx_, 0.0, fy_, cy_, 0.0, 0.0, 1.0);
+   cvD_ = (cv::Mat_<float>(1, 5) << d_[0], d_[1], d_[2], d_[3], d_[4]);

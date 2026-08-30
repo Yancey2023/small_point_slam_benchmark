@@ -1,10 +1,10 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 old mode 100755
 new mode 100644
-index 13ca311..13dd999
+index 13ca311..3a98b03
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,95 +1,31 @@
+@@ -1,95 +1,35 @@
 -cmake_minimum_required(VERSION 2.8.3)
 -project(point_lio)
 +cmake_minimum_required(VERSION 3.24)
@@ -72,8 +72,7 @@ index 13ca311..13dd999
 +    standalone
 +    ${PCL_INCLUDE_DIRS}
  )
-+target_link_libraries(point_lio_algorithm PUBLIC Eigen3::Eigen ${PCL_LIBRARIES})
- 
+-
 -find_package(Eigen3 REQUIRED)
 -find_package(PCL 1.8 REQUIRED)
 -
@@ -89,26 +88,30 @@ index 13ca311..13dd999
 -link_directories(
 -	include
 -	${PCL_LIBRARY_DIRS}
++target_link_libraries(point_lio_algorithm PUBLIC
++    Eigen3::Eigen
++    spdlog::spdlog
++    ${PCL_LIBRARIES}
+ )
+ 
+-generate_messages(
+- DEPENDENCIES
+- geometry_msgs
 +add_executable(point_lio_benchmark
 +    standalone/main.cpp
 +    standalone/point_lio_adapter.cpp
  )
 -
--generate_messages(
-- DEPENDENCIES
-- geometry_msgs
+-catkin_package(
+-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
+-  DEPENDS EIGEN3 PCL
+-  INCLUDE_DIRS
 +target_link_libraries(point_lio_benchmark PRIVATE
 +    point_lio_algorithm
 +    slam_benchmark::core
 +    yaml-cpp::yaml-cpp
  )
  
--catkin_package(
--  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
--  DEPENDS EIGEN3 PCL
--  INCLUDE_DIRS
--)
--
 -add_executable(pointlio_mapping src/laserMapping.cpp 
 -                src/li_initialization.cpp src/parameters.cpp src/preprocess.cpp src/Estimator.cpp 
 -                src/IMU_Processing.cpp)
@@ -124,6 +127,301 @@ index 13ca311..13dd999
 +    target_compile_options(point_lio_algorithm PRIVATE -Wall -Wextra)
 +    target_compile_options(point_lio_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 +endif()
+diff --git a/include/IKFoM/IKFoM_toolkit/mtk/types/S2.hpp b/include/IKFoM/IKFoM_toolkit/mtk/types/S2.hpp
+index b19f9b0..6a70885 100755
+--- a/include/IKFoM/IKFoM_toolkit/mtk/types/S2.hpp
++++ b/include/IKFoM/IKFoM_toolkit/mtk/types/S2.hpp
+@@ -168,13 +168,13 @@ public:
+ 	}
+ 
+ 	void hat(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right_inv(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	
+ 	void S2_hat(Eigen::Matrix<scalar, 3, 3> &res)
+@@ -262,7 +262,7 @@ public:
+ 		}
+ 		else
+ 		{
+-			std::cerr << "No N(x, y) for x=-y" << std::endl;
++			spdlog::critical("IKFoM cannot compute N(x,y) for antipodal vectors");
+ 			std::exit(100);
+ 		}
+ 	}
+diff --git a/include/IKFoM/IKFoM_toolkit/mtk/types/SEn.hpp b/include/IKFoM/IKFoM_toolkit/mtk/types/SEn.hpp
+index 2270136..131e6f1 100755
+--- a/include/IKFoM/IKFoM_toolkit/mtk/types/SEn.hpp
++++ b/include/IKFoM/IKFoM_toolkit/mtk/types/SEn.hpp
+@@ -233,19 +233,19 @@ struct SEN {
+ 
+ 	void S2_hat(Eigen::Matrix<scalar, 3, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		res = Eigen::Matrix<scalar, 3, 3>::Zero();
+ 	}
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+diff --git a/include/IKFoM/IKFoM_toolkit/mtk/types/SOn.hpp b/include/IKFoM/IKFoM_toolkit/mtk/types/SOn.hpp
+index 155ecf7..3bb1155 100755
+--- a/include/IKFoM/IKFoM_toolkit/mtk/types/SOn.hpp
++++ b/include/IKFoM/IKFoM_toolkit/mtk/types/SOn.hpp
+@@ -139,14 +139,14 @@ struct SO2 : public Eigen::Rotation2D<_scalar> {
+ 	//! @name Manifold requirements
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+@@ -166,13 +166,13 @@ struct SO2 : public Eigen::Rotation2D<_scalar> {
+ 		return is >> ang.angle();
+ 	}
+ 	void hat(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right_inv(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ };
+ 
+@@ -280,14 +280,14 @@ struct SO3 : public Eigen::Matrix<_scalar, 3, 3> {
+ 	}
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+diff --git a/include/IKFoM/IKFoM_toolkit/mtk/types/vect.hpp b/include/IKFoM/IKFoM_toolkit/mtk/types/vect.hpp
+index d75e6d7..50cbfaf 100755
+--- a/include/IKFoM/IKFoM_toolkit/mtk/types/vect.hpp
++++ b/include/IKFoM/IKFoM_toolkit/mtk/types/vect.hpp
+@@ -81,7 +81,7 @@
+ #define VECT_H_
+ 
+ #include <iosfwd>
+-#include <iostream>
++#include <spdlog/spdlog.h>
+ #include <vector>
+ 
+ #include "../src/vectview.hpp"
+@@ -126,13 +126,13 @@ struct vect : public Eigen::Matrix<_scalar, D, 1, _Options> {
+ 	}
+ 
+ 	void hat(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right_inv(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 
+ 	void S2_hat(Eigen::Matrix<scalar, 3, 3> &res)
+@@ -142,14 +142,14 @@ struct vect : public Eigen::Matrix<_scalar, D, 1, _Options> {
+ 
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+@@ -253,13 +253,13 @@ struct matrix : public Eigen::Matrix<_scalar, M, N, _Options> {
+ 	}
+ 
+ 	void hat(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right_inv(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 
+ 	void S2_hat(Eigen::Matrix<scalar, 3, 3> &res)
+@@ -273,14 +273,14 @@ struct matrix : public Eigen::Matrix<_scalar, M, N, _Options> {
+ 
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+@@ -323,14 +323,14 @@ struct Scalar {
+ 
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+@@ -347,13 +347,13 @@ struct Scalar {
+ 	}
+ 
+ 	void hat(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right_inv(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ };
+ 
+@@ -386,13 +386,13 @@ struct PositiveScalar {
+ 	}
+ 
+ 	void hat(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right_inv(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 
+ 	void S2_hat(Eigen::Matrix<scalar, 3, 3> &res)
+@@ -402,14 +402,14 @@ struct PositiveScalar {
+ 
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
+@@ -450,13 +450,13 @@ struct Complex : public std::complex<_scalar>{
+ 	}
+ 
+ 	void hat(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right_inv(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 	void Jacob_right(Eigen::VectorXd& v, Eigen::MatrixXd &res) {
+-		std::cout << "wrong idx" << std::endl;
++		spdlog::error("IKFoM invalid manifold index");
+ 	}
+ 
+ 	void oplus(MTK::vectview<const scalar, DOF> vec, scalar scale = 1) {
+@@ -466,14 +466,14 @@ struct Complex : public std::complex<_scalar>{
+ 
+ 	void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3> &res)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 2, 3>::Zero();
+ 	}
+ 
+ 	void S2_Mx(Eigen::Matrix<scalar, 3, 2> &res, MTK::vectview<const scalar, 2> delta)
+ 	{
+-		std::cerr << "wrong idx for S2" << std::endl;
++		spdlog::critical("IKFoM invalid S2 index");
+ 		std::exit(100);	
+     	res = Eigen::Matrix<scalar, 3, 2>::Zero();
+ 	}
 diff --git a/include/common_lib.h b/include/common_lib.h
 index e0f218f..dec4d3d 100755
 --- a/include/common_lib.h
@@ -180,10 +478,10 @@ index e0f218f..dec4d3d 100755
 \ No newline at end of file
 +#endif
 diff --git a/include/ivox/ivox3d.h b/include/ivox/ivox3d.h
-index 6f37014..0a77728 100755
+index 6f37014..48c241a 100755
 --- a/include/ivox/ivox3d.h
 +++ b/include/ivox/ivox3d.h
-@@ -5,7 +5,6 @@
+@@ -5,11 +5,11 @@
  #ifndef FASTER_LIO_IVOX3D_H
  #define FASTER_LIO_IVOX3D_H
  
@@ -191,6 +489,57 @@ index 6f37014..0a77728 100755
  // #include <execution>
  #include <list>
  #include <thread>
+ #include <unordered_map>
++#include <spdlog/spdlog.h>
+ 
+ #include "eigen_types.h"
+ #include "ivox3d_node.hpp"
+@@ -196,8 +196,9 @@ bool IVox<dim, node_type, PointType>::GetClosestPoint(const PointType& pt, Point
+             int64_t sum_ = std::accumulate(stat.begin(), stat.end(), 0);
+             int64_t num_ = stat.size();
+             stat.clear();
+-            std::cout << "inner_" << key << "(ns): sum=" << sum_ << " num=" << num_ << " ave=" << 1.0 * sum_ / num_
+-                      << " ave*n=" << 1.0 * sum_ / STAT_PERIOD << std::endl;
++            spdlog::debug("iVox inner_{}(ns): sum={} num={} ave={} ave*n={}",
++                          key, sum_, num_, 1.0 * sum_ / num_,
++                          1.0 * sum_ / STAT_PERIOD);
+         }
+     }
+ #endif
+diff --git a/include/ivox/ivox3d_node.hpp b/include/ivox/ivox3d_node.hpp
+index d2a9e0b..2bc199c 100755
+--- a/include/ivox/ivox3d_node.hpp
++++ b/include/ivox/ivox3d_node.hpp
+@@ -3,6 +3,7 @@
+ #include <cmath>
+ #include <list>
+ #include <vector>
++#include <spdlog/spdlog.h>
+ 
+ #include "hilbert.hpp"
+ 
+@@ -18,9 +19,7 @@ inline double distance2(const PointT& pt1, const PointT& pt2) {
+ // convert from pcl point to eigen
+ template <typename T, int dim, typename PointType>
+ inline Eigen::Matrix<T, dim, 1> ToEigen(const PointType& pt) {
+-    cout << "line 21" << endl;
+     return Eigen::Matrix<T, dim, 1>(pt.x, pt.y, pt.z);
+-    cout << "line 23" << endl;
+ }
+ 
+ template <>
+@@ -197,8 +196,9 @@ int IVoxNode<PointT, dim>::KNNPointByCondition(std::vector<DistPoint>& dis_point
+             int64_t sum_ = std::accumulate(stat.begin(), stat.end(), 0);
+             int64_t num_ = stat.size();
+             stat.clear();
+-            std::cout << "inner_" << key << "(ns): sum=" << sum_ << " num=" << num_ << " ave=" << 1.0 * sum_ / num_
+-                      << " ave*n=" << 1.0 * sum_ / STAT_PERIOD << std::endl;
++            spdlog::debug("iVox inner_{}(ns): sum={} num={} ave={} ave*n={}",
++                          key, sum_, num_, 1.0 * sum_ / num_,
++                          1.0 * sum_ / STAT_PERIOD);
+         }
+     }
+ #endif
 diff --git a/src/Estimator.cpp b/src/Estimator.cpp
 index 7a31947..f2eb575 100755
 --- a/src/Estimator.cpp
@@ -268,10 +617,10 @@ index 8383fb6..557c051 100755
 diff --git a/src/parameters.h b/src/parameters.h
 old mode 100755
 new mode 100644
-index 3b408a7..d51c9e9
+index 3b408a7..d495493
 --- a/src/parameters.h
 +++ b/src/parameters.h
-@@ -1,83 +1,36 @@
+@@ -1,83 +1,37 @@
 -// #ifndef PARAM_H
 -// #define PARAM_H
  #pragma once
@@ -373,8 +722,10 @@ index 3b408a7..d51c9e9
 -extern double online_refine_time; //unit: s
 -extern bool cut_frame_init;
 -extern double time_update_last, time_current, time_predict_last_const, t_last;
--
+ 
 -extern MeasureGroup Measures;
++void reset_cov(Eigen::Matrix<double, 24, 24>& covariance);
++void reset_cov_output(Eigen::Matrix<double, 30, 30>& covariance);
  
 -extern ofstream fout_out, fout_imu_pbp;
 -void readParameters(ros::NodeHandle &n);
@@ -383,8 +734,6 @@ index 3b408a7..d51c9e9
 -void reset_cov(Eigen::Matrix<double, 24, 24> & P_init);
 -void reset_cov_output(Eigen::Matrix<double, 30, 30> & P_init_output);
 \ No newline at end of file
-+void reset_cov(Eigen::Matrix<double, 24, 24>& covariance);
-+void reset_cov_output(Eigen::Matrix<double, 30, 30>& covariance);
 diff --git a/standalone/main.cpp b/standalone/main.cpp
 new file mode 100644
 index 0000000..b62f5f4
@@ -401,10 +750,10 @@ index 0000000..b62f5f4
 +}
 diff --git a/standalone/point_lio_adapter.cpp b/standalone/point_lio_adapter.cpp
 new file mode 100644
-index 0000000..fda0785
+index 0000000..41505c2
 --- /dev/null
 +++ b/standalone/point_lio_adapter.cpp
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,318 @@
 +#include "point_lio_adapter.hpp"
 +
 +#include <slam_benchmark/calibration.hpp>
@@ -488,12 +837,10 @@ index 0000000..fda0785
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = compatibility.selected_sensor(sensors,
-+                                                      slam_benchmark::SensorType::Lidar);
-+    const auto imu = compatibility.selected_sensor(sensors,
-+                                                    slam_benchmark::SensorType::Imu);
++    const auto lidar = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
-+        throw std::runtime_error("Point-LIO requires one LiDAR and one IMU");
++        return slam_benchmark::InitializationResult::unsupported("Point-LIO requires one LiDAR and one IMU");
 +    sink_ = &sink;
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
 +    filter_size_surf_min = parameter(root, "filter_size_scan_m", 0.5);

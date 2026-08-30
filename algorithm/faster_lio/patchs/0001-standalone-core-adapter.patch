@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 51725ea..6179a26 100644
+index 51725ea..b954be8 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1,33 +1,42 @@
+@@ -1,33 +1,43 @@
 -cmake_minimum_required(VERSION 3.5)
 -project(faster_lio)
 -
@@ -50,6 +50,7 @@ index 51725ea..6179a26 100644
 +target_link_libraries(faster_lio_algorithm PUBLIC
 +    Eigen3::Eigen
 +    TBB::tbb
++    spdlog::spdlog
 +    ${PCL_LIBRARIES}
 +)
 +
@@ -77,11 +78,233 @@ index 51725ea..6179a26 100644
 -
 -add_subdirectory(src)
 -add_subdirectory(app)
+diff --git a/config/livox.yaml b/config/livox.yaml
+index 512ed13..6e66610 100644
+--- a/config/livox.yaml
++++ b/config/livox.yaml
+@@ -4,7 +4,7 @@ common:
+     time_sync_en: false # ONLY turn on when external time synchronization is really not possible
+ 
+ preprocess: # set <xfer_format = 0> in livox_ros_driver launch file
+-    lidar_type: 6 # 6->LivoxPointXYZRTLT (sensor_msgs::PointCloud2)
++    lidar_type: 6 # 6->LivoxPointXYZRTLT
+     scan_line: 4
+     blind: 0.5
+ 
+diff --git a/include/IKFoM_toolkit/esekfom/esekfom.hpp b/include/IKFoM_toolkit/esekfom/esekfom.hpp
+index 26f4ebd..02c1274 100755
+--- a/include/IKFoM_toolkit/esekfom/esekfom.hpp
++++ b/include/IKFoM_toolkit/esekfom/esekfom.hpp
+@@ -376,7 +376,7 @@ class esekf {
+     // iterated error state EKF update for measurement as a manifold.
+     void update_iterated(measurement &z, measurementnoisecovariance &R) {
+         if (!(is_same<typename measurement::scalar, scalar_type>())) {
+-            std::cerr << "the scalar type of measurment must be the same as the state" << std::endl;
++            spdlog::critical("IKFoM measurement and state scalar types differ");
+             std::exit(100);
+         }
+         int t = 0;
+@@ -566,7 +566,7 @@ class esekf {
+     // covariance (R) at the same time, by only one function.
+     void update_iterated_share() {
+         if (!(is_same<typename measurement::scalar, scalar_type>())) {
+-            std::cerr << "the scalar type of measurment must be the same as the state" << std::endl;
++            spdlog::critical("IKFoM measurement and state scalar types differ");
+             std::exit(100);
+         }
+ 
+@@ -870,7 +870,7 @@ class esekf {
+             if (converg) t++;
+             if (t > 1 || i == maximum_iter - 1) {
+                 L_ = P_;
+-                std::cout << "iteration time:" << t << "," << i << std::endl;
++                spdlog::debug("IKFoM iteration time: {}, {}", t, i);
+ 
+                 Matrix<scalar_type, 3, 3> res_temp_SO3;
+                 MTK::vect<3, scalar_type> seg_SO3;
+@@ -1063,7 +1063,7 @@ class esekf {
+             if (dyn_share.converge) t++;
+             if (t > 1 || i == maximum_iter - 1) {
+                 L_ = P_;
+-                std::cout << "iteration time:" << t << "," << i << std::endl;
++                spdlog::debug("IKFoM iteration time: {}, {}", t, i);
+ 
+                 Matrix<scalar_type, 3, 3> res_temp_SO3;
+                 MTK::vect<3, scalar_type> seg_SO3;
+@@ -1255,7 +1255,7 @@ class esekf {
+             if (converg) t++;
+             if (t > 1 || i == maximum_iter - 1) {
+                 L_ = P_;
+-                std::cout << "iteration time:" << t << "," << i << std::endl;
++                spdlog::debug("IKFoM iteration time: {}, {}", t, i);
+ 
+                 Matrix<scalar_type, 3, 3> res_temp_SO3;
+                 MTK::vect<3, scalar_type> seg_SO3;
+@@ -1450,7 +1450,7 @@ class esekf {
+             if (dyn_share.converge) t++;
+             if (t > 1 || i == maximum_iter - 1) {
+                 L_ = P_;
+-                std::cout << "iteration time:" << t << "," << i << std::endl;
++                spdlog::debug("IKFoM iteration time: {}, {}", t, i);
+ 
+                 Matrix<scalar_type, 3, 3> res_temp_SO3;
+                 MTK::vect<3, scalar_type> seg_SO3;
+@@ -1886,7 +1886,7 @@ class esekf {
+         double angular_dis = temp_vec.block(0, 0, 3, 1).norm() * 57.3;
+         double pos_dis = temp_vec.block(3, 0, 3, 1).norm();
+         if (angular_dis >= 20 || pos_dis > 1) {
+-            printf("Angular dis = %.2f, pos dis = %.2f\r\n", angular_dis, pos_dis);
++            spdlog::warn("IKFoM state correction is large: angular={}, position={}", angular_dis, pos_dis);
+             temp_vec.setZero();
+         }
+         return temp_vec;
+diff --git a/include/IKFoM_toolkit/mtk/types/S2.hpp b/include/IKFoM_toolkit/mtk/types/S2.hpp
+index e2bcbd0..9a2c1d4 100755
+--- a/include/IKFoM_toolkit/mtk/types/S2.hpp
++++ b/include/IKFoM_toolkit/mtk/types/S2.hpp
+@@ -217,7 +217,7 @@ struct S2 {
+                 res = 1 / length / length * Bx.transpose() * MTK::hat(vec);
+             }
+         } else {
+-            std::cerr << "No N(x, y) for x=-y" << std::endl;
++            spdlog::critical("IKFoM cannot compute N(x,y) for antipodal vectors");
+             std::exit(100);
+         }
+     }
+diff --git a/include/IKFoM_toolkit/mtk/types/SOn.hpp b/include/IKFoM_toolkit/mtk/types/SOn.hpp
+index 91e0e2b..24e3bac 100755
+--- a/include/IKFoM_toolkit/mtk/types/SOn.hpp
++++ b/include/IKFoM_toolkit/mtk/types/SOn.hpp
+@@ -127,13 +127,13 @@ struct SO2 : public Eigen::Rotation2D<_scalar> {
+     void S2_hat(Eigen::Matrix<scalar, 3, 3>& res) { res = Eigen::Matrix<scalar, 3, 3>::Zero(); }
+     //! @name Manifold requirements
+     void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3>& res) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 2, 3>::Zero();
+     }
+ 
+     void S2_Mx(Eigen::Matrix<scalar, 3, 2>& res, MTK::vectview<const scalar, 2> delta) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 3, 2>::Zero();
+     }
+@@ -223,13 +223,13 @@ struct SO3 : public Eigen::Quaternion<_scalar, Options> {
+ 
+     void S2_hat(Eigen::Matrix<scalar, 3, 3>& res) { res = Eigen::Matrix<scalar, 3, 3>::Zero(); }
+     void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3>& res) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 2, 3>::Zero();
+     }
+ 
+     void S2_Mx(Eigen::Matrix<scalar, 3, 2>& res, MTK::vectview<const scalar, 2> delta) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 3, 2>::Zero();
+     }
+diff --git a/include/IKFoM_toolkit/mtk/types/vect.hpp b/include/IKFoM_toolkit/mtk/types/vect.hpp
+index 6ea4d23..b00be92 100755
+--- a/include/IKFoM_toolkit/mtk/types/vect.hpp
++++ b/include/IKFoM_toolkit/mtk/types/vect.hpp
+@@ -82,7 +82,7 @@
+ #define VECT_H_
+ 
+ #include <iosfwd>
+-#include <iostream>
++#include <spdlog/spdlog.h>
+ #include <vector>
+ 
+ #include "../src/vectview.hpp"
+@@ -122,13 +122,13 @@ struct vect : public Eigen::Matrix<_scalar, D, 1, _Options> {
+     void S2_hat(Eigen::Matrix<scalar, 3, 3>& res) { res = Eigen::Matrix<scalar, 3, 3>::Zero(); }
+ 
+     void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3>& res) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 2, 3>::Zero();
+     }
+ 
+     void S2_Mx(Eigen::Matrix<scalar, 3, 2>& res, MTK::vectview<const scalar, 2> delta) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 3, 2>::Zero();
+     }
+@@ -238,13 +238,13 @@ struct matrix : public Eigen::Matrix<_scalar, M, N, _Options> {
+     void oplus(MTK::vectview<const scalar, DOF> vec, scalar scale = 1) { *this += scale * base::Map(vec.data()); }
+ 
+     void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3>& res) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 2, 3>::Zero();
+     }
+ 
+     void S2_Mx(Eigen::Matrix<scalar, 3, 2>& res, MTK::vectview<const scalar, 2> delta) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 3, 2>::Zero();
+     }
+@@ -284,13 +284,13 @@ struct Scalar {
+     void S2_hat(Eigen::Matrix<scalar, 3, 3>& res) { res = Eigen::Matrix<scalar, 3, 3>::Zero(); }
+ 
+     void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3>& res) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 2, 3>::Zero();
+     }
+ 
+     void S2_Mx(Eigen::Matrix<scalar, 3, 2>& res, MTK::vectview<const scalar, 2> delta) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 3, 2>::Zero();
+     }
+@@ -330,13 +330,13 @@ struct PositiveScalar {
+     void S2_hat(Eigen::Matrix<scalar, 3, 3>& res) { res = Eigen::Matrix<scalar, 3, 3>::Zero(); }
+ 
+     void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3>& res) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 2, 3>::Zero();
+     }
+ 
+     void S2_Mx(Eigen::Matrix<scalar, 3, 2>& res, MTK::vectview<const scalar, 2> delta) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 3, 2>::Zero();
+     }
+@@ -378,13 +378,13 @@ struct Complex : public std::complex<_scalar> {
+     };
+ 
+     void S2_Nx_yy(Eigen::Matrix<scalar, 2, 3>& res) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 2, 3>::Zero();
+     }
+ 
+     void S2_Mx(Eigen::Matrix<scalar, 3, 2>& res, MTK::vectview<const scalar, 2> delta) {
+-        std::cerr << "wrong idx for S2" << std::endl;
++        spdlog::critical("IKFoM invalid S2 index");
+         std::exit(100);
+         res = Eigen::Matrix<scalar, 3, 2>::Zero();
+     }
 diff --git a/include/ivox3d/ivox3d.h b/include/ivox3d/ivox3d.h
-index 38e6a99..024abc2 100644
+index 38e6a99..4811768 100644
 --- a/include/ivox3d/ivox3d.h
 +++ b/include/ivox3d/ivox3d.h
-@@ -5,9 +5,9 @@
+@@ -5,10 +5,11 @@
  #ifndef FASTER_LIO_IVOX3D_H
  #define FASTER_LIO_IVOX3D_H
  
@@ -90,9 +313,23 @@ index 38e6a99..024abc2 100644
  #include <list>
 +#include <stdexcept>
  #include <thread>
++#include <spdlog/spdlog.h>
  
  #include "eigen_types.h"
-@@ -230,7 +230,7 @@ void IVox<dim, node_type, PointType>::GenerateNearbyGrids() {
+ #include "ivox3d_node.hpp"
+@@ -190,8 +191,9 @@ bool IVox<dim, node_type, PointType>::GetClosestPoint(const PointType& pt, Point
+             int64_t sum_ = std::accumulate(stat.begin(), stat.end(), 0);
+             int64_t num_ = stat.size();
+             stat.clear();
+-            std::cout << "inner_" << key << "(ns): sum=" << sum_ << " num=" << num_ << " ave=" << 1.0 * sum_ / num_
+-                      << " ave*n=" << 1.0 * sum_ / STAT_PERIOD << std::endl;
++            spdlog::debug("iVox inner_{}(ns): sum={} num={} ave={} ave*n={}",
++                          key, sum_, num_, 1.0 * sum_ / num_,
++                          1.0 * sum_ / STAT_PERIOD);
+         }
+     }
+ #endif
+@@ -230,7 +232,7 @@ void IVox<dim, node_type, PointType>::GenerateNearbyGrids() {
                           KeyType(-1, 1, 1),  KeyType(1, -1, 1),  KeyType(1, 1, -1),  KeyType(-1, -1, 1),
                           KeyType(-1, 1, -1), KeyType(1, -1, -1), KeyType(-1, -1, -1)};
      } else {
@@ -101,12 +338,36 @@ index 38e6a99..024abc2 100644
      }
  }
  
+diff --git a/include/ivox3d/ivox3d_node.hpp b/include/ivox3d/ivox3d_node.hpp
+index 3600276..40d70c0 100644
+--- a/include/ivox3d/ivox3d_node.hpp
++++ b/include/ivox3d/ivox3d_node.hpp
+@@ -3,6 +3,7 @@
+ #include <cmath>
+ #include <list>
+ #include <vector>
++#include <spdlog/spdlog.h>
+ 
+ #include "hilbert.hpp"
+ 
+@@ -195,8 +196,9 @@ int IVoxNode<PointT, dim>::KNNPointByCondition(std::vector<DistPoint>& dis_point
+             int64_t sum_ = std::accumulate(stat.begin(), stat.end(), 0);
+             int64_t num_ = stat.size();
+             stat.clear();
+-            std::cout << "inner_" << key << "(ns): sum=" << sum_ << " num=" << num_ << " ave=" << 1.0 * sum_ / num_
+-                      << " ave*n=" << 1.0 * sum_ / STAT_PERIOD << std::endl;
++            spdlog::debug("iVox inner_{}(ns): sum={} num={} ave={} ave*n={}",
++                          key, sum_, num_, 1.0 * sum_ / num_,
++                          1.0 * sum_ / STAT_PERIOD);
+         }
+     }
+ #endif
 diff --git a/standalone/faster_lio_adapter.cpp b/standalone/faster_lio_adapter.cpp
 new file mode 100644
-index 0000000..1845f26
+index 0000000..2f5bf1c
 --- /dev/null
 +++ b/standalone/faster_lio_adapter.cpp
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,150 @@
 +#include "faster_lio_adapter.hpp"
 +
 +#include <slam_benchmark/calibration.hpp>
@@ -145,12 +406,10 @@ index 0000000..1845f26
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true, .imu = true, .point_time = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = compatibility.selected_sensor(sensors,
-+                                                      slam_benchmark::SensorType::Lidar);
-+    const auto imu = compatibility.selected_sensor(sensors,
-+                                                    slam_benchmark::SensorType::Imu);
++    const auto lidar = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Lidar);
++    const auto imu = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Imu);
 +    if (lidar == sensors.end() || imu == sensors.end())
-+        throw std::runtime_error("Faster-LIO requires one LiDAR and one IMU");
++        return slam_benchmark::InitializationResult::unsupported("Faster-LIO requires one LiDAR and one IMU");
 +
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
 +    const int parallel_threads = parameter(

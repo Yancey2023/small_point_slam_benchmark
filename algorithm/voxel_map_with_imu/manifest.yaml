@@ -7,6 +7,7 @@ repository:
   name: VoxelMap
   url: https://github.com/hku-mars/VoxelMap.git
   ref: d787ee8ccfb0e509a36adb2c52bd5da97b29c39a
+source_excludes: [Log, config, launch, msg, rviz_cfg, package.xml, src]
 dependencies:
   - {name: PCL, url: https://github.com/PointCloudLibrary/pcl.git}
   - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}

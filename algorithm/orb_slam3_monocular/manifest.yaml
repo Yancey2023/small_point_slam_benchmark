@@ -1,0 +1,25 @@
+schema_version: 1
+name: ORB-SLAM3 (monocular)
+description: Feature-based monocular multi-map SLAM with a headless standalone adapter.
+authors: [Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M. M. Montiel, Juan D. Tardós]
+license: GPL-3.0
+repository:
+  name: ORB_SLAM3
+  url: https://github.com/UZ-SLAMLab/ORB_SLAM3.git
+  ref: 4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4
+source_excludes: [Examples, Examples_old, evaluation, build_ros.sh]
+dependencies:
+  - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
+  - {name: OpenCV, url: https://github.com/opencv/opencv.git}
+  - {name: spdlog, url: https://github.com/gabime/spdlog.git}
+  - {name: DBoW2, url: https://github.com/dorian3d/DBoW2.git}
+  - {name: g2o, url: https://github.com/RainerKuemmerle/g2o.git}
+paper:
+  title: "ORB-SLAM3: An Accurate Open-Source Library for Visual, Visual-Inertial, and Multimap SLAM"
+  url: https://doi.org/10.1109/TRO.2021.3075644
+sensors: [camera]
+timing_stages: [image_preprocess, visual_tracking]
+integration:
+  status: integrated
+  transport: core_sensor_samples
+  build_requirement: Builds the upstream headless monocular library and bundled DBoW2/g2o from a pinned ref.

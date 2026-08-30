@@ -461,10 +461,10 @@ index 0000000..bd0af8f
 +}
 diff --git a/standalone/small_point_slam_adapter.cpp b/standalone/small_point_slam_adapter.cpp
 new file mode 100644
-index 0000000..7ad99ef
+index 0000000..d0ed189
 --- /dev/null
 +++ b/standalone/small_point_slam_adapter.cpp
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,237 @@
 +#include "small_point_slam_adapter.hpp"
 +
 +#include <spdlog/spdlog.h>
@@ -571,19 +571,20 @@ index 0000000..7ad99ef
 +        std::span<const slam_benchmark::SensorDefinition> sensors,
 +        const std::filesystem::path &config_path,
 +        slam_benchmark::ResultSink &sink) {
++    auto compatibility = slam_benchmark::check_dataset_compatibility(
++            sensors, {.lidar = true,
++                      .point_time = true,
++                      .all_lidars = true,
++                      .optional_imu = true,
++                      .optional_camera = !lio_only_,
++                      .optional_wheel_speed = !lio_only_});
++    if (!compatibility) return compatibility;
++
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
 +    const bool use_imu = root["enable_imu"].as<bool>(true);
 +    const bool use_camera = !lio_only_ && root["use_camera"].as<bool>(true);
 +    const bool use_wheel_speed =
 +            !lio_only_ && root["enable_wheel_speed"].as<bool>(true);
-+    auto compatibility = slam_benchmark::check_dataset_compatibility(
-+            sensors, {.lidar = true,
-+                      .point_time = true,
-+                      .all_lidars = true,
-+                      .optional_imu = use_imu,
-+                      .optional_camera = use_camera,
-+                      .optional_wheel_speed = use_wheel_speed});
-+    if (!compatibility) return compatibility;
 +
 +    sink_ = &sink;
 +    lidar_indices_.clear();
@@ -598,14 +599,14 @@ index 0000000..7ad99ef
 +        if (sensor.type == slam_benchmark::SensorType::Lidar) {
 +            lidar_indices_.emplace_back(sensor.id, lidars.size());
 +            lidars.push_back(extrinsic(sensor.calibration));
-+        } else if (sensor.type == slam_benchmark::SensorType::Imu) {
++        } else if (sensor.type == slam_benchmark::SensorType::Imu && use_imu) {
 +            imu_id_ = sensor.id;
 +            imu_rotation = rotation(sensor.calibration);
-+        } else if (sensor.type == slam_benchmark::SensorType::Camera) {
++        } else if (sensor.type == slam_benchmark::SensorType::Camera && use_camera) {
 +            camera_id_ = sensor.id;
 +            camera = small_point_slam::standalone::CameraConfiguration{
 +                    extrinsic(sensor.calibration), camera_model(sensor)};
-+        } else if (sensor.type == slam_benchmark::SensorType::WheelSpeed) {
++        } else if (sensor.type == slam_benchmark::SensorType::WheelSpeed && use_wheel_speed) {
 +            wheel_speed_id_ = sensor.id;
 +        }
 +    }

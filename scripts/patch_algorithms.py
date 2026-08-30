@@ -12,15 +12,48 @@ import tempfile
 from pathlib import Path
 
 from project import (ROOT, download_path, patch_directory, repository_for,
-                     selected_algorithms, source_path)
+                     selected_algorithms, source_excludes, source_path)
 
 
-def copy_upstream(source: Path, destination: Path) -> None:
-    shutil.copytree(source, destination, ignore=shutil.ignore_patterns(".git"))
+def copy_upstream(name: str, source: Path, destination: Path) -> None:
+    excluded = {Path(item) for item in source_excludes(name)}
+
+    def ignored(directory: str, entries: list[str]) -> list[str]:
+        relative_directory = Path(directory).relative_to(source)
+        return [
+            entry for entry in entries
+            if entry == ".git" or relative_directory / entry in excluded
+        ]
+
+    shutil.copytree(source, destination, ignore=ignored)
 
 
 def patch_files(name: str) -> list[Path]:
     return sorted(patch_directory(name).glob("*.patch"))
+
+
+def deleted_paths(patch: bytes) -> tuple[str, ...]:
+    """Return full-file deletions that should be represented as source excludes."""
+    result = subprocess.run(
+        ["git", "apply", "--summary"], input=patch, cwd=ROOT,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode:
+        raise RuntimeError(result.stderr.decode(errors="replace").strip())
+    paths = []
+    for raw_line in result.stdout.decode(errors="replace").splitlines():
+        line = raw_line.strip()
+        if line.startswith("delete mode "):
+            paths.append(line.split(" ", 3)[-1])
+    return tuple(paths)
+
+
+def require_compact_deletions(name: str, patch: bytes) -> None:
+    deleted = deleted_paths(patch)
+    if deleted:
+        formatted = "\n  - ".join(deleted)
+        raise RuntimeError(
+            f"algorithm/{name} patch contains full-file deletions; add these "
+            f"repository-relative paths to source_excludes:\n  - {formatted}")
 
 
 def apply_one(name: str, force: bool, check_only: bool) -> None:
@@ -35,8 +68,9 @@ def apply_one(name: str, force: bool, check_only: bool) -> None:
     # temporary directory.
     with tempfile.TemporaryDirectory(prefix=f"{name}-") as temporary:
         staged = Path(temporary) / repository_for(name).name
-        copy_upstream(upstream, staged)
+        copy_upstream(name, upstream, staged)
         for patch in patches:
+            require_compact_deletions(name, patch.read_bytes())
             check = subprocess.run(
                 ["git", "apply", "--check", str(patch)], cwd=staged, text=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -65,8 +99,8 @@ def generate_one(name: str, output_name: str) -> None:
         staging = Path(temporary)
         clean_upstream = staging / "upstream"
         clean_adapted = staging / "adapted"
-        copy_upstream(upstream, clean_upstream)
-        copy_upstream(adapted, clean_adapted)
+        copy_upstream(name, upstream, clean_upstream)
+        copy_upstream(name, adapted, clean_adapted)
         command = [
             "git", "diff", "--no-index", "--binary", "--src-prefix=a/",
             "--dst-prefix=b/", "--", "upstream", "adapted",
@@ -79,6 +113,7 @@ def generate_one(name: str, output_name: str) -> None:
     patch = patch.replace(b"b/upstream/", b"b/")
     patch = patch.replace(b"a/adapted/", b"a/")
     patch = patch.replace(b"b/adapted/", b"b/")
+    require_compact_deletions(name, patch)
     destination = patch_directory(name) / output_name
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(patch)

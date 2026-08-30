@@ -1,0 +1,62 @@
+schema_version: 1
+name: R3LIVE
+description: Tightly coupled LiDAR-inertial-visual state estimation and RGB point-cloud mapping.
+authors: [Jiarong Lin, Fu Zhang]
+license: BSD-3-Clause
+repository:
+  name: r3live
+  url: https://github.com/hku-mars/r3live.git
+  ref: 6143a38537f28cb36eb24e9bbe2e39c8f7967157
+source_excludes:
+  - r3live_output
+  - Log
+  - config
+  - papers
+  - supply
+  - r3live/CMakeLists.txt
+  - r3live/launch
+  - r3live/package.xml
+  - r3live/src/loam/LiDAR_front_end.cpp
+  - r3live/src/loam/include/matplotlibcpp.h
+  - r3live/src/r3live.cpp
+  - r3live/src/r3live_reconstruct_mesh.cpp
+  - r3live/src/rgb_map/offline_map_recorder.cpp
+  - r3live/src/rgb_map/offline_map_recorder.hpp
+  - r3live/src/tools/common_tools.h
+  - r3live/src/tools/lib_sophus/average.hpp
+  - r3live/src/tools/lib_sophus/example_ensure_handler.cpp
+  - r3live/src/tools/lib_sophus/geometry.hpp
+  - r3live/src/tools/lib_sophus/interpolate.hpp
+  - r3live/src/tools/lib_sophus/interpolate_details.hpp
+  - r3live/src/tools/lib_sophus/local_parameterization_se3.hpp
+  - r3live/src/tools/lib_sophus/local_parameterization_split_se3.hpp
+  - r3live/src/tools/lib_sophus/num_diff.hpp
+  - r3live/src/tools/lib_sophus/rxso2.hpp
+  - r3live/src/tools/lib_sophus/rxso3.hpp
+  - r3live/src/tools/lib_sophus/se2.hpp
+  - r3live/src/tools/lib_sophus/sim2.hpp
+  - r3live/src/tools/lib_sophus/sim3.hpp
+  - r3live/src/tools/lib_sophus/sim_details.hpp
+  - r3live/src/tools/lib_sophus/test_macros.hpp
+  - r3live/src/tools/lib_sophus/velocities.hpp
+  - r3live/src/tools/test_timer.cpp
+  - r3live/src/tools/tools_ceres.hpp
+  - r3live/src/tools/tools_color_printf.hpp
+  - r3live/src/tools/tools_data_io.hpp
+  - r3live/src/tools/tools_logger.hpp
+  - r3live/src/tools/tools_mem_used.h
+  - r3live/src/tools/tools_ros.hpp
+  - r3live/src/tools/tools_serialization.hpp
+dependencies:
+  - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
+  - {name: OpenCV, url: https://github.com/opencv/opencv.git}
+  - {name: PCL, url: https://github.com/PointCloudLibrary/pcl.git}
+paper:
+  title: "R3LIVE: A Robust, Real-time, RGB-colored, LiDAR-Inertial-Visual tightly-coupled state Estimation and mapping package"
+  url: https://doi.org/10.1109/LRA.2022.3152497
+sensors: [lidar, imu, camera]
+timing_stages: [lidar_preprocess, undistortion, state_propagation, downsampling, map_search, filter_update, map_update, image_preprocess, visual_update]
+integration:
+  status: integrated
+  transport: core_sensor_samples
+  build_requirement: Builds a ROS-independent R3LIVE front end from the pinned official source.

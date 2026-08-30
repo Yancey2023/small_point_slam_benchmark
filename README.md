@@ -22,8 +22,8 @@ doc/                      # 架构和移植说明
 不满足输入要求的组合会在网页中标记为“已跳过”并显示原因，不会崩溃或产生误导性结果。
 
 当前可执行算法包括 FAST-LIO2、Point-LIO、VoxelMap、VoxelMap (with imu)、Super-LIO、
-KISS-ICP、Faster-LIO、Small Point LIO、CTLO、CT-LIO、DLIO、PV-LIO、BIEVR-LIO、COIN-LIO
-和 LIGO。
+KISS-ICP、Faster-LIO、Small Point LIO、CTLO、CT-LIO、DLIO、PV-LIO、BIEVR-LIO、COIN-LIO、
+LIGO、FAST-LIVO2、ORB-SLAM3（纯单目与单目惯性）和 R3LIVE。
 此外还支持尚未公开源码、通过本地 Git 工作树提供的 Small Point SLAM。
 LIGO 的原始 GNSS 观测、星历、电离层参数及接收机 PVT 由 `rosbag_io` 解码并转换为 core
 自有类型，算法适配层不接触 ROS 消息或话题。具体状态见 [移植状态](doc/port_status.md)。

@@ -7,6 +7,14 @@ repository:
   name: PV-LIO
   url: https://github.com/HViktorTsoi/PV-LIO.git
   ref: 494c27f62f7333d6cc32c26dccaa8d8a971c2c2d
+source_excludes:
+  - Log
+  - launch
+  - package.xml
+  - src
+  - include/IKFoM_toolkit
+  - include/matplotlibcpp.h
+  - include/use-ikfom.hpp
 dependencies:
   - {name: IKFoM, url: https://github.com/hku-mars/IKFoM.git}
   - {name: VoxelMap, url: https://github.com/hku-mars/VoxelMap.git}

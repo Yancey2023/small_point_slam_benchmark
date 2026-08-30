@@ -7,6 +7,21 @@ repository:
   name: Point-LIO
   url: https://github.com/hku-mars/Point-LIO.git
   ref: 4b86a469eb5572e70ed575af25b5f15dd06e8e3c
+source_excludes:
+  - Log
+  - launch
+  - msg
+  - rviz_cfg
+  - package.xml
+  - include/matplotlibcpp.h
+  - src/IMU_Processing.cpp
+  - src/IMU_Processing.h
+  - src/laserMapping.cpp
+  - src/li_initialization.cpp
+  - src/li_initialization.h
+  - src/parameters.cpp
+  - src/preprocess.cpp
+  - src/preprocess.h
 dependencies:
   - {name: ikd-Tree, url: https://github.com/hku-mars/ikd-Tree.git}
   - {name: IKFoM, url: https://github.com/hku-mars/IKFoM.git}
@@ -16,6 +31,7 @@ paper:
 sensors: [lidar, imu]
 timing_stages:
   - lidar_preprocess
+  - downsampling
   - state_propagation
   - map_search
   - filter_update

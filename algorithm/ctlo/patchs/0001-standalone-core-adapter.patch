@@ -69,8 +69,75 @@ index 551bfc9..efdedce 100644
 +else()
 +  target_compile_options(ctlo_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 +endif()
+diff --git a/include/common/time_counter.hpp b/include/common/time_counter.hpp
+index 2b6d876..cb50326 100644
+--- a/include/common/time_counter.hpp
++++ b/include/common/time_counter.hpp
+@@ -2,7 +2,7 @@
+ 
+ #include <chrono>
+ #include <iomanip>
+-#include <iostream>
++#include <spdlog/spdlog.h>
+ #include <sstream>
+ #include <string>
+ #include <unordered_map>
+@@ -75,18 +75,20 @@ inline void tick(const std::string& topic = std::string()) {
+ inline void tack(const std::string& topic = std::string()) {
+   auto iter = g_tick_time_points.find(topic);
+   if (iter == g_tick_time_points.end()) {
+-    std::cerr << topic << " hasn't ticked!" << std::endl;
++    spdlog::error("CTLO timer '{}' has not been started", topic);
++    return;
+   }
+   TimeDuration duration =
+       std::chrono::duration_cast<TimeDuration>(Clock::now() - iter->second);
+-  std::cout << topic << " costs " << toStringDuration(duration) << std::endl;
++  spdlog::debug("CTLO timer '{}' costs {}", topic, toStringDuration(duration));
+   g_tick_time_points.erase(iter);
+ }
+ 
+ inline void tock(const std::string& topic) {
+   auto iter = g_tick_time_points.find(topic);
+   if (iter == g_tick_time_points.end()) {
+-    std::cerr << topic << " hasn't ticked!" << std::endl;
++    spdlog::error("CTLO timer '{}' has not been started", topic);
++    return;
+   }
+   TimeDuration duration =
+       std::chrono::duration_cast<TimeDuration>(Clock::now() - iter->second);
+@@ -202,12 +204,10 @@ inline void output(const std::string& topic) {
+       }
+       histogram += "\n";
+     }
+-    std::cout << topic << " costs "
+-              << toStringDuration(detail_iter->second.mean) << " on the average"
+-              << std::endl
+-              << histogram << std::endl;
++    spdlog::debug("CTLO timer '{}' average: {}\n{}", topic,
++                  toStringDuration(detail_iter->second.mean), histogram);
+   } else {
+-    std::cerr << topic << " hasn't ticked!" << std::endl;
++    spdlog::error("CTLO timer '{}' has no samples", topic);
+   }
+ }
+ 
+@@ -216,10 +216,10 @@ inline void clear(const std::string& topic) {
+   if (detail_iter != g_details.end()) {
+     g_details.erase(detail_iter);
+   } else {
+-    std::cerr << topic << " hasn't ticked!" << std::endl;
++    spdlog::error("CTLO timer '{}' has no samples", topic);
+   }
+ }
+ 
+ inline void clearAll() { g_details.clear(); }
+ }  // namespace time_counter
+-}  // namespace ctlo
+\ No newline at end of file
++}  // namespace ctlo
 diff --git a/include/lidar_odometry.hpp b/include/lidar_odometry.hpp
-index a45a291..bb88f7d 100644
+index a45a291..ea1c055 100644
 --- a/include/lidar_odometry.hpp
 +++ b/include/lidar_odometry.hpp
 @@ -6,6 +6,9 @@
@@ -118,7 +185,7 @@ index a45a291..bb88f7d 100644
 -    time_counter::tack("location");
 -    std::cout << "begin: " << begin_pose << std::endl;
 -    std::cout << "end: " << current_pose_ << std::endl;
-+    reportTiming("registration", registration_started);
++    reportTiming("map_search", registration_started);
  
 -    time_counter::tick("update");
 +    const auto update_started = std::chrono::steady_clock::now();
@@ -226,12 +293,39 @@ index c20a1fd..d6b47e1 100644
 -}  // namespace ctlo
 \ No newline at end of file
 +}  // namespace ctlo
+diff --git a/include/solver/ct_pose_solver.hpp b/include/solver/ct_pose_solver.hpp
+index a28b566..17c3f9c 100644
+--- a/include/solver/ct_pose_solver.hpp
++++ b/include/solver/ct_pose_solver.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "cost_functor.hpp"
++#include <omp.h>
+ 
+ namespace ctlo {
+ namespace solver {
+@@ -13,6 +14,7 @@ class CTPoseSolver {
+         end_rot_param_(end_pose.rotation().coeffs().data()) {
+     options_.linear_solver_type = ceres::DENSE_QR;
+     options_.max_num_iterations = 6;
++    options_.num_threads = omp_get_max_threads();
+     options_.minimizer_progress_to_stdout = false;
+     problem_.AddParameterBlock(beg_tra_param_, 3);
+     problem_.AddParameterBlock(beg_rot_param_, 4);
+@@ -75,4 +77,4 @@ class CTPoseSolver {
+   }
+ };
+ }  // namespace solver
+-}  // namespace ctlo
+\ No newline at end of file
++}  // namespace ctlo
 diff --git a/standalone/ctlo_adapter.cpp b/standalone/ctlo_adapter.cpp
 new file mode 100644
-index 0000000..8ed17e3
+index 0000000..329ea0f
 --- /dev/null
 +++ b/standalone/ctlo_adapter.cpp
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,88 @@
 +#include "ctlo_adapter.hpp"
 +
 +#include <spdlog/spdlog.h>
@@ -251,10 +345,9 @@ index 0000000..8ed17e3
 +        sensors, {.lidar = true});
 +    if (!compatibility) return compatibility;
 +    const auto lidar = compatibility.selected_sensor(
-+        sensors,
-+        slam_benchmark::SensorType::Lidar);
++        sensors, slam_benchmark::SensorType::Lidar);
 +    if (lidar == sensors.end()) {
-+        throw std::runtime_error("CTLO requires one LiDAR");
++        return slam_benchmark::InitializationResult::unsupported("CTLO requires one LiDAR");
 +    }
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
 +    const int parallel_threads = root["parallel_threads"]

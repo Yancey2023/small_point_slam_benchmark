@@ -46,6 +46,58 @@ index 0000000..8147160
 +    target_compile_options(kiss_icp_algorithm PRIVATE -Wall -Wextra)
 +    target_compile_options(kiss_icp_benchmark PRIVATE -Wall -Wextra -Wpedantic)
 +endif()
+diff --git a/cpp/kiss_icp/core/Preprocessing.cpp b/cpp/kiss_icp/core/Preprocessing.cpp
+index 9a9ee38..03f1f98 100644
+--- a/cpp/kiss_icp/core/Preprocessing.cpp
++++ b/cpp/kiss_icp/core/Preprocessing.cpp
+@@ -24,7 +24,6 @@
+ 
+ #include <tbb/blocked_range.h>
+ #include <tbb/concurrent_vector.h>
+-#include <tbb/global_control.h>
+ #include <tbb/info.h>
+ #include <tbb/parallel_for.h>
+ #include <tbb/task_arena.h>
+@@ -45,12 +44,7 @@ Preprocessor::Preprocessor(const double max_range,
+       min_range_(min_range),
+       deskew_(deskew),
+       max_num_threads_(max_num_threads > 0 ? max_num_threads
+-                                           : tbb::this_task_arena::max_concurrency()) {
+-    // This global variable requires static duration storage to be able to manipulate the max
+-    // concurrency from TBB across the entire class
+-    static const auto tbb_control_settings = tbb::global_control(
+-        tbb::global_control::max_allowed_parallelism, static_cast<size_t>(max_num_threads_));
+-}
++                                           : tbb::this_task_arena::max_concurrency()) {}
+ 
+ std::vector<Eigen::Vector3d> Preprocessor::Preprocess(const std::vector<Eigen::Vector3d> &frame,
+                                                       const std::vector<double> &timestamps,
+diff --git a/cpp/kiss_icp/core/Registration.cpp b/cpp/kiss_icp/core/Registration.cpp
+index 6bd1fb7..ed15681 100644
+--- a/cpp/kiss_icp/core/Registration.cpp
++++ b/cpp/kiss_icp/core/Registration.cpp
+@@ -24,7 +24,6 @@
+ 
+ #include <tbb/blocked_range.h>
+ #include <tbb/concurrent_vector.h>
+-#include <tbb/global_control.h>
+ #include <tbb/info.h>
+ #include <tbb/parallel_for.h>
+ #include <tbb/parallel_reduce.h>
+@@ -128,12 +127,7 @@ Registration::Registration(int max_num_iteration, double convergence_criterion,
+       convergence_criterion_(convergence_criterion),
+       // Only manipulate the number of threads if the user specifies something greater than 0
+       max_num_threads_(max_num_threads > 0 ? max_num_threads
+-                                           : tbb::this_task_arena::max_concurrency()) {
+-    // This global variable requires static duration storage to be able to manipulate the max
+-    // concurrency from TBB across the entire class
+-    static const auto tbb_control_settings = tbb::global_control(
+-        tbb::global_control::max_allowed_parallelism, static_cast<size_t>(max_num_threads_));
+-}
++                                           : tbb::this_task_arena::max_concurrency()) {}
+ 
+ Sophus::SE3d Registration::AlignPointsToMap(const std::vector<Eigen::Vector3d> &frame,
+                                             const VoxelHashMap &voxel_map,
 diff --git a/cpp/kiss_icp/core/VoxelHashMap.cpp b/cpp/kiss_icp/core/VoxelHashMap.cpp
 index 69a87ec..e560e2e 100644
 --- a/cpp/kiss_icp/core/VoxelHashMap.cpp
@@ -112,7 +164,7 @@ index f8f8ea8..cea2c91 100644
      std::for_each(frame.cbegin(), frame.cend(), [&](const auto &point) {
          const auto voxel = PointToVoxel(point, voxel_size);
 diff --git a/cpp/kiss_icp/pipeline/KissICP.cpp b/cpp/kiss_icp/pipeline/KissICP.cpp
-index c40daaa..2119988 100644
+index c40daaa..358b648 100644
 --- a/cpp/kiss_icp/pipeline/KissICP.cpp
 +++ b/cpp/kiss_icp/pipeline/KissICP.cpp
 @@ -25,6 +25,7 @@
@@ -159,7 +211,7 @@ index c40daaa..2119988 100644
                                                           initial_guess,  // initial_guess
                                                           3.0 * sigma,    // max_correspondence_dist
                                                           sigma);         // kernel
-+    if (timing_callback_) timing_callback_("registration", elapsed_ms(started));
++    if (timing_callback_) timing_callback_("map_search", elapsed_ms(started));
  
      // Compute the difference between the prediction and the actual estimate
      const auto model_deviation = initial_guess.inverse() * new_pose;
@@ -210,10 +262,10 @@ index b95a585..2e42407 100644
  }  // namespace kiss_icp::pipeline
 diff --git a/standalone/kiss_icp_adapter.cpp b/standalone/kiss_icp_adapter.cpp
 new file mode 100644
-index 0000000..c0c9fc1
+index 0000000..5937ce4
 --- /dev/null
 +++ b/standalone/kiss_icp_adapter.cpp
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,120 @@
 +#include "kiss_icp_adapter.hpp"
 +
 +#include <spdlog/spdlog.h>
@@ -245,9 +297,8 @@ index 0000000..c0c9fc1
 +    auto compatibility = slam_benchmark::check_dataset_compatibility(
 +        sensors, {.lidar = true});
 +    if (!compatibility) return compatibility;
-+    const auto lidar = compatibility.selected_sensor(
-+        sensors, slam_benchmark::SensorType::Lidar);
-+    if (lidar == sensors.end()) throw std::runtime_error("KISS-ICP requires one LiDAR");
++    const auto lidar = compatibility.selected_sensor(sensors, slam_benchmark::SensorType::Lidar);
++    if (lidar == sensors.end()) return slam_benchmark::InitializationResult::unsupported("KISS-ICP requires one LiDAR");
 +
 +    const YAML::Node root = YAML::LoadFile(config_path.string());
 +    kiss_icp::pipeline::KISSConfig config;
@@ -267,6 +318,9 @@ index 0000000..c0c9fc1
 +    if (config.max_num_threads <= 0) {
 +        throw std::runtime_error("parallel_threads must be positive");
 +    }
++    tbb_control_ = std::make_unique<tbb::global_control>(
++        tbb::global_control::max_allowed_parallelism,
++        static_cast<std::size_t>(config.max_num_threads));
 +    config.deskew = parameter(root, "deskew", true);
 +
 +    const auto& transform = lidar->calibration.body_from_sensor;
@@ -281,14 +335,16 @@ index 0000000..c0c9fc1
 +    pipeline_->SetTimingCallback([this](const char* stage, double duration) {
 +        sink_->report_timing({current_timestamp_, stage, duration});
 +    });
-+    spdlog::info("KISS-ICP standalone adapter initialized");
++    spdlog::info("KISS-ICP standalone adapter initialized with {} compute threads",
++                 config.max_num_threads);
 +    return compatibility;
 +}
 +
 +void KissIcpAdapter::process(const slam_benchmark::SensorSample& sample) {
 +    const auto* cloud = std::get_if<slam_benchmark::PointCloud>(&sample.payload);
 +    if (cloud == nullptr) return;
-+    if (cloud->points.size() != cloud->point_time_offset_ns.size())
++    const bool has_point_time = !cloud->point_time_offset_ns.empty();
++    if (has_point_time && cloud->points.size() != cloud->point_time_offset_ns.size())
 +        throw std::runtime_error("point/time array size mismatch");
 +
 +    current_timestamp_ = sample.timestamp_ns;
@@ -304,12 +360,14 @@ index 0000000..c0c9fc1
 +        if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
 +            continue;
 +        points.emplace_back(point.x, point.y, point.z);
-+        const auto offset = cloud->point_time_offset_ns[index];
-+        timestamps.push_back(static_cast<double>(offset) * 1e-9);
-+        minimum_offset = std::min(minimum_offset, offset);
-+        maximum_offset = std::max(maximum_offset, offset);
++        if (has_point_time) {
++            const auto offset = cloud->point_time_offset_ns[index];
++            timestamps.push_back(static_cast<double>(offset) * 1e-9);
++            minimum_offset = std::min(minimum_offset, offset);
++            maximum_offset = std::max(maximum_offset, offset);
++        }
 +    }
-+    if (minimum_offset == maximum_offset) timestamps.clear();
++    if (!has_point_time || minimum_offset == maximum_offset) timestamps.clear();
 +    sink_->report_timing({current_timestamp_, "lidar_preprocess", elapsed_ms(started)});
 +
 +    pipeline_->RegisterFrame(points, timestamps);
@@ -330,15 +388,16 @@ index 0000000..c0c9fc1
 +}
 diff --git a/standalone/kiss_icp_adapter.hpp b/standalone/kiss_icp_adapter.hpp
 new file mode 100644
-index 0000000..4c28ee5
+index 0000000..967ea74
 --- /dev/null
 +++ b/standalone/kiss_icp_adapter.hpp
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,26 @@
 +#pragma once
 +
 +#include "kiss_icp/pipeline/KissICP.hpp"
 +
 +#include <slam_benchmark/algorithm.hpp>
++#include <tbb/global_control.h>
 +
 +#include <memory>
 +
@@ -353,6 +412,7 @@ index 0000000..4c28ee5
 +
 +private:
 +    slam_benchmark::ResultSink* sink_{};
++    std::unique_ptr<tbb::global_control> tbb_control_;
 +    std::unique_ptr<kiss_icp::pipeline::KissICP> pipeline_;
 +    Sophus::SE3d lidar_from_body_;
 +    slam_benchmark::Trajectory trajectory_;

@@ -7,9 +7,21 @@ repository:
   name: Super-LIO
   url: https://github.com/Liansheng-Wang/Super-LIO.git
   ref: f89f48dc7aea6cfa262f18e4d03b319e04e0dbd2
+source_excludes:
+  - src/basic/CMakeLists.txt
+  - src/basic/package.xml
+  - src/super_lio/CMakeLists.txt
+  - src/super_lio/package.xml
+  - src/super_lio/launch
+  - src/super_lio/msg
+  - src/super_lio/rviz
+  - src/super_lio/include/ros
+  - src/super_lio/include/lio/super_lio_reloc.h
+  - src/super_lio/src/apps
+  - src/super_lio/src/ros
+  - src/super_lio/src/lio/super_lio_reloc.cpp
 dependencies:
   - {name: oneTBB, url: https://github.com/uxlfoundation/oneTBB.git}
-  - {name: glog, url: https://github.com/google/glog.git}
 paper:
   title: "Super-LIO: A Robust and Efficient LiDAR-Inertial Odometry System with a Compact Mapping Strategy"
   url: https://doi.org/10.1109/LRA.2026.3653372
@@ -17,6 +29,7 @@ sensors: [lidar, imu]
 timing_stages:
   - lidar_preprocess
   - undistortion
+  - downsampling
   - map_search
   - filter_update
   - map_update

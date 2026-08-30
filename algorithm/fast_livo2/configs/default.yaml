@@ -1,0 +1,39 @@
+algorithm: fast_livo2
+parallel_threads: 4
+camera_scale: 0.5
+
+preprocessing:
+  lidar_point_sampling_stride: 1
+  lidar_downsample_voxel_size: 0.1
+  minimum_lidar_range: 0.8
+
+imu:
+  imu_integration_frame_count: 30
+  accelerometer_covariance: 0.5
+  gyroscope_covariance: 0.3
+  accelerometer_bias_covariance: 0.0001
+  gyroscope_bias_covariance: 0.0001
+
+pointcloud_map:
+  max_iterations: 5
+  depth_error_degrees: 0.02
+  beam_error_degrees: 0.05
+  plane_detection_threshold: 0.0025
+  residual_sigma_multiplier: 3.0
+  max_voxel_size: 0.5
+  max_octree_depth: 2
+  max_points_per_voxel: 50
+  initialization_point_count_per_depth: [5, 5, 5, 5, 5]
+
+visual_tracking:
+  max_iterations: 5
+  outlier_threshold: 1000
+  image_point_covariance: 100
+  patch_size: 8
+  patch_pyramid_levels: 4
+  inverse_exposure_covariance: 0.1
+  enable_exposure_estimation: true
+  grid_size: 30
+
+runtime_behavior:
+  enable_gravity_alignment: false
