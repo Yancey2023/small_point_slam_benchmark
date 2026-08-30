@@ -71,7 +71,7 @@ std::vector<std::byte> point_cloud_cdr() {
     set(16, std::uint16_t{5}); set(20, 0.001F);
     set(24, 6.0F); set(28, 7.0F); set(32, 8.0F); set(36, 9.0F);
     set(40, std::uint16_t{10}); set(44, 0.002F);
-    return serialization::serialize_cdr(cloud);
+    return rosbag_io::serialization::serialize_cdr(cloud);
 }
 
 template <typename T>

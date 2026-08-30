@@ -20,7 +20,7 @@ source_excludes:
   - src/io/ros_image_decoder.cpp
   - src/io/ros_image_decoder.h
   - src/io/rosbag_progress.h
-  - 3rdparty/rosbag_io/tests
+  - 3rdparty/rosbag_io
 dependencies:
   - {name: Eigen, url: https://gitlab.com/libeigen/eigen.git}
   - {name: oneTBB, url: https://github.com/uxlfoundation/oneTBB.git}

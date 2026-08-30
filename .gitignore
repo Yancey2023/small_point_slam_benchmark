@@ -1,5 +1,6 @@
-# Local third-party source. rosbag_io will become a submodule after publication.
-/3rdparty/
+# Third-party source trees populated by FetchContent. Their build trees stay
+# under /build/.
+/3rdparty_downloads/
 
 # Downloaded upstream trees and generated patched source trees.
 /algorithm_downloads/

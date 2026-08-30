@@ -6,15 +6,15 @@
 ## 当前结构
 
 ```text
-3rdparty/                 # 本地第三方库，整体不进入 Git
-core/                     # 静态公共库：数据、运行、计时、CPU/内存、CSV
-datasets/<source>/        # 数据集清单；data/ 不进入 Git
-algorithm/<algorithm>/    # 上游信息、配置、Git patch
-algorithm_downloads/      # 原始上游仓库，不进入 Git
+3rdparty_downloads/                  # FetchContent 下载的第三方源码，不作为构建目录
+core/                                # 静态公共库：数据、运行、计时、CPU/内存、CSV
+datasets/<source>/                   # 数据集清单；data/ 不进入 Git
+algorithm/<algorithm>/               # 上游信息、配置、Git patch
+algorithm_downloads/                 # 原始上游仓库，不进入 Git
 results/<dataset>-<bag>-<algorithm>/ # 原始和分析 CSV，不进入 Git
-scripts/                  # 下载、patch、运行、分析、校验
-frontend/                 # Vue/Vite 本地 benchmark 工作台
-doc/                      # 架构和移植说明
+scripts/                             # 下载、patch、运行、分析、校验
+frontend/                            # Vue/Vite 本地 benchmark 工作台
+doc/                                 # 架构和移植说明
 ```
 
 目前 core 和算法适配均可独立链接、运行和输出结果；上游仓库 ref 已固定到已核验的 commit，移植差异通过 Git patch 保存。算法和数据集由服务实时扫描 manifest，不需要同步修改前端列表。
@@ -29,15 +29,6 @@ LIGO 的原始 GNSS 观测、星历、电离层参数及接收机 PVT 由 `rosba
 自有类型，算法适配层不接触 ROS 消息或话题。具体状态见 [移植状态](doc/port_status.md)。
 
 ## 构建 core
-
-先把未开源的 `rosbag_io` 放到 `3rdparty/rosbag_io`。当前开发环境的来源是：
-
-```text
-/home/yancey/cpp/navigation/3rdparty/rosbag_io
-```
-
-当前 `rosbag_io` 源码直接提供 `gnss_comm` 的结构化解码 API；ROS wire-format 解析位于
-`rosbag_io`，不会放入 benchmark core。
 
 Linux 与 Windows 使用相同的 CMake 流程：
 

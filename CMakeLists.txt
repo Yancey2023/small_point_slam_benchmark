@@ -31,13 +31,24 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 if(SLAM_BENCHMARK_ENABLE_ROSBAG_IO)
-    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/rosbag_io/CMakeLists.txt")
-        message(FATAL_ERROR
-            "3rdparty/rosbag_io is missing. Copy it there or initialize the future submodule.")
-    endif()
+    include(FetchContent)
+
+    # Keep downloaded source trees outside the build tree, while leaving all
+    # FetchContent sub-builds and binary directories under CMAKE_BINARY_DIR.
+    set(SLAM_BENCHMARK_THIRD_PARTY_DOWNLOAD_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty_downloads")
     set(ROSBAG_IO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(ROSBAG_IO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    add_subdirectory(3rdparty/rosbag_io EXCLUDE_FROM_ALL)
+    set(ROSBAG_IO_THIRD_PARTY_DOWNLOAD_DIR
+        "${SLAM_BENCHMARK_THIRD_PARTY_DOWNLOAD_DIR}"
+        CACHE PATH "Directory used for downloaded rosbag_io dependencies" FORCE)
+    FetchContent_Declare(
+        rosbag_io
+        GIT_REPOSITORY https://github.com/Yancey2023/rosbag_io.git
+        GIT_TAG 00184b5d16883547a3a8bb30bd4c7f73221fc2ff
+        SOURCE_DIR "${SLAM_BENCHMARK_THIRD_PARTY_DOWNLOAD_DIR}/rosbag_io"
+    )
+    FetchContent_MakeAvailable(rosbag_io)
 endif()
 
 add_subdirectory(core)
